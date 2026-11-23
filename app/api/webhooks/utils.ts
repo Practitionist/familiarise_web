@@ -10,6 +10,7 @@ import { bookTopUpRefund } from "@/lib/payments/operations/wallet-refund";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   isLegalDisputeTransition,
+  isTerminalDisputeChange,
   mapDisputeStatus,
 } from "@/lib/payments/dispute-status";
 import {
@@ -81,7 +82,11 @@ import {
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEvent,
+  recordSystemEventSafe,
+} from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import {
@@ -1134,6 +1139,55 @@ async function placeDisputeHolds(
   return { consultant: consultant.length, org: org.length };
 }
 
+/** A dispute event the handlers did not adopt; their transaction returns it and changes nothing. */
+interface UnadoptedDisputeEvent {
+  severity: "ERROR" | "WARN";
+  dispute: {
+    id: string;
+    disputeId: string;
+    paymentId: string;
+    status: DisputeStatus;
+  };
+  incomingStatus: string;
+  phase: string | null;
+}
+
+/**
+ * Records an unadopted dispute event after its transaction commits, once per
+ * webhook delivery: a stuck-event re-drive of the same delivery adds nothing.
+ * Strict, so a failed insert fails the delivery and the re-drive records it.
+ */
+async function recordUnadoptedDisputeEvent(
+  event: UnadoptedDisputeEvent,
+  webhookEventId: string | null,
+): Promise<void> {
+  const { dispute, incomingStatus, phase } = event;
+  const correlationId = webhookEventId ?? `dispute:${dispute.disputeId}`;
+  if (webhookEventId) {
+    const recorded = await prisma.systemEvent.findFirst({
+      where: { category: "razorpay_webhook", correlationId },
+      select: { id: true },
+    });
+    if (recorded) return;
+  }
+  const inPhase = phase ? ` in phase ${phase}` : "";
+  await recordSystemEvent({
+    strict: true,
+    category: "razorpay_webhook",
+    severity: event.severity,
+    message: `Dispute ${dispute.disputeId} is ${dispute.status} but the gateway sent "${incomingStatus}"${inPhase}; its status and money were left unchanged`,
+    context: {
+      disputeId: dispute.disputeId,
+      paymentId: dispute.paymentId,
+      disputeRowId: dispute.id,
+      storedStatus: dispute.status,
+      incomingStatus,
+      phase,
+    },
+    correlationId,
+  });
+}
+
 /**
  * Handle dispute created event
  */
@@ -1146,7 +1200,11 @@ export async function handleDisputeCreated(
   status: string,
   dueBy: number | null,
   isChargeRefundable: boolean,
-  options?: { isRedrive?: boolean },
+  options?: {
+    isRedrive?: boolean;
+    phase?: string | null;
+    webhookEventId?: string | null;
+  },
 ) {
   const gateway = PaymentGateway.RAZORPAY;
   const razorpayClient = getRazorpayClient();
@@ -1186,9 +1244,11 @@ export async function handleDisputeCreated(
 
   let stagedNotification: StagedTrigger | null = null;
   let stagedDisputeEmails: StagedRecipientEmail[] = [];
+  let unadopted: UnadoptedDisputeEvent | null = null;
   const result = await withSerializableRetry(() => {
     stagedNotification = null;
     stagedDisputeEmails = [];
+    unadopted = null;
     return prisma.$transaction(
       async (tx) => {
         const payment = await tx.payment.findFirst({
@@ -1215,7 +1275,23 @@ export async function handleDisputeCreated(
         });
 
         if (existingDispute) {
-          console.log(`Dispute ${disputeId} already exists`);
+          const phase = options?.phase ?? null;
+          if (
+            isTerminalDisputeChange(
+              existingDispute.status,
+              mapDisputeStatus(status),
+              phase,
+            )
+          ) {
+            unadopted = {
+              severity: "ERROR",
+              dispute: existingDispute,
+              incomingStatus: status,
+              phase,
+            };
+          } else {
+            console.log(`Dispute ${disputeId} already exists`);
+          }
           return;
         }
 
@@ -1296,6 +1372,12 @@ export async function handleDisputeCreated(
       },
     );
   });
+  if (unadopted) {
+    await recordUnadoptedDisputeEvent(
+      unadopted,
+      options?.webhookEventId ?? null,
+    );
+  }
   if (result instanceof DeferSignal && !options?.isRedrive) {
     await recordSystemErrorSafe({
       category: "razorpay_webhook",
@@ -1681,33 +1763,99 @@ export async function settleClosedDispute(
     : settleWonDispute(tx, dispute);
 }
 
+/** A reported deduction other than the disputed amount, recorded once the settlement commits. */
+export interface DeductionMismatch {
+  disputeId: string;
+  paymentId: string;
+  disputeRowId: string;
+  verdict: DisputeStatus;
+  reportedDeductedPaise: number;
+  disputedPaise: number;
+  settledPaise: number;
+}
+
+export interface DisputeVerdictSettlement extends LostDisputeSettlement {
+  deductionMismatch: DeductionMismatch | null;
+}
+
+/**
+ * A lost verdict settles on the reported deduction when it is above 0; a 0 or
+ * missing figure is unknown, so the disputed amount is used.
+ */
+function lostDisputeAmount(
+  dispute: DisputeSettlementInput,
+  verdict: DisputeStatus,
+  reportedPaise: number | null,
+): { settledPaise: number; mismatch: DeductionMismatch | null } {
+  const settledPaise =
+    reportedPaise !== null && reportedPaise > 0
+      ? reportedPaise
+      : dispute.amountPaise;
+  const mismatch =
+    reportedPaise !== null && reportedPaise !== dispute.amountPaise
+      ? {
+          disputeId: dispute.disputeId,
+          paymentId: dispute.paymentId,
+          disputeRowId: dispute.id,
+          verdict,
+          reportedDeductedPaise: reportedPaise,
+          disputedPaise: dispute.amountPaise,
+          settledPaise,
+        }
+      : null;
+  return { settledPaise, mismatch };
+}
+
+/** Callers run it after the settlement's transaction commits, so it is written once per settlement. */
+export async function recordDeductionMismatch(
+  mismatch: DeductionMismatch,
+): Promise<void> {
+  await recordSystemEventSafe({
+    category: "razorpay_webhook",
+    severity: "INFO",
+    message: `Dispute ${mismatch.disputeId} ${mismatch.verdict}: the gateway reported ${mismatch.reportedDeductedPaise} paise deducted against ${mismatch.disputedPaise} paise disputed; settled on ${mismatch.settledPaise} paise`,
+    context: { ...mismatch },
+    correlationId: `dispute:${mismatch.disputeId}`,
+  });
+}
+
+const noMismatch = (
+  settlement: LostDisputeSettlement,
+): DisputeVerdictSettlement => ({ ...settlement, deductionMismatch: null });
+
 /**
  * The money half of a dispute verdict, shared by the webhook and the
  * reconcile-disputes poll so both write the same rows. `amountDeductedPaise`
- * is Razorpay's `amount_deducted`; a LOST without it falls back to the
- * disputed amount.
+ * is Razorpay's `amount_deducted`, or null when the gateway sent none.
  */
 export async function settleDisputeVerdict(
   tx: Tx,
   dispute: DisputeSettlementInput,
   verdict: DisputeStatus,
   amountDeductedPaise: number | null,
-): Promise<LostDisputeSettlement> {
+): Promise<DisputeVerdictSettlement> {
   switch (verdict) {
     case "WON":
     case "WARNING_CLOSED":
-      return settleWonDispute(tx, dispute);
+      return noMismatch(await settleWonDispute(tx, dispute));
     case "LOST":
-    case "CHARGE_REFUNDED":
-      return settleLostDispute(
-        tx,
+    case "CHARGE_REFUNDED": {
+      const { settledPaise, mismatch } = lostDisputeAmount(
         dispute,
-        amountDeductedPaise ?? dispute.amountPaise,
+        verdict,
+        amountDeductedPaise,
       );
+      return {
+        ...(await settleLostDispute(tx, dispute, settledPaise)),
+        deductionMismatch: mismatch,
+      };
+    }
     case "CLOSED":
-      return settleClosedDispute(tx, dispute, amountDeductedPaise);
+      return noMismatch(
+        await settleClosedDispute(tx, dispute, amountDeductedPaise),
+      );
     default:
-      return NO_CLAWBACK_PAGE;
+      return noMismatch(NO_CLAWBACK_PAGE);
   }
 }
 
@@ -1818,6 +1966,8 @@ export async function handleDisputeUpdated(
   evidence: Prisma.InputJsonValue | null,
   respondBy?: number | null,
   amountDeductedPaise: number | null = null,
+  phase: string | null = null,
+  webhookEventId: string | null = null,
 ) {
   const txOutcome = await withSerializableRetry(() =>
     prisma.$transaction(
@@ -1838,18 +1988,26 @@ export async function handleDisputeUpdated(
         }
 
         const mappedStatus = mapDisputeStatus(status);
+        const priorStatus = dispute.status;
+        const terminalChange = isTerminalDisputeChange(
+          priorStatus,
+          mappedStatus,
+          phase,
+        );
         if (mappedStatus === null) {
-          console.warn(
-            `Unknown dispute status "${status}" for ${disputeId} — skipping update`,
-          );
           return {
             notification: null,
             emails: [] as StagedRecipientEmail[],
             clawbackPage: null,
+            unadopted: {
+              severity: terminalChange ? "ERROR" : "WARN",
+              dispute,
+              incomingStatus: status,
+              phase,
+            } satisfies UnadoptedDisputeEvent,
           };
         }
 
-        const priorStatus = dispute.status;
         if (
           priorStatus === mappedStatus ||
           !isLegalDisputeTransition(priorStatus, mappedStatus)
@@ -1858,6 +2016,14 @@ export async function handleDisputeUpdated(
             notification: null,
             emails: [] as StagedRecipientEmail[],
             clawbackPage: null,
+            unadopted: terminalChange
+              ? ({
+                  severity: "ERROR",
+                  dispute,
+                  incomingStatus: status,
+                  phase,
+                } satisfies UnadoptedDisputeEvent)
+              : null,
           };
         }
 
@@ -1886,7 +2052,7 @@ export async function handleDisputeUpdated(
           });
         }
 
-        const { consultantClawbackPage: clawbackPage } =
+        const { consultantClawbackPage: clawbackPage, deductionMismatch } =
           await settleDisputeVerdict(
             tx,
             dispute,
@@ -1907,6 +2073,7 @@ export async function handleDisputeUpdated(
           notification: stagedNotice.notification,
           emails: stagedNotice.emails,
           clawbackPage,
+          deductionMismatch,
         };
       },
       {
@@ -1926,6 +2093,10 @@ export async function handleDisputeUpdated(
     ),
   ]);
 
+  if (txOutcome.deductionMismatch) {
+    await recordDeductionMismatch(txOutcome.deductionMismatch);
+  }
+
   if (txOutcome.clawbackPage) {
     const page = txOutcome.clawbackPage;
     void recordSystemErrorSafe({
@@ -1935,6 +2106,10 @@ export async function handleDisputeUpdated(
       err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
       context: { ...page },
     });
+  }
+
+  if (txOutcome.unadopted) {
+    await recordUnadoptedDisputeEvent(txOutcome.unadopted, webhookEventId);
   }
 
   return txOutcome.deferred;
