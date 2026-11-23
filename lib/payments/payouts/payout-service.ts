@@ -1316,10 +1316,16 @@ type ClaimGateOutcome =
   | { kind: "refund_blocked" }
   | { kind: "shortfall"; owedPaise: number; shortfallReason: string }
   | { kind: "already_claimed" }
+  | { kind: "fy_crossed"; stagedFy: string }
   | { kind: "claimed" };
 
-/** The claim's view of the row: its amount and the net it staged for a first send, or null. */
-type ClaimTarget = { id: string; amount: number; netAmount: number | null };
+/** The claim's view of the row: its amount, and the net and TDS year it staged for a first send. */
+type ClaimTarget = {
+  id: string;
+  amount: number;
+  netAmount: number | null;
+  tdsFinancialYear: string | null;
+};
 
 /**
  * Fails an APPROVED payout before any send, clearing its staged TDS, and releases its
@@ -1363,7 +1369,7 @@ async function failUnsentConsultantPayout(
 
 async function runConsultantPayoutClaimGate(
   db: PrismaLike,
-  { id: payoutId, amount, netAmount }: ClaimTarget,
+  { id: payoutId, amount, netAmount, tdsFinancialYear }: ClaimTarget,
 ): Promise<ClaimGateOutcome> {
   const disputedEarning = await db.consultantEarnings.findFirst({
     where: {
@@ -1395,6 +1401,12 @@ async function runConsultantPayoutClaimGate(
     const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${amount}p`;
     await failUnsentConsultantPayout(db, payoutId, shortfallReason);
     return { kind: "shortfall", owedPaise, shortfallReason };
+  }
+
+  // A body staged in an earlier financial year is not resent: the new year plans it afresh.
+  const stagedFy = (netAmount ?? null) === null ? null : tdsFinancialYear;
+  if (stagedFy && stagedFy !== getIndianFinancialYear()) {
+    return { kind: "fy_crossed", stagedFy };
   }
 
   // The staged TDS fields, catch-up included, ride through the claim unchanged;
@@ -1540,6 +1552,17 @@ async function claimConsultantPayoutForDisbursement(
     return settleUnsendableStagedPayout(target, CATCH_UP_TAKEN, failures);
   }
 
+  if (claimOutcome.kind === "fy_crossed") {
+    return settleUnsendableStagedPayout(
+      target,
+      {
+        code: "TDS_FY_CROSSED",
+        text: `this payout staged its TDS in FY ${claimOutcome.stagedFy}, which has ended`,
+        op: "payout-retry-crossed-financial-year",
+      },
+      failures,
+    );
+  }
   if (claimOutcome.kind === "dispute_blocked") {
     console.warn(
       `[Payouts] Payout ${payoutId} blocked — an earning's payment has a live dispute`,
@@ -1839,6 +1862,7 @@ async function processSinglePayout(
     method: PayoutMethod;
     idempotencyKey: string | null;
     netAmount: number | null;
+    tdsFinancialYear: string | null;
     payoutAccount: PayoutDestination | null;
     consultantProfile: {
       payoutAccounts?: PayoutDestination[];
