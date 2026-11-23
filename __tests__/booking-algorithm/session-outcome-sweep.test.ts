@@ -53,12 +53,12 @@ jest.mock("../../lib/prisma", () => {
     recording: { findFirst: async () => recording.current },
     // The end fields the sweep re-reads after settling: the room as the fixture ended it.
     meeting: {
-      findUnique: async () => ({
+      findUnique: jest.fn(async () => ({
         endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
         endedReason: "call_ended",
         streamCallId: "c",
         attendanceSettledAt: null,
-      }),
+      })),
     },
     appointmentParticipant: {
       updateMany: (...a: unknown[]) => seatUpdate(...a),
@@ -121,6 +121,28 @@ const slot = (hostLeaves: number): OutcomeSlot => {
 };
 
 beforeEach(() => jest.clearAllMocks());
+
+it("a room rotated while its record was settled leaves the session SCHEDULED: the write fences on the call id loaded before the settle", async () => {
+  const db = jest.requireMock("../../lib/prisma").default as {
+    meeting: { findUnique: jest.Mock };
+    $queryRaw: jest.Mock;
+  };
+  const rotated = {
+    endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
+    endedReason: "call_ended",
+    streamCallId: "c-r2",
+  };
+  db.meeting.findUnique.mockResolvedValueOnce({
+    ...rotated,
+    attendanceSettledAt: null,
+  });
+  db.$queryRaw.mockResolvedValueOnce([{ ...rotated, settledAt: null }]);
+
+  const d = await decideSlotOutcome(slot(60), { now: at(120), outages: [] });
+
+  expect(d).toMatchObject({ kind: "written", moved: false });
+  expect(transition).not.toHaveBeenCalled();
+});
 
 it.each([
   [60, "COMPLETED", { outcome: "HELD", completedAt: at(120) }],

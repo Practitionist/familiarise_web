@@ -148,19 +148,16 @@ export async function readOutageWindows(
 type RoomEnd = {
   endedAt: Date | null;
   endedReason: string | null;
-  streamCallId: string;
   attendanceSettledAt: Date | null;
 };
+
+/** The room's end as classified (read after the settle) and the call id the settle read (loaded before it). */
+type RoomFence = { end: RoomEnd; settledCallId: string };
 
 const readRoomEnd = (meetingId: string): Promise<RoomEnd | null> =>
   prisma.meeting.findUnique({
     where: { id: meetingId },
-    select: {
-      endedAt: true,
-      endedReason: true,
-      streamCallId: true,
-      attendanceSettledAt: true,
-    },
+    select: { endedAt: true, endedReason: true, attendanceSettledAt: true },
   });
 
 /**
@@ -223,14 +220,14 @@ async function slotEvidence(
 }
 
 /**
- * Takes the occurrence row, then the room row, and re-reads the room's end: an
- * end, a rotation or (for an unreadable park) a snapshot that committed since
- * the classification wins. NO KEY UPDATE leaves the presence inserts' FK checks free.
+ * Takes the occurrence row, then the room row, and re-reads the room: an end
+ * since the classification, a rotation since the settle loaded the room, or (for
+ * an unreadable park) a snapshot wins. NO KEY UPDATE leaves the presence inserts' FK checks free.
  */
 async function roomChangedSinceRead(
   tx: Tx,
   occurrenceId: string,
-  room: RoomEnd,
+  { end, settledCallId }: RoomFence,
   requireUnsettled: boolean,
 ): Promise<boolean> {
   await tx.$executeRaw`SELECT 1 FROM "AppointmentOccurrence" WHERE id = ${occurrenceId} FOR NO KEY UPDATE`;
@@ -247,10 +244,9 @@ async function roomChangedSinceRead(
   const current = rows[0];
   if (!current) return true;
   return (
-    (current.endedAt?.getTime() ?? null) !==
-      (room.endedAt?.getTime() ?? null) ||
-    current.endedReason !== room.endedReason ||
-    current.streamCallId !== room.streamCallId ||
+    (current.endedAt?.getTime() ?? null) !== (end.endedAt?.getTime() ?? null) ||
+    current.endedReason !== end.endedReason ||
+    current.streamCallId !== settledCallId ||
     (requireUnsettled && current.settledAt !== null)
   );
 }
@@ -262,7 +258,7 @@ async function writeSlotOutcomeTransaction(
   verdict: SessionOutcomeVerdict,
   now: Date,
   /** The room's end as classified (re-checked under lock), and whether an unreadable verdict needs the room still unsettled. */
-  fence: { room: RoomEnd | null; requireUnsettled: boolean },
+  fence: { room: RoomFence | null; requireUnsettled: boolean },
 ): Promise<boolean> {
   const { requireUnsettled } = fence;
   const txResult = await prisma.$transaction(
@@ -497,7 +493,13 @@ export async function decideSlotOutcome(
     to,
     verdict,
     ctx.now,
-    { room, requireUnsettled: evidence.kind === "unreadable" },
+    {
+      room:
+        meeting && room
+          ? { end: room, settledCallId: meeting.streamCallId }
+          : null,
+      requireUnsettled: evidence.kind === "unreadable",
+    },
   );
   if (moved && evidence.kind === "unreadable") ctx.onUnreadable?.(slot.id);
   return { kind: "written", to, verdict, moved };
