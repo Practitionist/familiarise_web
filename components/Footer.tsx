@@ -247,7 +247,7 @@ const Footer: React.FC = () => {
 
       {/* Bottom bar. The CIN, registered office and contact email are on the grievance page and the policy pages' company details. */}
       <div className="border-t border-zinc-800 relative z-10">
-        <div className="container mx-auto px-4 md:px-6 py-6 text-center md:text-left">
+        <div className="container mx-auto px-4 md:px-6 py-6 text-center">
           <p className="text-sm text-zinc-400">
             © {new Date().getFullYear()} Familiarise, operated by{" "}
             {COMPANY_INFO.name}. All rights reserved.
