@@ -7,39 +7,29 @@
 // run, its idle probe and a sponsor's trust-park release; a subscription's
 // earning releases per tranche and is not held by it.
 
-jest.mock("../../lib/cron/with-cron-lock", () => ({
-  __esModule: true,
-  withCronLock: jest.fn(
-    async (_key: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
-  ),
-}));
+jest.mock("../../lib/cron/with-cron-lock", () =>
+  jest.requireActual("../fixtures/earnings-release-world").cronLockModule(),
+);
 
-jest.mock("../../lib/prisma", () => {
-  const { memTable } = jest.requireActual("../fixtures/mem-db");
-  const client = {
-    consultantEarnings: memTable([], "ce"),
-    organizationEarnings: memTable([], "oe"),
-  };
-  return {
-    __esModule: true,
-    default: {
-      ...client,
-      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
-      $disconnect: jest.fn(),
-    },
-  };
-});
+jest.mock("../../lib/prisma", () =>
+  jest
+    .requireActual("../fixtures/earnings-release-world")
+    .earningsPrismaModule(),
+);
 
 import prisma from "@/lib/prisma";
-import type { memTable, Row } from "../fixtures/mem-db";
+import type { Row } from "../fixtures/mem-db";
+import {
+  PAST,
+  seedEarnings,
+  type EarningsTable as Table,
+} from "../fixtures/earnings-release-world";
 import { releaseSponsorTrustPark } from "@/lib/payments/payouts/trust-park";
 import {
   hasReleasableEarningsWork,
   releaseEarningsFromHold,
 } from "@/scripts/earnings/release-earnings";
 
-type Table = ReturnType<typeof memTable>;
-const PAST = new Date("2026-06-01T00:00:00.000Z");
 const consultantEarnings = prisma.consultantEarnings as unknown as Table;
 const organizationEarnings = prisma.organizationEarnings as unknown as Table;
 const db = () => ({ consultantEarnings, organizationEarnings }) as never;
@@ -71,22 +61,7 @@ function seed(
     refundOwedKey: null,
     appointment: { subscriptionId, occurrences: [occurrence] },
   };
-  consultantEarnings.rows.splice(0, consultantEarnings.rows.length, {
-    id: "ce_1",
-    status,
-    holdUntil: PAST,
-    consultantSharePaise: 80_000,
-    consultantProfile: { user: { name: "C", email: "c@x" } },
-    payment,
-  });
-  organizationEarnings.rows.splice(0, organizationEarnings.rows.length, {
-    id: "oe_1",
-    status,
-    holdUntil: PAST,
-    orgSharePaise: 10_000,
-    organization: { name: "Host org" },
-    payment,
-  });
+  seedEarnings({ consultantEarnings, organizationEarnings }, status, payment);
 }
 
 beforeEach(() => jest.clearAllMocks());

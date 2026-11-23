@@ -7,31 +7,22 @@
 // ticker's idle probe or a sponsor's trust-park release; clearing the marker
 // lifts the hold.
 
-jest.mock("../../lib/cron/with-cron-lock", () => ({
-  __esModule: true,
-  withCronLock: jest.fn(
-    async (_key: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
-  ),
-}));
+jest.mock("../../lib/cron/with-cron-lock", () =>
+  jest.requireActual("../fixtures/earnings-release-world").cronLockModule(),
+);
 
-jest.mock("../../lib/prisma", () => {
-  const { memTable } = jest.requireActual("../fixtures/mem-db");
-  const client = {
-    consultantEarnings: memTable([], "ce"),
-    organizationEarnings: memTable([], "oe"),
-  };
-  return {
-    __esModule: true,
-    default: {
-      ...client,
-      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
-      $disconnect: jest.fn(),
-    },
-  };
-});
+jest.mock("../../lib/prisma", () =>
+  jest
+    .requireActual("../fixtures/earnings-release-world")
+    .earningsPrismaModule(),
+);
 
 import prisma from "@/lib/prisma";
-import { matchesWhere, type memTable, type Row } from "../fixtures/mem-db";
+import { matchesWhere, type Row } from "../fixtures/mem-db";
+import {
+  seedEarnings,
+  type EarningsTable as Table,
+} from "../fixtures/earnings-release-world";
 import { releaseSponsorTrustPark } from "@/lib/payments/payouts/trust-park";
 import {
   hasReleasableEarningsWork,
@@ -39,8 +30,6 @@ import {
   releaseEarningsFromHold,
 } from "@/scripts/earnings/release-earnings";
 
-type Table = ReturnType<typeof memTable>;
-const PAST = new Date("2026-06-01T00:00:00.000Z");
 const payment: Row = {
   id: "pay_1",
   amount: 100_000,
@@ -55,22 +44,7 @@ const consultantRows = consultantEarnings.rows;
 const orgRows = organizationEarnings.rows;
 
 function seed(status: "PENDING" | "PENDING_TRUST") {
-  consultantRows.splice(0, consultantRows.length, {
-    id: "ce_1",
-    status,
-    holdUntil: PAST,
-    consultantSharePaise: 80_000,
-    consultantProfile: { user: { name: "C", email: "c@x" } },
-    payment,
-  });
-  orgRows.splice(0, orgRows.length, {
-    id: "oe_1",
-    status,
-    holdUntil: PAST,
-    orgSharePaise: 10_000,
-    organization: { name: "Host org" },
-    payment,
-  });
+  seedEarnings({ consultantEarnings, organizationEarnings }, status, payment);
 }
 
 beforeEach(() => {
