@@ -112,8 +112,8 @@ export async function settleOccurrenceAttendance(
   const rows = read.kind === "read" ? read.intervals : [];
 
   const stamped = await prisma.$transaction(async (tx) => {
-    // The stamp first, on the room exactly as read: a second settler, or a room rotated,
-    // extended or told of a new session since the read, makes this compare-and-set miss and writes nothing.
+    // The stamp first, on the room exactly as read: a second settler, or a room rotated, extended,
+    // ended, joined or told of a new session since the read, makes this compare-and-set miss and writes nothing.
     const { count } = await tx.meeting.updateMany({
       where: {
         id: meeting.id,
@@ -125,6 +125,10 @@ export async function settleOccurrenceAttendance(
         streamReportReadySessionIds: {
           equals: meeting.streamReportReadySessionIds,
         },
+        // The fields the read's readiness and reserved-call check used; a change re-judges the room.
+        endedAt: meeting.endedAt,
+        endedReason: meeting.endedReason,
+        lastJoinedAt: meeting.lastJoinedAt,
       },
       data: { attendanceSettledAt: now },
     });

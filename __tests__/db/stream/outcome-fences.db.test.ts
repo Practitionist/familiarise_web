@@ -77,7 +77,7 @@ async function stageHalfHourTimeout(
 
 beforeEach(() => fakeStream.reset());
 
-it("a host's deliberate end that lands while the sweep reads Stream is the end the outcome is judged with", async () => {
+it("a host's deliberate end that lands after the sweep loaded the room stamps nothing that run; the next run judges with it", async () => {
   const room = await seedPaidConsultation(3);
   await stageHalfHourTimeout(room);
   // The sweep loaded the room ended by a timeout; the host's "End for everyone" at 30 replaces it.
@@ -87,12 +87,18 @@ it("a host's deliberate end that lands while the sweep reads Stream is the end t
     data: { endedReason: "call_ended" },
   });
 
-  const decision = await decideSlotOutcome(slot, {
-    now: new Date(room.endsAt.getTime() + READ_AT),
-    outages: [],
-  });
+  const now = new Date(room.endsAt.getTime() + READ_AT);
 
-  expect(decision).toMatchObject({
+  expect(await decideSlotOutcome(slot, { now, outages: [] })).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now,
+      outages: [],
+    }),
+  ).toMatchObject({
     kind: "written",
     verdict: { outcome: "CUT_SHORT", hostAttributed: true },
   });
@@ -212,7 +218,7 @@ it("a learner's announced device check never settles a consultant no-show early;
   ).toEqual({ status: "CANCELLED" });
 });
 
-it("the ops re-read names the verdict with the end a host's webhook committed during its Stream read", async () => {
+it("an ops re-read during which a host's end commits stores nothing; asked again, it names the verdict with that end", async () => {
   const room = await seedConsultationRoom(80);
   // The occurrence listing misses the room's call, so the read waits on call.get() for it.
   await stageHalfHourTimeout(room, "listed-under-another-occurrence");
@@ -230,10 +236,11 @@ it("the ops re-read names the verdict with the end a host's webhook committed du
   });
   release();
 
-  expect(await reread).toMatchObject({
-    result: "settled",
-    verdict: { outcome: "CUT_SHORT" },
-  });
+  expect(await reread).toEqual({ result: "not-final", verdict: null });
+  fakeStream.getGate = null;
+  expect(
+    await rereadSessionAttendance({ occurrenceId: room.occurrenceId }),
+  ).toMatchObject({ result: "settled", verdict: { outcome: "CUT_SHORT" } });
 });
 
 it("an eight-hour consultation that overran to just before its booked end plus six hours is not read until six hours after the host's end; then it is HELD", async () => {
@@ -366,4 +373,77 @@ it("a host's end whose session lookup fails is stamped as before, keeping the se
       select: { endedAt: true, lastStreamSessionId: true },
     }),
   ).toEqual({ endedAt: hostEnd, lastStreamSessionId: "A" });
+});
+
+it("a host end that commits during the Stream read moves the cutoff, so the read stamps nothing and the session waits; then it is HELD", async () => {
+  const room = await seedConsultationRoom(30, { paid: true, hours: 8 });
+  const s = room.startsAt;
+  const sessionB = {
+    id: "B",
+    live: false,
+    hiddenFromStats: true,
+    stays: [
+      stay(room.hostId, s, 6 * HOUR, 14 * HOUR + MIN),
+      stay(room.learnerId, s, 6 * HOUR, 14 * HOUR + MIN),
+    ],
+  };
+  // The occurrence listing misses the call, so the read waits on call.get() for it.
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: "listed-under-another-occurrence",
+    sessions: [
+      { id: "A", live: false, stays: [stay(room.hostId, s, 0, 11 * MIN)] },
+      sessionB,
+    ],
+  });
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: {
+      endedAt: new Date(s.getTime() + 16 * MIN),
+      streamReportReadySessionIds: ["A"],
+      lastStreamSessionId: "A",
+    },
+  });
+  let release = () => {};
+  fakeStream.getGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const hostEnd = new Date(s.getTime() + 14 * HOUR + MIN);
+
+  const decision = decideSlotOutcome(await loadSlot(room.occurrenceId), {
+    now: new Date(room.endsAt.getTime() + ATTENDANCE_SETTLE_DELAY_MS + 2 * MIN),
+    outages: [],
+  });
+  await waitFor(async () => fakeStream.gets >= 1);
+  // The host's end commits while Stream is being read; its lookup named no session.
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { endedAt: hostEnd, endedReason: "call_ended" },
+  });
+  release();
+
+  expect(await decision).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(
+    (
+      await prisma.meeting.findUniqueOrThrow({
+        where: { id: room.meetingId },
+        select: { attendanceSettledAt: true },
+      })
+    ).attendanceSettledAt,
+  ).toBeNull();
+
+  fakeStream.getGate = null;
+  sessionB.hiddenFromStats = false;
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["A", "B"] },
+  });
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(hostEnd.getTime() + READ_AT),
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
 });
