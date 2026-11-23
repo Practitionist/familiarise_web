@@ -10,7 +10,7 @@ jest.mock("../../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
-import { AWAITING_HUMAN, NEEDS_HUMAN } from "@/lib/booking/misses";
+import { AWAITING_HUMAN, needsHumanWhere } from "@/lib/booking/misses";
 import { RELEASABLE_PAYMENT } from "@/scripts/earnings/release-earnings";
 
 type Row = Record<string, unknown>;
@@ -57,7 +57,7 @@ describe.each(["NOBODY_JOINED", "OFFLINE"])("a paid %s session", (outcome) => {
 
   it("is awaiting a human and listed in the ops queue", () => {
     expect(matches(occurrence, AWAITING_HUMAN)).toBe(true);
-    expect(matches(occurrence, NEEDS_HUMAN)).toBe(true);
+    expect(matches(occurrence, needsHumanWhere(new Date()))).toBe(true);
   });
 
   it("keeps its booking from completing and its earning from releasing", () => {

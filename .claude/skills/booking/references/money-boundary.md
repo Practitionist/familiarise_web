@@ -580,7 +580,8 @@ back: a return needs 24 hours of notice (`returnBlock` in
 `lib/booking/session-return-rules.ts`), a reschedule release needs 24 hours of
 notice on every session it moves (`RESCHEDULE_MIN_LEAD_HOURS` in the reschedule
 route), the only single-session cancel is the class host's, and a consultee who
-does not join is `LEARNER_ABSENT`, written as COMPLETED. Plan-end settlement
+does not join is `LEARNER_ABSENT`, written as COMPLETED (a subscription's earning is not
+held for the unconfirmed verdict). Plan-end settlement
 therefore counts such a session as delivered and never refunds it; only host- or
 platform-caused misses (voided, never placed, or a release by the expert that was
 never re-placed) stay refundable.
@@ -645,10 +646,26 @@ session that waits for ops: an `INCONCLUSIVE` verdict, a declined consultation
 host no-show, a maintenance-cut call, and a `NOBODY_JOINED` or `OFFLINE` verdict
 on a booking with a `SUCCEEDED` payment on any rail. `auto-complete-appointments`
 will not complete its booking, `release-earnings` keeps its earnings `PENDING`
-(`RELEASABLE_PAYMENT`), and the ops card lists it through `NEEDS_HUMAN`. The only
-exit is `session.set-outcome`; nothing is refunded or released automatically. A
-free session where nobody joined has no money to hold and completes. Widen this
-predicate, never a caller's copy of it.
+(`RELEASABLE_PAYMENT`), and the ops card lists it through `needsHumanWhere(now)`
+(`AWAITING_HUMAN`, a voided paid trial, and a negative verdict whose 48-hour window
+closed unconfirmed). The exit is `session.set-outcome`; nothing is refunded or
+released automatically. A free session where nobody joined has no money to hold and
+completes. Widen this predicate, never a caller's copy of it.
+
+A negative verdict (`NEGATIVE_MONEY_OUTCOMES`: `HOST_ABSENT`, `CUT_SHORT`,
+`LEARNER_ABSENT`) is written with `outcomeConfirmedAt` null. The only money reader of
+that stamp is `release-earnings`: `UNCONFIRMED_LEARNER_ABSENT` inside
+`RELEASABLE_PAYMENT` keeps the earning `PENDING` (never `HELD`), scoped like
+`EARNINGS_HOLDING_MISS`, so a subscription is excluded. `confirmClosedOutcomes`
+(`lib/booking/session-outcome-sweep.ts`, run by `auto-complete-appointments`) stamps
+a verdict by CAS 48 hours after `outcomeAt` only on strong evidence
+(`judgeOutcomeEvidence`); a weak one stays for ops, who confirm it with
+`session.confirm-outcome` (`confirmSessionOutcome`, which leaves `outcomeAt` alone)
+or decide it with `session.set-outcome` (a negative outcome is stamped at once, any
+other clears the stamp). Never let a reader treat a null stamp as confirmed. The
+detector's claim, the void refund and the class reliability flag do not read the
+stamp yet, and participant reports and notices do not exist yet: both are planned in
+`docs/decisions/2026-11-23-session-outcome-report-window.md`.
 
 A parked session cannot wait silently. After 72 hours `alertStaleNeedsHuman`
 records a standing finding; after 7 days (`NEEDS_HUMAN_ESCALATE_DAYS`,

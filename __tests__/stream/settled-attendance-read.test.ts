@@ -281,9 +281,16 @@ it("a read past its deadline is out-of-time and stops asking Stream", async () =
 it("a session whose report is not announced is read only when our webhooks corroborate the list", async () => {
   const unannounced = { readySessionIds: ["s1", "s3"] };
   expect(await read(unannounced)).toEqual({ kind: "not-final" });
-  expect((await read({ ...unannounced, lastKnownSessionId: "s2" })).kind).toBe(
-    "read",
-  );
+  expect(
+    await read({ ...unannounced, lastKnownSessionId: "s2" }),
+  ).toMatchObject({ kind: "read", corroboratedSessionIds: ["s2"] });
+});
+
+it("a read in which every session was announced ready names no corroborated session", async () => {
+  expect(await read({ lastKnownSessionId: "s2" })).toMatchObject({
+    kind: "read",
+    corroboratedSessionIds: [],
+  });
 });
 
 it("a session announced or seen elsewhere that stats do not list keeps the record not final", async () => {
