@@ -63,6 +63,7 @@ import {
 } from "@/lib/booking/entitlement";
 import {
   alertStaleNeedsHuman,
+  confirmableVerdictWhere,
   confirmClosedOutcomes,
   escalateAgedNeedsHuman,
   decideSlotOutcome,
@@ -77,11 +78,7 @@ import {
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
-import {
-  AWAITING_HUMAN,
-  UNSETTLED_MISS,
-  confirmableVerdictWhere,
-} from "@/lib/booking/misses";
+import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";

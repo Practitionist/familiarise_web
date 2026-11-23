@@ -52,13 +52,14 @@ import {
   transitionParticipant,
 } from "./participants";
 import {
+  AGREED_VERDICT,
   agedNeedsHumanWhere,
-  confirmableVerdictWhere,
   isNegativeMoneyOutcome,
   needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
   OUTCOME_REPORT_WINDOW_HOURS,
   reportWindowClosesAt,
+  unconfirmedClosedVerdictWhere,
   type NegativeMoneyOutcome,
 } from "./misses";
 import { judgeOutcomeEvidence } from "./outcome-evidence";
@@ -785,6 +786,13 @@ export async function alertStaleNeedsHuman(
 
 /** Closed unconfirmed verdicts judged per page; the pass pages by keyset until its deadline, so weak rows cannot hide older ones. */
 const OUTCOME_CONFIRM_PAGE = 100;
+
+/** The window-close pass's candidates: a closed unconfirmed verdict, or one an agreeing report may apply early. */
+export function confirmableVerdictWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  return { OR: [unconfirmedClosedVerdictWhere(now), AGREED_VERDICT] };
+}
 
 /** Select on `Appointment`: who may report on each side of its sessions. */
 export const REPORT_PARTIES_SELECT = {

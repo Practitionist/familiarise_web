@@ -130,24 +130,17 @@ const reportCaseWhere = (
   },
 });
 
-/** The window-close pass's candidates: a closed unconfirmed verdict, or one an agreeing report may apply early. */
-export function confirmableVerdictWhere(
-  now: Date,
-): Prisma.AppointmentOccurrenceWhereInput {
-  return {
-    OR: [
-      unconfirmedClosedVerdictWhere(now),
-      ...NEGATIVE_MONEY_OUTCOMES.filter(
-        (outcome) => REPORT_EFFECT[outcome].agree.length > 0,
-      ).map((outcome) => ({
-        ...APPLIED_UNCONFIRMED,
-        outcome,
-        outcomeAt: { not: null },
-        supportCases: reportCaseWhere([...REPORT_EFFECT[outcome].agree]),
-      })),
-    ],
-  };
-}
+/** An applied unconfirmed verdict an agreeing report may apply before its window closes. */
+export const AGREED_VERDICT = {
+  ...APPLIED_UNCONFIRMED,
+  outcomeAt: { not: null },
+  OR: NEGATIVE_MONEY_OUTCOMES.filter(
+    (outcome) => REPORT_EFFECT[outcome].agree.length > 0,
+  ).map((outcome) => ({
+    outcome,
+    supportCases: reportCaseWhere([...REPORT_EFFECT[outcome].agree]),
+  })),
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /** An applied unconfirmed verdict with a dispute or agreement filed against it: ops see both statements. */
 export const REPORTED_VERDICT = {
