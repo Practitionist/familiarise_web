@@ -832,8 +832,8 @@ export interface OutcomeConfirmRun {
   /** Judged weak this run: left unconfirmed on the needs-human list for ops. */
   weak: number;
   errors: string[];
-  /** Where the next run resumes, or null once the scan reached the end and wraps to the newest. */
-  checkpoint: string | null;
+  /** Where the next run resumes, null once the scan reached the end and wraps, or absent when the pass was skipped and the stored cursor stands. */
+  checkpoint?: string | null;
 }
 
 /** The job whose run trail keeps the pass's cursor between runs. */
@@ -926,17 +926,22 @@ export async function confirmClosedOutcomes(
   now: Date,
   pastDeadline: () => boolean,
 ): Promise<OutcomeConfirmRun> {
-  const run: OutcomeConfirmRun = {
-    confirmed: 0,
-    weak: 0,
-    errors: [],
-    checkpoint: null,
-  };
+  const run: OutcomeConfirmRun = { confirmed: 0, weak: 0, errors: [] };
+  // Past its share before it starts, the pass reads nothing and leaves the stored cursor in place.
+  if (pastDeadline()) return run;
   const where = unconfirmedClosedVerdictWhere(now);
   // Resumes where the last run stopped, so a weak backlog cannot hide older verdicts run after run.
-  let after: Keyset | null = null;
+  let after: Keyset | null;
   try {
     after = decodeCursor(await readJobCheckpoint(CONFIRM_CHECKPOINT_JOB));
+  } catch (error) {
+    // Without the stored cursor nothing is read, and the stored one stands for the next run.
+    run.errors.push(
+      `Failed to read the closed-verdict cursor: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return run;
+  }
+  try {
     while (!pastDeadline()) {
       // "query", not a join: a join reads nested timestamps in the session zone.
       const rows: ConfirmRow[] = await prisma.appointmentOccurrence.findMany({
@@ -951,12 +956,13 @@ export async function confirmClosedOutcomes(
         after = null;
         break;
       }
-      if (!(await confirmPage(rows, where, now, run))) break;
-      after = { outcomeAt: last.outcomeAt, id: last.id };
-      if (rows.length < OUTCOME_CONFIRM_PAGE) {
-        after = null;
-        break;
-      }
+      const judged = await confirmPage(rows, where, now, run);
+      // A capped page stays unconfirmed, but the cursor moves past it so it cannot stall the scan.
+      after =
+        rows.length < OUTCOME_CONFIRM_PAGE
+          ? null
+          : { outcomeAt: last.outcomeAt, id: last.id };
+      if (!judged || !after) break;
     }
   } catch (error) {
     run.errors.push(

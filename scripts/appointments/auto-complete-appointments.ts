@@ -316,8 +316,8 @@ export interface AutoCompleteResult {
   classEndCreditSeatsEscalated: number;
   errors: string[];
   timestamp: string;
-  /** The window-close pass's resume cursor, kept by the run trail. */
-  checkpoint: string | null;
+  /** The window-close pass's resume cursor, kept by the run trail; absent when the pass was skipped. */
+  checkpoint?: string | null;
 }
 
 /**
@@ -1404,14 +1404,14 @@ async function autoCompleteAppointmentsUnlocked(
   }));
   const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
   let rounds = 0;
-  let checkpoint: string | null = null;
+  let checkpoint: string | null | undefined;
   try {
     // Before the drain, which can spend the whole budget, and before the alerts, so a confirmed verdict is not counted as waiting.
     const confirms = await confirmClosedOutcomes(
       new Date(),
       deadlines.confirmPastDeadline,
     );
-    checkpoint = confirms.checkpoint ?? null;
+    checkpoint = confirms.checkpoint;
     allErrors.push(...confirms.errors);
     console.log(
       `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
@@ -1489,8 +1489,8 @@ async function autoCompleteAppointmentsUnlocked(
     classEndCreditSeatsEscalated: classEnd.escalated,
     errors: allErrors,
     timestamp: new Date().toISOString(),
-    // The run trail keeps it for the window-close pass's next run.
-    checkpoint,
+    // The run trail keeps it for the window-close pass's next run; a skipped pass writes none.
+    ...(checkpoint !== undefined && { checkpoint }),
   };
 }
 

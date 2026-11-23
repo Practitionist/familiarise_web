@@ -100,6 +100,7 @@ const tx = prisma as unknown as Tx;
 beforeEach(() => {
   occurrences.rows.splice(0, occurrences.rows.length);
   jest.clearAllMocks();
+  jest.mocked(readJobCheckpoint).mockImplementation(async () => null);
 });
 
 describe("the predicates", () => {
@@ -184,11 +185,16 @@ describe("the window-close pass", () => {
         endsAt: hoursAgo(9),
       });
     }
+    // The stored cursor sits just before the capped page; the run must move past it, not hand it back.
+    const stored = `${hoursAgo(49).toISOString()}|zzz`;
+    jest.mocked(readJobCheckpoint).mockImplementation(async () => stored);
     try {
       const run = await confirmClosedOutcomes(NOW, () => false);
       expect(run.confirmed).toBe(0);
       expect(run.errors).toHaveLength(1);
       expect(row("strong").outcomeConfirmedAt).toBeNull();
+      // The page was the last, so the scan wraps to the newest instead of revisiting it.
+      expect(run.checkpoint).toBeNull();
     } finally {
       incidents.rows.splice(0, incidents.rows.length);
     }
@@ -217,16 +223,17 @@ describe("the window-close pass", () => {
       );
       return ordered.slice(0, (args as unknown as { take: number }).take);
     });
+    // One check before the cursor lookup and one before the first page; the next stops the run.
     const onePage = () => {
       let checks = 0;
-      return () => checks++ > 0;
+      return () => checks++ > 1;
     };
     let stored: string | null = null;
     jest.mocked(readJobCheckpoint).mockImplementation(async () => stored);
     const runs = [];
     for (let i = 0; i < 4; i++) {
       const run = await confirmClosedOutcomes(NOW, onePage());
-      stored = run.checkpoint;
+      if (run.checkpoint !== undefined) stored = run.checkpoint;
       runs.push(run);
     }
     expect(runs.map((r) => r.confirmed)).toEqual([0, 0, 1, 0]);
@@ -236,11 +243,24 @@ describe("the window-close pass", () => {
     expect(runs[3].checkpoint).not.toBeNull();
   });
 
-  it("starts nothing past its deadline", async () => {
+  it("starts nothing past its deadline, not even the cursor lookup, and leaves the stored cursor standing", async () => {
     occurrences.rows.push(verdict("strong"));
     const run = await confirmClosedOutcomes(NOW, () => true);
     expect(run.confirmed).toBe(0);
+    expect(readJobCheckpoint).not.toHaveBeenCalled();
     expect(occurrences.findMany).not.toHaveBeenCalled();
+    expect(run).not.toHaveProperty("checkpoint");
+  });
+
+  it("reads nothing when the cursor lookup fails, and leaves the stored cursor standing", async () => {
+    occurrences.rows.push(verdict("strong"));
+    jest
+      .mocked(readJobCheckpoint)
+      .mockRejectedValueOnce(new Error("trail unavailable"));
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.errors).toHaveLength(1);
+    expect(occurrences.findMany).not.toHaveBeenCalled();
+    expect(run).not.toHaveProperty("checkpoint");
   });
 });
 
