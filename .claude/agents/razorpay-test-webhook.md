@@ -2,7 +2,7 @@
 name: razorpay-test-webhook
 description: Tests this repo's Razorpay webhook handler (POST /api/webhooks/razorpay) locally or via Jest by sending realistic signed payloads for orders, payments, refunds, disputes, payouts, and fund account validations.
 tools: Glob, Grep, Read, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: red
 ---
 

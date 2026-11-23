@@ -2,7 +2,7 @@
 name: razorpay-subscription
 description: Explains and works on recurring billing in this repo (in-house BillingSubscription + jobs/billing/ + per-cycle Razorpay Orders), or consults references/not-used-here/subscriptions.md if evaluating Razorpay's /v1/subscriptions API.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: blue
 ---
 
