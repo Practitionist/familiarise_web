@@ -2,7 +2,7 @@
 name: razorpay-webhook
 description: Works on this repo's Razorpay and RazorpayX webhook ingress, Zod schemas, deduplication, and event dispatch (app/api/webhooks/razorpay/route.ts, app/api/webhooks/razorpay-dispatch.ts, schemas/webhooks/razorpay.ts, lib/payments/webhooks/handlers.ts).
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: purple
 ---
 

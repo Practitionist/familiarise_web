@@ -2,7 +2,7 @@
 name: razorpay-one-time-payment
 description: Works on this repo's Razorpay Order + Standard Checkout + saved-card payment flow (lib/payments/core/razorpay.ts, lib/payments/index.ts, app/api/checkout/route.ts, app/api/checkout/verify-signature/route.ts). Use when modifying checkout, order creation, saved cards, or signature verification.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: cyan
 ---
 
