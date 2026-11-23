@@ -40,6 +40,7 @@ import {
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
+import { restoreEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import {
   isRestoreMiss,
   parkParentForUnrestoredEnding,
@@ -89,6 +90,7 @@ export async function acceptProposal(args: {
     where: { id: args.rescheduleRequestId },
     select: {
       id: true,
+      appointmentId: true,
       status: true,
       expiresAt: true,
       proposedTimes: {
@@ -138,6 +140,8 @@ export async function acceptProposal(args: {
         to: "ACCEPTED",
         data: { resolvedById: args.resolvedById },
       });
+      // The reallocation buffer lasts only while the proposal is open.
+      await restoreEarningsHold(tx, request.appointmentId);
       // The original times are free now; waitlisters hear in this commit.
       await stageNoticesForFreedWindows(
         tx,

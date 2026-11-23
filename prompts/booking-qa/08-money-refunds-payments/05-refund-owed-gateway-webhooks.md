@@ -133,7 +133,7 @@ VALUES (gen_random_uuid(), :amount, 'INR', 'PENDING', 'pending_qa-MO-59', 'cance
 
 **Setup (BLOCKED on preview; local with test keys and the webhook secret, owner; salvaged from old 018 Phase 1):** B1 starts a non-mock S-08 checkout. Record the payment id, order id and amount.
 
-**Steps:** owner posts a signed `payment.captured` for the order with event id `qa-MO-63-1`; then the identical delivery again; then the same capture under a new event id `qa-MO-63-2`.
+**Steps:** owner posts a signed `payment.captured` for the order with event id `qa-MO-63-1` (sent as the `x-razorpay-event-id` header, as every event id in this folder is); then the identical delivery again; then the same capture under a new event id `qa-MO-63-2`.
 
 **Expect:** all three answer `200`. After all three:
 
@@ -146,7 +146,13 @@ SELECT (SELECT count(*) FROM "LedgerTransaction" WHERE "idempotencyKey" = 'booki
 
 journals 1, earnings 1, legs 1, status `SUCCEEDED`; the occurrence non-tentative; one booked notification per party.
 
-**Probe further:** record every event id the owner posts in this folder, and retire only those at cleanup, never by prefix (another run's fixtures share it): `UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now() WHERE "eventId" IN ('qa-MO-63-1', 'qa-MO-63-2' /* plus the ids posted in MO-64 and MO-65 */);`.
+**Probe further:** the route stores `WebhookEvent."eventId"` as `<event type>:<entity id>:<event id>` (for example `payment.captured:pay_…:qa-MO-63-1`), taking the event id from the header only when it is 1 to 64 letters, digits, `_` or `-`, and a body hash otherwise; confirm each posted delivery's row exists under its `qa-` id before cleanup. Record every event id and entity id the owner posts in this folder, and retire only those, never by prefix (another run's fixtures share the ids). The match is on the last part and the entity together, so a real gateway event, which ends in its own `evt_` id, can never match:
+
+```sql
+UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now()
+WHERE split_part("eventId", ':', 3) IN ('qa-MO-63-1', 'qa-MO-63-2' /* plus the ids posted in MO-64, MO-65, MO-70 and MO-71 */)
+  AND split_part("eventId", ':', 2) IN (:postedEntityIds);
+```
 
 ## MO-64 — Out-of-order events: `order.paid` first, a failure after success
 
@@ -222,10 +228,69 @@ journals 1, earnings 1, legs 1, status `SUCCEEDED`; the occurrence non-tentative
 
 **Probe further:** the retry button: does it reuse the same `clientIdempotencyKey`?
 
-## MO-70 — Folder money ledger and cleanup
+## MO-70 — A gateway-captured subscription purchase confirms, first purchase and renewal `[local]`
+
+**Why it matters:** a mock payment skips capture validation, so only a real capture proves that a subscription's order notes match what the webhook expects; a mismatch parks a charged sale for an operator.
+
+**Setup (BLOCKED on preview; local with test keys and the webhook secret, owner):** B1 starts a non-mock subscription checkout (first purchase) and stops before paying. Record the payment id, order id and amount. Repeat once for a renewal of an active subscription (the renewal checkout), as a second row.
+
+**Steps:** for each row, copy the notes from the order the app actually minted (read them from the created order at the gateway, or from the stored payment row's source; never hand-write them) into a signed `payment.captured` for that order with a fresh event id (`qa-MO-70-1`, `qa-MO-70-2`), and post it.
+
+**What this proves and what it doesn't:** it proves the capture handler confirms a subscription when the payment entity carries the order's notes. It proves nothing about the real payload: a real `payment.captured` hands the handler the payment entity's notes, `order.paid` the order's, and the browser return reads the notes from a gateway fetch of the payment, so a recipe that copies the order's notes supplies exactly what is in question. MO-72 covers the real payload; never record a pass here as a pass for it.
+
+**Expect:** the delivery answers `200`. For each payment:
+
+- `paymentStatus = SUCCEEDED`, `description` carrying no `REQUIRES_MANUAL_RECOVERY` text, and its `appointmentId` still the plan's placeholder appointment made at checkout (the capture creates no second subscription or appointment).
+- The buyer's `AppointmentParticipant` on that appointment `CONFIRMED` (it was `HELD`).
+- The `Subscription` still `PENDING` with no sessions placed: the capture moves no plan status, and the plan now waits in the expert's Requests for its first cycle to be allocated.
+- Renewal row only: a new `Subscription` whose `renewedFromSubscriptionId` is the predecessor's id, with its own `schedulingPeriodStartsAt` and `schedulingPeriodEndsAt`; the predecessor row is not changed by the capture.
+- Exactly one `LedgerTransaction` with `idempotencyKey = 'booking:<paymentId>'`.
+- One `ConsultantEarnings` row per sold cycle, `cycleOrdinal` 0 to N−1 with no gaps, where N is the sold `sessionsTotal` divided by the sold `sessionsPerWeek` (the subscription's own columns, or its plan's where those are null), rounded up (16 sessions at 2 a week is 8 rows, 0 to 7); every row's `holdUntil` null; `grossAmount` summed over the rows equals the payment's `originalAmount` for a one-expert plan.
+
+Run MQ-1 for each, and the MO-63 count query read as journals 1, earnings N, legs 1, then:
+
+```sql
+SELECT array_agg("cycleOrdinal" ORDER BY "cycleOrdinal") AS ordinals,
+       sum("grossAmount") AS gross, count(*) FILTER (WHERE "holdUntil" IS NOT NULL) AS held
+FROM "ConsultantEarnings" WHERE "paymentId" = :pid;
+```
+
+**Probe further:** on `dev` before the fix for issue #2962 the expected result is the parked state, and the report must say which of these it saw: (a) parked: the plan, its placeholder appointment and the `HELD` participant exist from checkout but look unpaid, the payment is `SUCCEEDED` with a `REQUIRES_MANUAL_RECOVERY` description, one `LedgerTransaction` with `idempotencyKey = 'unapplied:<paymentId>'`, no `booking:` journal and no earnings; (b) no booking at all (no plan or appointment for the payment); (c) no journals at all, not even the `unapplied:` receipt. Only (a) is the known parked state; (b) and (c) are separate findings. Retire the posted event ids at cleanup as in MO-63.
+
+## MO-71 — A gateway-captured paid trial confirms on the order minted at request time `[local]`
+
+**Why it matters:** a paid trial's order is minted when the trial is requested, before any pay-link visit; a capture on it must confirm the trial the same way a checkout capture does.
+
+**Setup (BLOCKED on preview; local with test keys and the webhook secret, owner):** TR-04's held paid trial (B1, ₹100), without Mock Pay (a pay link has no mock path). Record the trial id, the payment id and the order id.
+
+**Steps:** copy the notes from the order the app actually minted (read them from the created order at the gateway, or from the stored payment row's source; never hand-write them) into a signed `payment.captured` for that order with event id `qa-MO-71-1`, and post it.
+
+**What this proves and what it doesn't:** as MO-70, the copied notes carry the `trialId` the handler needs, so this proves the handler and nothing about the payment entity a real capture delivers. MO-72 covers the real payload.
+
+**Expect:** the delivery answers `200`; `paymentStatus = SUCCEEDED` with no `REQUIRES_MANUAL_RECOVERY` description; the `Trial` `SCHEDULED` with `paymentId` set to this payment and `pendingPaymentUrl` and `paymentDueAt` null; its occurrence non-tentative; one `LedgerTransaction` with `idempotencyKey = 'booking:<paymentId>'`; one `ConsultantEarnings` row (record its `holdUntil`, MO-48).
+
+**Probe further:** on `dev` before the fix for issue #2962 the expected result is the parked state, and the report must say which of these it saw: (a) parked: the trial still `AWAITING_PAYMENT` with its tentative occurrence, the payment `SUCCEEDED` with a `REQUIRES_MANUAL_RECOVERY` description, one `unapplied:<paymentId>` journal, no `booking:` journal and no earnings; (b) no trial or appointment for the payment; (c) no journals at all. Only (a) is the known parked state. Retire the event id at cleanup as in MO-63.
+
+## MO-72 — A real test-mode purchase confirms through whichever door wins `[local]`
+
+**Why it matters:** MO-70 and MO-71 hand the handler the order's notes; only a real purchase shows what notes the payment entity carries and whether the door that confirms first can confirm on them.
+
+**Setup (local with test keys, owner-run; real gateway webhooks reach the server only through a tunnel, so record whether one was up):** three rows, each paid for real in Razorpay test mode through the browser, never Mock Pay and never a hand-posted delivery: B1 buys a subscription (first purchase); B1 renews an active subscription (the renewal checkout); B1 pays TR-04's held paid trial at its pay page (`/checkout/pay/<paymentId>`). Record each payment id, order id and gateway payment id.
+
+**Steps:** for each row:
+
+1. Pay with a test card and let the browser return finish.
+2. Read which door confirmed: neither door writes a record saying it won. The payment's `capturedAt` is stamped by the transaction that confirmed. The browser return writes a `SystemEvent` (message `client-side payment confirmation`, `correlationId` = the order id) just before it runs the handler; the webhook door writes its `WebhookEvent` (`eventId` = `<event type>:<entity id>:<gateway event id>`) before its handler runs and sets `processedAt` when the handler finishes. A door whose start record is later than `capturedAt` lost. If both start before `capturedAt`, the rows cannot name the winner: record "undecided" with all four times (`SystemEvent.createdAt`, `WebhookEvent.receivedAt`, `capturedAt`, `processedAt`). Without a tunnel the browser return is the only door; say so.
+3. Read the payment entity's notes and the order's notes from the gateway (test dashboard, or the Razorpay MCP's `fetch_payment` and `fetch_order`), and the `payment.captured` `WebhookEvent.payload` notes if one arrived. Put the two notes objects side by side in the report as evidence; never copy one into the other or post a delivery built from them.
+
+**Expect:** when the payment entity's notes match the order's: the subscription rows as MO-70's Expect and the trial row as MO-71's Expect, with the same pre-fix control on `dev`. When the payment entity's notes are empty or lack the fields the order carries, the expected result depends on PR #2969 (a capture on a booking that already exists, identified from the app's own rows); until it is merged, grade nothing for that branch: record the state found, using MO-70's and MO-71's (a)/(b)/(c) wording, and the door that produced it. Either way: one `booking:` journal at most, and the second door to arrive changes nothing.
+
+**Probe further:** the buyer's success page while the plan or trial is parked: does it say "confirming your booking" forever, or tell them anything true? These are real gateway events; leave their `WebhookEvent` rows as they are at cleanup.
+
+## MO-73 — Folder money ledger and cleanup
 
 **Why it matters:** refunds and ledger rows are append-only; the report must list what stays.
 
-**Steps:** list every payment, refund, credit note, ledger transaction and earnings row this folder created (MO-29's query plus MQ-1 per payment). Cancel live bookings through the product. Delete only mock-payment graphs (R-09 order). Retire synthetic `WebhookEvent` rows. Clear QA-ONLY markers (`refundOwed*` to null) only after their case's assertions, and restore any shifted `holdUntil`, refund status or occurrence time.
+**Steps:** list every payment, refund, credit note, ledger transaction and earnings row this folder created (MO-29's query plus MQ-1 per payment). Cancel live bookings through the product. Delete only mock-payment graphs (R-09 order). Retire synthetic `WebhookEvent` rows with MO-63's query. Clear QA-ONLY markers (`refundOwed*` to null) only after their case's assertions, and restore any shifted `holdUntil`, refund status or occurrence time.
 
 **Expect:** a ledger table in the report: id, type, amount (₹), status, kept/deleted, why.
