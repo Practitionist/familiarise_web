@@ -292,6 +292,12 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Someone else was booking at the same moment. You weren't charged. Please try again in a moment.",
   },
+  // Sent only for a timeout that nothing committed behind; the client retries it like the busy codes.
+  [ErrorTypes.DATABASE_BUSY]: {
+    title: "The booking system is briefly busy",
+    description:
+      "We couldn't finish your booking just now. Your card was not charged — please try again in a moment.",
+  },
   // B4 — the optimistic capacity pre-check. Terminal until someone cancels, so
   // this is deliberately NOT a "wait and retry" and points at the two ways out
   // (a different time, or the waitlist) exactly like the #1757 EVENT_FULL row.
