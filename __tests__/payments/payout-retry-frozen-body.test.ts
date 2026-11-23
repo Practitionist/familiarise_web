@@ -101,9 +101,12 @@ import prisma from "@/lib/prisma";
 import * as razorpayPayouts from "@/lib/payments/payouts/razorpay-payouts";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import {
+  approvePayout,
+  createPayoutBatch,
   handlePayoutWebhook,
   processApprovedPayouts,
 } from "@/lib/payments/payouts/payout-service";
+import { reportSentryError } from "@/lib/observability/report";
 import { buildPayoutCompletionPostings } from "@/lib/payments/payouts/shared-lifecycle";
 import { getIndianFinancialYear } from "@/lib/payments/tax/tds-service";
 import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
@@ -154,6 +157,25 @@ function mockPrismaDouble() {
     },
   };
   const rows = (table: string) => (tables[table] ??= []);
+  // Column defaults from prisma/schema.prisma for the rows the app creates.
+  const DEFAULTS: Record<string, Row> = {
+    consultantPayout: {
+      retryCount: 0,
+      tdsDeducted: 0,
+      netAmount: null,
+      tdsRateAppliedBps: null,
+      tdsFinancialYear: null,
+      tdsCatchUpFy: null,
+      tdsCarryPaise: 0,
+      tdsCreditPaise: 0,
+      clawbackAmountPaise: 0,
+      providerPayoutId: null,
+      failureReason: null,
+      processedAt: null,
+      gatewayUtr: null,
+      lastReconciledAt: null,
+    },
+  };
   const norm = (v: unknown) => (v === undefined ? null : v);
   const eq = (a: unknown, b: unknown) =>
     a instanceof Date && b instanceof Date
@@ -342,19 +364,32 @@ function mockPrismaDouble() {
         by: string[];
         where?: Where;
         _sum: Record<string, unknown>;
+        having?: Record<string, { _sum: Record<string, unknown> }>;
       }) => {
         const groups = new Map<string, Row[]>();
         for (const r of find(args.where)) {
           const key = JSON.stringify(args.by.map((b) => r[b]));
           groups.set(key, [...(groups.get(key) ?? []), r]);
         }
-        return [...groups.values()].map((g) => ({
-          ...Object.fromEntries(args.by.map((b) => [b, g[0][b]])),
-          _sum: sumOf(g, args._sum),
-        }));
+        return [...groups.values()]
+          .map((g) => ({
+            ...Object.fromEntries(args.by.map((b) => [b, g[0][b]])),
+            _sum: sumOf(g, args._sum),
+          }))
+          .filter((g) =>
+            Object.entries(args.having ?? {}).every(([f, h]) =>
+              fieldMatches(g._sum[f], h._sum),
+            ),
+          );
       },
       create: async (args: { data: Row }) => {
-        const row = { id: `${table}_${rows(table).length + 1}`, ...args.data };
+        const row = {
+          id: `${table}_${rows(table).length + 1}`,
+          ...DEFAULTS[table],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...args.data,
+        };
         rows(table).push(row);
         return row;
       },
@@ -387,6 +422,7 @@ function mockPrismaDouble() {
     ledgerTransaction: loud("ledgerTransaction", {
       findMany: async () => [],
     }),
+    ledgerEntry: loud("ledgerEntry", { groupBy: async () => [] }),
     tdsRate: loud("tdsRate", { findFirst: async () => null }),
   };
   for (const table of [
@@ -702,7 +738,8 @@ describe("a retried consultant payout sends the body staged at its first submit"
     ).toEqual([FY]);
   });
 
-  it("holds the retry, sending nothing, when another payout took the FY catch-up while it waited", async () => {
+  /** A's first submit takes the FY catch-up; while A waits re-armed, instant payout B takes it too. */
+  async function catchUpTakenWhileWaiting() {
     seed({ priorAmountPaise: 0, priorGrossPaise: 49_000_000 });
     await firstSubmitTimesOut();
     const staged = stagedFields("po_A");
@@ -716,6 +753,17 @@ describe("a retried consultant payout sends the body staged at its first submit"
       tdsRateAppliedBps: 10,
       tdsCatchUpFy: FY,
     });
+    return staged;
+  }
+  const catchUpReports = () =>
+    jest
+      .mocked(reportSentryError)
+      .mock.calls.filter(
+        ([, opts]) => opts?.op === "payout-tds-catch-up-taken",
+      );
+
+  it("fails the retry unsent and releases its earnings when another payout took the FY catch-up while it waited", async () => {
+    await catchUpTakenWhileWaiting();
 
     const results = await processApprovedPayouts();
 
@@ -728,13 +776,75 @@ describe("a retried consultant payout sends the body staged at its first submit"
       }),
     ]);
     expect(row("consultantPayout", "po_A")).toMatchObject({
+      status: "FAILED",
+      failureReason: expect.stringContaining("TDS_CATCH_UP_TAKEN"),
+      netAmount: null,
+      tdsDeducted: 0,
+      tdsRateAppliedBps: null,
+      tdsFinancialYear: null,
+      tdsCatchUpFy: null,
+      tdsCarryPaise: 0,
+      tdsCreditPaise: 0,
+    });
+    expect(row("consultantEarnings", "e_A")).toMatchObject({
+      status: "READY",
+      payoutId: null,
+      releasedFromPayoutId: "po_A",
+    });
+    expect(catchUpReports()).toHaveLength(1);
+  });
+
+  it("pays the released earnings in the next batch under a new key, re-planned without a second catch-up", async () => {
+    await catchUpTakenWhileWaiting();
+    await processApprovedPayouts();
+
+    const batch = await createPayoutBatch(["cp_1"]);
+    expect(batch.minted).toBe(1);
+    const next = db.__tables.consultantPayout.find(
+      (p) => p.status === "PENDING",
+    );
+    expect(next).toBeDefined();
+    await approvePayout(String(next?.id), "admin_1");
+    await processApprovedPayouts();
+
+    // ₹5,30,000 this FY needs ₹530; B already holds ₹510, so the new payout withholds ₹20.
+    expect(gateway.requests).toHaveLength(2);
+    expect(gateway.requests[1]).toMatchObject({
+      referenceId: next?.id,
+      amount: 1_598_000,
+    });
+    expect(gateway.requests[1].idempotencyKey).not.toBe("payout_cp_1_week47");
+    expect(stagedFields(String(next?.id))).toMatchObject({
+      netAmount: 1_598_000,
+      tdsDeducted: 2_000,
+      tdsCatchUpFy: null,
+    });
+    expect(row("consultantEarnings", "e_A")).toMatchObject({
+      status: "BATCHED",
+      payoutId: next?.id,
+    });
+  });
+
+  it("never releases a retry that carries a gateway id when its catch-up was taken", async () => {
+    const staged = await catchUpTakenWhileWaiting();
+    row("consultantPayout", "po_A").providerPayoutId = "pout_1";
+
+    const results = await processApprovedPayouts();
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(results).toEqual([
+      expect.objectContaining({ payoutId: "po_A", success: false }),
+    ]);
+    expect(row("consultantPayout", "po_A")).toMatchObject({
       status: "APPROVED",
+      providerPayoutId: "pout_1",
       ...staged,
     });
     expect(row("consultantEarnings", "e_A")).toMatchObject({
       status: "BATCHED",
       payoutId: "po_A",
     });
+    expect(catchUpReports()).toHaveLength(1);
   });
 
   it("still plans a re-armed payout whose first attempt stopped before staging", async () => {
