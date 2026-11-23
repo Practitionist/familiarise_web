@@ -92,13 +92,15 @@ const mockDb = strict("prisma", {
   organizationPayout: strict("prisma.organizationPayout", {
     findMany: jest.fn(async () => []),
   }),
-  $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(mockDb)),
+  $transaction: jest.fn(
+    async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(mockDb),
+  ),
   $executeRaw: jest.fn(async () => 0),
 });
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  get default() {
+  get default(): unknown {
     return mockDb;
   },
 }));

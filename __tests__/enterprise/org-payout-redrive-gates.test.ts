@@ -136,12 +136,14 @@ const mockDb = strict("prisma", {
   orgAuditLog: strict("prisma.orgAuditLog", {
     create: jest.fn(async () => ({})),
   }),
-  $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(mockDb)),
+  $transaction: jest.fn(
+    async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(mockDb),
+  ),
 });
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  get default() {
+  get default(): unknown {
     return mockDb;
   },
 }));
@@ -154,7 +156,7 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...a: unknown[]) => reportSentryError(...a),
   reportSentryMessage: jest.fn(),
 }));
-const recordSystemErrorSafe = jest.fn(async () => undefined);
+const recordSystemErrorSafe = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemErrorSafe: (...a: unknown[]) => recordSystemErrorSafe(...a),
   recordSystemEventSafe: jest.fn(async () => undefined),
@@ -239,7 +241,7 @@ function addPayout(id: string, over: Row = {}): Row {
   return row;
 }
 const earningsOf = (id: string) =>
-  mockEarnings.filter((e) => e.id.toString().startsWith(`${id}_`));
+  mockEarnings.filter((e) => String(e.id).startsWith(`${id}_`));
 
 beforeEach(() => {
   process.env.ENABLE_LIVE_PAYOUTS = "true";
