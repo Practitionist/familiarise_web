@@ -22,10 +22,18 @@ function strict<T extends object>(name: string, impl: T): T {
   });
 }
 
-/** The selection's rows, oldest refund first. */
+/** The selection's rows, oldest refund first: one refunded wholly outside the app, one partly. */
 const mockSelected = [
-  { id: "pay-1to1", refundedAt: new Date(NOW.getTime() - 90 * MIN) },
-  { id: "pay-seat", refundedAt: new Date(NOW.getTime() - 30 * MIN) },
+  {
+    id: "pay-1to1",
+    refundedAt: new Date(NOW.getTime() - 90 * MIN),
+    outsidePaise: BigInt(50_000),
+  },
+  {
+    id: "pay-seat",
+    refundedAt: new Date(NOW.getTime() - 30 * MIN),
+    outsidePaise: BigInt(70_000),
+  },
 ];
 const untitled = {
   consultation: null,
@@ -94,7 +102,7 @@ jest.mock("@/lib/prisma", () => ({
 
 import { readNeedsAttention } from "@/lib/backoffice/needs-attention";
 
-it("says who was refunded what for which booking, what to do, and links the booking's Ops actions", async () => {
+it("says who was refunded what for which booking, how much outside the app, what to do, and links the booking's Ops actions", async () => {
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   const queues = await readNeedsAttention(NOW);
   expect(warn).not.toHaveBeenCalled();
@@ -125,7 +133,7 @@ it("says who was refunded what for which booking, what to do, and links the book
       {
         id: "pay-seat",
         state:
-          "A buyer was refunded ₹1,200.00 in full outside the app for Tax basics, and their seat is still confirmed. If the seat should end, ask the host to remove them; no further refund is due.",
+          "A buyer was refunded ₹1,200.00 in full for Tax basics, ₹700.00 of it outside the app, and their seat is still confirmed. If the seat should end, ask the host to remove them; no further refund is due.",
         ageMs: 30 * MIN,
         attempts: null,
         lastError: null,

@@ -190,6 +190,9 @@ it("lists a live booking or seat a refund made outside the app covered in full",
       },
     ],
   });
+  expect(items.find((i) => i.id === toppedUp.payment.id)?.state).toBe(
+    "Database tier consultee was refunded ₹500.00 in full for Database tier consultation, ₹300.00 of it outside the app, and the booking is still live. If it should end, cancel it from the booking's Ops actions; no further refund is due.",
+  );
   expect(items.find((i) => i.id === seat.payment.id)?.state).toMatch(
     /, and their seat is still confirmed\. If the seat should end, ask the host to remove them; no further refund is due\.$/,
   );
