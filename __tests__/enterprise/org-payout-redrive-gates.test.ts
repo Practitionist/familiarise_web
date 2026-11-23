@@ -24,7 +24,8 @@ type Where = Record<string, unknown>;
 function matches(row: Row, where: Where): boolean {
   return Object.entries(where).every(([k, v]) => {
     if (v === null) return (row[k] ?? null) === null;
-    if (v && typeof v === "object" && !(v instanceof Date)) {
+    if (v instanceof Date) return (row[k] as Date)?.getTime() === v.getTime();
+    if (v && typeof v === "object") {
       const op = v as { in?: unknown[]; lt?: Date };
       if (op.in) return op.in.includes(row[k]);
       if (op.lt) return (row[k] as Date) < op.lt;
@@ -65,8 +66,9 @@ const write = (row: Row, data: Row) => {
 };
 const mockDb = strict("prisma", {
   organizationPayout: strict("prisma.organizationPayout", {
+    // Copies, as Prisma returns: a later write never changes what a reader saw.
     findMany: jest.fn(async ({ where }: { where: Where }) =>
-      mockPayouts.filter((r) => matches(r, where)),
+      mockPayouts.filter((r) => matches(r, where)).map((r) => ({ ...r })),
     ),
     findUnique: jest.fn(async ({ where }: { where: Where }) => byId(where.id)),
     findUniqueOrThrow: jest.fn(async ({ where }: { where: Where }) =>
@@ -326,6 +328,28 @@ describe("the re-drive reconciles and never sends", () => {
       expect(payout.status).toBe(settled);
     },
   );
+
+  it("does not pull back a newer claim that landed while its lookup was out", async () => {
+    const payout = stale();
+    listPayouts.mockImplementation(async () => {
+      // Another pass re-armed and claimed it again; its create is accepted but not yet bound.
+      write(payout, { status: "APPROVED" });
+      write(payout, { status: "PROCESSING" });
+      return { entity: "collection", items: [] };
+    });
+
+    await processPendingOrgPayouts();
+
+    expect(payout).toMatchObject({
+      status: "PROCESSING",
+      gatewayPayoutId: null,
+    });
+    expect(mockStatusTrail.op_1).toEqual([
+      "PROCESSING",
+      "APPROVED",
+      "PROCESSING",
+    ]);
+  });
 });
 
 describe("before the claim, a refusing account check fails the payout", () => {
@@ -374,6 +398,48 @@ describe("before the claim, a refusing account check fails the payout", () => {
       expect(sanitizePayoutFailure(payout.failureReason as string)).toBe(
         "we couldn't send this payout",
       );
+    },
+  );
+
+  it.each([
+    [
+      "a freeze",
+      (a: Row) => {
+        a.payoutsFrozenAt = new Date();
+      },
+    ],
+    [
+      "a suspension",
+      (a: Row) => {
+        a.status = "SUSPENDED";
+      },
+    ],
+    [
+      "an account change",
+      (a: Row) => {
+        a.payoutsAllowedAfter = new Date(
+          Date.now() + PAYOUT_ACCOUNT_COOLING_OFF_MS,
+        );
+      },
+    ],
+  ])(
+    "%s landing after the first read, during the balance read, still stops the claim",
+    async (_label, change) => {
+      const payout = addPayout("op_1");
+      getAccountBalance.mockImplementation(async () => {
+        change(payout.orgPayoutAccount as Row);
+        return 100_000_000;
+      });
+
+      const out = await processOrgPayout("op_1");
+
+      expect(out).toMatchObject({ status: "FAILED", claimed: false });
+      expect(mockStatusTrail.op_1).toEqual(["APPROVED", "FAILED"]);
+      expect(earningsOf("op_1").map((e) => e.status)).toEqual([
+        "READY",
+        "READY",
+      ]);
+      expect(createPayout).not.toHaveBeenCalled();
     },
   );
 

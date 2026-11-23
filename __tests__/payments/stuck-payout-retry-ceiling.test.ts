@@ -17,7 +17,8 @@ type Where = Record<string, unknown>;
 function matches(row: Row, where: Where): boolean {
   return Object.entries(where).every(([k, v]) => {
     if (v === null) return (row[k] ?? null) === null;
-    if (v && typeof v === "object" && !(v instanceof Date)) {
+    if (v instanceof Date) return (row[k] as Date)?.getTime() === v.getTime();
+    if (v && typeof v === "object") {
       const op = v as { in?: unknown[]; lt?: number | Date };
       if (op.in) return op.in.includes(row[k]);
       if (op.lt !== undefined) return (row[k] as number) < (op.lt as number);
@@ -51,6 +52,7 @@ function strict<T extends object>(name: string, target: T): T {
 
 let mockPayout: Row;
 let mockEarnings: Row[];
+let mockOrgPayouts: Row[];
 
 const mockDb = strict("prisma", {
   consultantPayout: strict("prisma.consultantPayout", {
@@ -90,7 +92,17 @@ const mockDb = strict("prisma", {
     findUnique: jest.fn(async () => ({ isIndianResident: true })),
   }),
   organizationPayout: strict("prisma.organizationPayout", {
-    findMany: jest.fn(async () => []),
+    // Copies, as Prisma returns: a later write never changes what a reader saw.
+    findMany: jest.fn(async ({ where }: { where: Where }) =>
+      mockOrgPayouts.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+    ),
+    updateMany: jest.fn(
+      async ({ where, data }: { where: Where; data: Row }) => {
+        const rows = mockOrgPayouts.filter((r) => matches(r, where));
+        for (const r of rows) apply(r, data);
+        return { count: rows.length };
+      },
+    ),
   }),
   $transaction: jest.fn(
     async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(mockDb),
@@ -227,6 +239,7 @@ beforeEach(() => {
     refundedShareAmount: 0,
     releasedFromPayoutId: null,
   }));
+  mockOrgPayouts = [];
   listPayouts.mockResolvedValue({ entity: "collection", items: [] });
   // Every retry meets a gateway 5xx, so its outcome is unknown again.
   createPayout.mockRejectedValue(
@@ -294,4 +307,26 @@ describe("at the ceiling, an answer that is not a confirmed none", () => {
       ]);
     },
   );
+});
+
+it("does not pull back an organisation payout claimed again while its lookup was out", async () => {
+  mockPayout.status = "COMPLETED";
+  const org: Row = {
+    id: "op_1",
+    status: "PROCESSING",
+    gatewayPayoutId: null,
+    updatedAt: new Date(0),
+  };
+  mockOrgPayouts.push(org);
+  listPayouts.mockImplementation(async () => {
+    // process-payouts re-armed and claimed it again; its create is accepted but not yet bound.
+    apply(org, { status: "APPROVED" });
+    apply(org, { status: "PROCESSING" });
+    return { entity: "collection", items: [] };
+  });
+
+  const run = await handleStuckPayouts();
+
+  expect(org).toMatchObject({ status: "PROCESSING", gatewayPayoutId: null });
+  expect(run.retriedCount).toBe(0);
 });
