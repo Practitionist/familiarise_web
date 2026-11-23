@@ -1,7 +1,8 @@
 /**
- * #1569 B-4 — who attended one session, for its host only: each seat holder's
- * minutes in the booked window, read from MeetingPresence with devices merged.
- * A learner never sees another learner's presence.
+ * Who attended one session, for its host only: each seat holder's minutes in
+ * the booked window, from Stream's settled record with devices merged. Before
+ * the record is stored, `settled` is false and no minutes are claimed. A
+ * learner never sees another learner's presence.
  */
 
 import prisma from "@/lib/prisma";
@@ -21,12 +22,17 @@ export async function readSessionAttendance(args: {
   occurrenceId: string;
   viewerUserId: string;
   privileged: boolean;
-}): Promise<{ bookedMinutes: number; seats: SeatAttendance[] } | null> {
+}): Promise<{
+  bookedMinutes: number;
+  settled: boolean;
+  seats: SeatAttendance[];
+} | null> {
   const occ = await prisma.appointmentOccurrence.findFirst({
     where: { id: args.occurrenceId, appointmentId: args.appointmentId },
     select: {
       startsAt: true,
       endsAt: true,
+      meeting: { select: { attendanceSettledAt: true } },
       presences: { select: { userId: true, joinedAt: true, leftAt: true } },
       appointment: {
         select: {
@@ -42,23 +48,22 @@ export async function readSessionAttendance(args: {
   if (!occ) return null;
   const hosts = sessionHostUserIds(occ.appointment);
   if (!args.privileged && !hosts.includes(args.viewerUserId)) return null;
-  const now = new Date();
-  const to = occ.endsAt < now ? occ.endsAt : now;
+  const settled = Boolean(occ.meeting?.attendanceSettledAt);
   return {
     bookedMinutes: Math.round(
       (occ.endsAt.getTime() - occ.startsAt.getTime()) / 60_000,
     ),
+    settled,
     seats: occ.appointment.participants.map((p) => ({
       userId: p.userId,
       name: p.user.name,
-      presentMinutes: presentMinutes(
-        // An open interval counts up to now.
-        occ.presences
-          .filter((i) => i.userId === p.userId)
-          .map((i) => ({ ...i, leftAt: i.leftAt ?? now })),
-        occ.startsAt,
-        to,
-      ),
+      presentMinutes: settled
+        ? presentMinutes(
+            occ.presences.filter((i) => i.userId === p.userId),
+            occ.startsAt,
+            occ.endsAt,
+          )
+        : 0,
     })),
   };
 }

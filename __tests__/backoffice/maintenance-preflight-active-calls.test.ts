@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-/** Preflight decides "is a call live" from room presence and Stream, never the schedule. */
+/** Preflight decides "is a call live" from Stream and the open rooms, never the schedule. */
 
 import { GET } from "../../app/api/admin/maintenance/preflight/route";
 
@@ -40,13 +40,16 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 /** One row of the open-room read, in the shape its `select` returns. */
-const room = (streamCallId: string, openPresence = false) => ({
-  streamCallId,
-  presences: openPresence ? [{ id: `p-${streamCallId}` }] : [],
-});
+const room = (streamCallId: string) => ({ streamCallId });
 const ongoing = (...ids: string[]) => ({
   calls: ids.map((id) => ({ call: { id, type: "default" } })),
 });
+/** The preflight answer with these open rooms and these calls Stream lists as ongoing. */
+async function preflight(rooms: string[], live: string[]) {
+  mockPrisma.meeting.findMany.mockResolvedValue(rooms.map(room));
+  mockQueryCalls.mockResolvedValue(ongoing(...live));
+  return (await GET()).json();
+}
 
 describe("maintenance preflight active calls", () => {
   beforeEach(() => {
@@ -58,7 +61,7 @@ describe("maintenance preflight active calls", () => {
     mockQueryCalls.mockResolvedValue(ongoing());
   });
 
-  it("reads every open room with its fresh open presence, not a schedule window", async () => {
+  it("reads every open room, not a schedule window", async () => {
     jest.useFakeTimers().setSystemTime(NOW);
     try {
       await GET();
@@ -67,27 +70,16 @@ describe("maintenance preflight active calls", () => {
     }
     expect(mockPrisma.meeting.findMany).toHaveBeenCalledWith({
       where: { endedAt: null },
-      select: {
-        streamCallId: true,
-        presences: {
-          where: {
-            leftAt: null,
-            joinedAt: { gte: new Date("2026-11-17T22:00:00.000Z") },
-          },
-          select: { id: true },
-          take: 1,
-        },
-      },
+      select: { streamCallId: true },
     });
   });
 
   it("counts a webinar moved to tomorrow while its host is still connected", async () => {
     // No presence row (the join webhook never landed); Stream says the call is live.
-    mockPrisma.meeting.findMany.mockResolvedValue([
-      room("occurrence-moved-webinar"),
-    ]);
-    mockQueryCalls.mockResolvedValue(ongoing("occurrence-moved-webinar"));
-    const body = await (await GET()).json();
+    const body = await preflight(
+      ["occurrence-moved-webinar"],
+      ["occurrence-moved-webinar"],
+    );
     expect(mockQueryCalls).toHaveBeenCalledWith({
       filter_conditions: { type: "default", ongoing: true },
       limit: 100,
@@ -96,25 +88,20 @@ describe("maintenance preflight active calls", () => {
     expect(body.recommendation).toBe("RISKY");
   });
 
-  it("counts a room with an open presence row once, even when Stream also lists it", async () => {
-    mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-a", true)]);
-    mockQueryCalls.mockResolvedValue(ongoing("occurrence-a"));
-    const body = await (await GET()).json();
+  it("counts an open room once when Stream also lists it", async () => {
+    const body = await preflight(["occurrence-a"], ["occurrence-a"]);
     expect(body.activeCalls).toBe(1);
   });
 
   it("counts a live call whose room a late end webhook already closed", async () => {
     // No open room at all; Stream still lists the reconnected session.
-    mockQueryCalls.mockResolvedValue(ongoing("occurrence-reconnected-r1a"));
-    const body = await (await GET()).json();
+    const body = await preflight([], ["occurrence-reconnected-r1a"]);
     expect(body.activeCalls).toBe(1);
     expect(body.recommendation).toBe("RISKY");
   });
 
   it("counts a room once when Stream lists it under its rotated call id", async () => {
-    mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-x")]);
-    mockQueryCalls.mockResolvedValue(ongoing("occurrence-x-r2b"));
-    const body = await (await GET()).json();
+    const body = await preflight(["occurrence-x"], ["occurrence-x-r2b"]);
     expect(body.activeCalls).toBe(1);
   });
 
@@ -129,8 +116,7 @@ describe("maintenance preflight active calls", () => {
   });
 
   it("does not count a provisioned room whose first join failed", async () => {
-    mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-never")]);
-    const body = await (await GET()).json();
+    const body = await preflight(["occurrence-never"], []);
     expect(body.activeCalls).toBe(0);
     expect(body.recommendation).toBe("SAFE");
     expect(body.warnings).toEqual([]);

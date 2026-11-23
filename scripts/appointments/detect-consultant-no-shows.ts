@@ -6,10 +6,7 @@
 import prisma from "../../lib/prisma";
 import type { PrismaLike } from "../../lib/prisma";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
-import {
-  getCallPresenceEvidence,
-  type CallPresenceEvidence,
-} from "../../lib/stream/call-presence";
+import { settleOccurrenceAttendance } from "../../lib/meetings/settle-attendance";
 import {
   AppointmentStatus,
   CancellationReason,
@@ -37,7 +34,10 @@ import {
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { startDeadline } from "@/lib/cron/run-deadline";
+import {
+  startDeadline,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
 import {
   createRunFailureReporter,
   type RunFailureReporter,
@@ -52,6 +52,7 @@ import { NO_SHOW_GRACE_MINUTES } from "@/lib/booking/attendance";
 import {
   classifySessionOutcome,
   type OutageWindow,
+  type PresenceInterval,
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
@@ -62,14 +63,8 @@ export interface NoShowResult {
   success: boolean;
   detected: number;
   refunded: number;
-  /**
-   * Candidates the attendance rows called a no-show and Stream did not.
-   *
-   * Non-zero means a `call.session_participant_joined` delivery was lost: the
-   * consultant WAS in the call and our rows do not know it. Every one of these
-   * is a refund that would have been issued wrongly before this check existed.
-   */
-  contradicted: number;
+  /** Candidates skipped because Stream's record of a judged session is not stored yet; the next run retries. */
+  unsettled: number;
   /** No-shows whose payment already owed another door's refund, so this added nothing; top up by hand. */
   refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
@@ -93,7 +88,10 @@ export async function detectConsultantNoShows(opts?: {
     opts?.maxCandidates && opts.maxCandidates > 0
       ? Math.floor(opts.maxCandidates)
       : MAX_CANDIDATES_PER_BITE;
-  const pastDeadline = startDeadline(opts?.startedAt);
+  const startedAt = opts?.startedAt ?? Date.now();
+  const pastDeadline = startDeadline(startedAt);
+  // A candidate started near that cutoff still finishes its Stream reads inside the ticker's abort.
+  const settleDeadlineAt = startedAt + SWEEP_START_DEADLINE_MS;
   // #476 — locked at the core so every entry shares one mutual exclusion.
   // Fail-closed: this is a money job (auto-refund), so per with-cron-lock.ts it
   // refuses to run without a real Redis lock rather than risk a silent unlocked
@@ -102,7 +100,12 @@ export async function detectConsultantNoShows(opts?: {
   return withCronLock(
     "detect-consultant-no-shows",
     { failMode: "closed" },
-    () => detectConsultantNoShowsUnlocked(maxCandidates, pastDeadline),
+    () =>
+      detectConsultantNoShowsUnlocked(
+        maxCandidates,
+        pastDeadline,
+        settleDeadlineAt,
+      ),
   );
 }
 
@@ -256,15 +259,7 @@ function findNoShowCandidates(
           },
           occurrences: {
             orderBy: { startsAt: "asc" },
-            include: {
-              meeting: {
-                include: { attendances: { select: { userId: true } } },
-              },
-              // #1569 — the intervals the shared classifier reads.
-              presences: {
-                select: { userId: true, joinedAt: true, leftAt: true },
-              },
-            },
+            include: { meeting: true },
           },
         },
       },
@@ -286,16 +281,56 @@ type PaidPayment = NonNullable<
   NoShowCandidate["appointment"]
 >["payment"][number];
 
+/** The sessions this job may judge: live, undecided and past the grace window. */
+function judgedOccurrences(consultation: NoShowCandidate, graceCutoff: Date) {
+  return (consultation.appointment?.occurrences ?? []).filter((o) =>
+    isJudgeableOccurrence(o, graceCutoff),
+  );
+}
+
+/**
+ * Stream's stored record of every judged session, settled now where it can be;
+ * null when any is not settled, which this job treats as INCONCLUSIVE: no refund, no strike.
+ */
+export async function settledJudgedAttendance(
+  consultation: NoShowCandidate,
+  graceCutoff: Date,
+  opts: {
+    now?: Date;
+    failures?: RunFailureReporter;
+    /** Epoch ms by which every Stream read must answer; a read past it leaves the candidate unsettled. */
+    deadlineAt?: number;
+  } = {},
+): Promise<Map<string, PresenceInterval[]> | null> {
+  const intervals = new Map<string, PresenceInterval[]>();
+  for (const occurrence of judgedOccurrences(consultation, graceCutoff)) {
+    // No room means no call: the classifier answers OFFLINE without a read.
+    if (!occurrence.meeting) continue;
+    const settled = await settleOccurrenceAttendance(
+      {
+        occurrenceId: occurrence.id,
+        endsAt: occurrence.endsAt,
+        meeting: occurrence.meeting,
+      },
+      opts,
+    );
+    if (settled.kind !== "settled") return null;
+    intervals.set(occurrence.id, settled.intervals);
+  }
+  return intervals;
+}
+
 // Returns the party ids when `consultation` is a confirmed CONSULTANT no-show,
-// or null to skip. #1569 — the verdict is `classifySessionOutcome`, the same
-// one the end + 1 h sweep writes, so the two jobs cannot disagree (#1504): some
-// session is HOST_ABSENT and the consultant was present in none of them.
+// or null to skip. The verdict is `classifySessionOutcome` over Stream's settled
+// record, the same one the end + 1 h sweep writes, so the two jobs cannot
+// disagree: some session is HOST_ABSENT and the consultant was present in none.
 // Neither-showed and consultee-no-show cases are excluded — no consultant-fault
 // refund there.
-function evaluateConsultantNoShow(
+export function evaluateConsultantNoShow(
   consultation: NoShowCandidate,
   outages: OutageWindow[],
   graceCutoff: Date,
+  intervals: ReadonlyMap<string, readonly PresenceInterval[]>,
 ): NoShowParty | null {
   const consultantUserId =
     consultation.consultationPlan?.consultantProfile?.userId;
@@ -312,10 +347,16 @@ function evaluateConsultantNoShow(
   // A decided or parked sibling means the sweep or a human owns the booking;
   // the cohort and claim CAS carry the same veto.
   if (occurrences.some(isOpsOwnedSibling)) return null;
-  const judged = occurrences.filter((o) =>
-    isJudgeableOccurrence(o, graceCutoff),
-  );
+  const judged = judgedOccurrences(consultation, graceCutoff);
   if (judged.length === 0) return null;
+  // Any settled presence of the consultant on a judged call, even after the booked end, is not a no-show.
+  if (
+    judged.some((o) =>
+      (intervals.get(o.id) ?? []).some((i) => i.userId === consultantUserId),
+    )
+  ) {
+    return null;
+  }
 
   const outcomes = judged.map(
     (o) =>
@@ -323,10 +364,8 @@ function evaluateConsultantNoShow(
         startsAt: o.startsAt,
         endsAt: o.endsAt,
         hostUserIds: [consultantUserId],
-        intervals: o.presences,
+        intervals: intervals.get(o.id) ?? [],
         meeting: o.meeting,
-        // Stream corroboration is its own refusal below.
-        report: null,
         maintenanceWindows: outages,
       }).outcome,
   );
@@ -353,51 +392,10 @@ const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
   "OFFLINE",
 ]);
 
-/**
- * Does Stream's own record of the call contradict a no-show finding?
- *
- * `evaluateConsultantNoShow` infers absence from a MISSING attendance row, and
- * those rows come from per-participant webhook deliveries that can be lost
- * independently. Losing only the consultant's produces a textbook false
- * positive: consultee present, consultant "absent", full refund against someone
- * who was there.
- *
- * Stream is an independent witness that does not depend on our webhook pipeline
- * having worked. Two distinct participants in a 1:1 consultation means both
- * parties were present, whatever our rows say.
- *
- * Returns the reason to REFUSE, or null to proceed. Refusing on missing evidence
- * is deliberate: this function guards an automatic, customer-visible refund, and
- * "we could not check" is not "it definitely happened". The cost of refusing
- * wrongly is a support ticket; the cost of refunding wrongly is re-charging a
- * customer by hand.
- */
-export async function refusalFromStreamEvidence(
-  consultation: NoShowCandidate,
-  lookup: PresenceLookup = makePresenceLookup(),
-  occurrenceIds?: readonly string[],
-): Promise<string | null> {
-  const callIds = (consultation.appointment?.occurrences ?? [])
-    .filter((slot) => !occurrenceIds || occurrenceIds.includes(slot.id))
-    .map((slot) => slot.meeting?.streamCallId)
-    .filter((id): id is string => !!id);
-
-  if (callIds.length === 0) return "no Stream call on any slot";
-
-  for (const callId of callIds) {
-    const evidence = await lookup(callId);
-    if (!evidence) return `Stream has no report for ${callId}`;
-    if (evidence.unique >= 2) {
-      return `Stream saw ${evidence.unique} distinct participants on ${callId}`;
-    }
-  }
-  return null;
-}
-
 /** One console finding per run, recorded only when the set has a consultation not already recorded in the window. */
 async function reportOncePerRun(
   message: string,
-  entries: Array<{ consultationId: string; refusal?: string }>,
+  entries: Array<{ consultationId: string }>,
 ): Promise<void> {
   if (entries.length === 0) return;
   await reportStandingFinding({
@@ -406,20 +404,6 @@ async function reportOncePerRun(
     message,
   });
 }
-
-/** A per-run cache over `getCallPresenceEvidence`, so one call id is fetched once inside the held lock. */
-function makePresenceLookup() {
-  const cache = new Map<string, Promise<CallPresenceEvidence | null>>();
-  return (callId: string) => {
-    const hit = cache.get(callId);
-    if (hit) return hit;
-    const pending = getCallPresenceEvidence(callId);
-    cache.set(callId, pending);
-    return pending;
-  };
-}
-
-type PresenceLookup = ReturnType<typeof makePresenceLookup>;
 
 // Claim it: CAS active → CANCELLED. This is the idempotency gate — the detection
 // query only reads APPROVED/SCHEDULED, so once flipped a later run (or the
@@ -666,11 +650,12 @@ async function notifyNoShowParties(
 interface NoShowTally {
   detected: number;
   refunded: number;
-  contradicted: number;
-  refusals: Array<{ consultationId: string; refusal: string }>;
+  unsettled: Array<{ consultationId: string }>;
   refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   failures: RunFailureReporter;
+  /** Every candidate's Stream reads must answer by the end of the run's start budget. */
+  settleDeadlineAt: number;
 }
 
 /** One candidate through the consultant-fault pass; failures land in `tally.errors`. */
@@ -678,32 +663,25 @@ async function handleNoShowCandidate(
   consultation: NoShowCandidate,
   outages: OutageWindow[],
   graceCutoff: Date,
-  presence: PresenceLookup,
   tally: NoShowTally,
 ): Promise<void> {
   try {
-    const party = evaluateConsultantNoShow(consultation, outages, graceCutoff);
-    if (!party) return;
-
-    // Corroborate against Stream before moving money. Our attendance rows are
-    // webhook-derived and each party's arrives separately, so the predicate
-    // above can be satisfied by a LOST DELIVERY rather than a real absence.
-    const refusal = await refusalFromStreamEvidence(
-      consultation,
-      presence,
-      party.occurrenceIds,
-    );
-    if (refusal) {
-      tally.contradicted++;
-      console.log(
-        `\n🛑 Not a no-show after all: consultation ${consultation.id} — ${refusal}`,
-      );
-      // Worth an alert rather than a log line. Either a webhook was lost — in
-      // which case attendance data is wrong platform-wide and this is the only
-      // place it surfaces — or the detector's own predicate needs revisiting.
-      tally.refusals.push({ consultationId: consultation.id, refusal });
+    // Money moves only on Stream's settled record; an unsettled session is retried next run.
+    const intervals = await settledJudgedAttendance(consultation, graceCutoff, {
+      failures: tally.failures,
+      deadlineAt: tally.settleDeadlineAt,
+    });
+    if (!intervals) {
+      tally.unsettled.push({ consultationId: consultation.id });
       return;
     }
+    const party = evaluateConsultantNoShow(
+      consultation,
+      outages,
+      graceCutoff,
+      intervals,
+    );
+    if (!party) return;
 
     tally.detected++;
     console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
@@ -758,18 +736,18 @@ async function handleNoShowCandidate(
 async function detectConsultantNoShowsUnlocked(
   maxCandidates: number,
   pastDeadline: () => boolean,
+  settleDeadlineAt: number,
 ): Promise<NoShowResult> {
   const tally: NoShowTally = {
     detected: 0,
     refunded: 0,
-    contradicted: 0,
-    refusals: [],
+    unsettled: [],
     refundsAlreadyOwed: [],
     errors: [],
     failures: createRunFailureReporter("bookings"),
+    settleDeadlineAt,
   };
   const { errors } = tally;
-  const presence = makePresenceLookup();
 
   const graceCutoff = noShowGraceCutoff(Date.now());
 
@@ -806,13 +784,7 @@ async function detectConsultantNoShowsUnlocked(
 
       for (const consultation of candidates) {
         if (pastDeadline()) break;
-        await handleNoShowCandidate(
-          consultation,
-          outages,
-          graceCutoff,
-          presence,
-          tally,
-        );
+        await handleNoShowCandidate(consultation, outages, graceCutoff, tally);
       }
 
       if (candidates.length < maxCandidates) break;
@@ -820,15 +792,15 @@ async function detectConsultantNoShowsUnlocked(
   } finally {
     tally.failures.flush();
     await reportOncePerRun(
-      "Consultant no-show refused on Stream evidence",
-      tally.refusals,
+      "Consultant no-show waiting on Stream's settled record",
+      tally.unsettled,
     );
   }
 
   console.log("\n📊 No-Show Summary:");
   console.log(`   Detected: ${tally.detected}`);
   console.log(`   Refunded: ${tally.refunded}`);
-  console.log(`   Refused on Stream evidence: ${tally.contradicted}`);
+  console.log(`   Waiting on Stream's record: ${tally.unsettled.length}`);
   if (errors.length > 0) {
     console.log("\n⚠️ Errors:");
     errors.forEach((e) => console.log(`   - ${e}`));
@@ -838,7 +810,7 @@ async function detectConsultantNoShowsUnlocked(
     success: errors.length === 0,
     detected: tally.detected,
     refunded: tally.refunded,
-    contradicted: tally.contradicted,
+    unsettled: tally.unsettled.length,
     refundsAlreadyOwed: tally.refundsAlreadyOwed,
     errors,
     timestamp: new Date().toISOString(),
