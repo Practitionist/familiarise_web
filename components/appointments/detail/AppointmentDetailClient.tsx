@@ -10,7 +10,7 @@ import {
   isValidTimeZone,
   zoneLabel,
 } from "@/lib/time/viewer-zone";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CalendarClock,
@@ -30,7 +30,6 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { AppointmentDetailSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { throwSupportError } from "@/lib/support/error-copy";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { formatRole } from "@/components/collaborators/format";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
@@ -52,10 +51,7 @@ import {
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
-import type {
-  TAppointmentDetail,
-  TScopedAppointmentDetail,
-} from "@/lib/data/appointment-detail";
+import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
   paymentStatusDot,
@@ -124,6 +120,7 @@ import {
 } from "./ResourceSnapshot";
 import { cn } from "@/utils/tailwind";
 import { SeatTrailNote } from "./SeatTrailNote";
+import { useAppointmentDetailQuery } from "./use-appointment-detail-query";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -344,17 +341,7 @@ export function AppointmentDetailClient({
     isLoading,
     error,
     refetch,
-  } = useQuery({
-    queryKey: ["appointment-detail", appointmentId] as const,
-    queryFn: async (): Promise<TScopedAppointmentDetail> => {
-      const res = await fetch(`/api/appointments/${appointmentId}`);
-      if (!res.ok) await throwSupportError(res, "appointment detail load");
-      const { data } = await res.json();
-      return data;
-    },
-    // The global default never refetches; a pay prompt must not outlive a payment made in another tab.
-    refetchOnWindowFocus: true,
-  });
+  } = useAppointmentDetailQuery(appointmentId, role, session?.user?.id ?? null);
 
   // The consultant's two actions on an unpaid approval, which only a 1:1 can be;
   // the callout reads the 429 / 409 answers off the ApiResponseError these throw.
