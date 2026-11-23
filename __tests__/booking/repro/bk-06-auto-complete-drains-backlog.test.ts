@@ -24,7 +24,6 @@ jest.mock("../../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../../lib/booking/session-outcome-sweep", () => ({
   __esModule: true,
   OUTCOME_SLOT_SELECT: {},
-  createStreamWitnessBudget: () => ({ remaining: 100, failures: 0 }),
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
   escalateAgedNeedsHuman: async () => 0,
@@ -84,7 +83,7 @@ describe("autoCompleteAppointments backlog", () => {
     expect(decided).toHaveLength(BACKLOG);
   });
 
-  it("stops starting sessions once the drain deadline has passed", async () => {
+  it("stops starting sessions at half the start budget, leaving the rest to the next run", async () => {
     const startedAt = Date.now();
     // Each decision costs one simulated second of the 16 s budget.
     jest
@@ -97,7 +96,8 @@ describe("autoCompleteAppointments backlog", () => {
       startedAt,
     });
 
-    expect(decided).toHaveLength(16);
+    // Sessions settle from Stream, so they get half the 16 s start budget, as classes do.
+    expect(decided).toHaveLength(8);
   });
 
   it("re-reads parents while the slot pass is still draining", async () => {

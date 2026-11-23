@@ -2,14 +2,21 @@
  * @jest-environment node
  */
 
-// #1569 D2 — the webhooks only close the room (meeting-window-early-end pins
-// that); the end + 1 h sweep is what writes the outcome.
+// The webhooks only close the room (meeting-window-early-end pins that); the
+// end + 1 h sweep settles Stream's record and writes the outcome.
 const transition = jest.fn().mockResolvedValue(1);
 jest.mock("../../lib/booking/transitions", () => ({
   transitionOccurrenceCompletion: (...a: unknown[]) => transition(...a),
 }));
-jest.mock("../../lib/stream/call-presence", () => ({
-  getCallPresenceEvidence: jest.fn(async () => ({ unique: 2 })),
+type Settlement = Awaited<
+  ReturnType<
+    typeof import("../../lib/meetings/settle-attendance").settleOccurrenceAttendance
+  >
+>;
+const settle = jest.fn<Promise<Settlement>, unknown[]>();
+jest.mock("../../lib/meetings/settle-attendance", () => ({
+  ...jest.requireActual("../../lib/meetings/settle-attendance"),
+  settleOccurrenceAttendance: (...a: unknown[]) => settle(...a),
 }));
 const stageBell = jest.fn();
 jest.mock("../../lib/novu/stage-bell", () => ({
@@ -44,6 +51,15 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     recording: { findFirst: async () => recording.current },
+    // The end fields the sweep re-reads after settling: the room as the fixture ended it.
+    meeting: {
+      findUnique: jest.fn(async () => ({
+        endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
+        endedReason: "call_ended",
+        streamCallId: "c",
+        attendanceSettledAt: null,
+      })),
+    },
     appointmentParticipant: {
       updateMany: (...a: unknown[]) => seatUpdate(...a),
     },
@@ -51,29 +67,46 @@ jest.mock("../../lib/prisma", () => {
     failedEmail: { create: jest.fn().mockResolvedValue({ id: "fe-1" }) },
     emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
   };
+  // Every write locks the rows and re-reads the room's end: unchanged and unsettled here.
+  client.$executeRaw = jest.fn().mockResolvedValue(1);
+  client.$queryRaw = jest.fn().mockResolvedValue([
+    {
+      endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
+      endedReason: "call_ended",
+      streamCallId: "c",
+      settledAt: null,
+    },
+  ]);
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });
 
 import {
   alertStaleNeedsHuman,
-  createStreamWitnessBudget,
   decideSlotOutcome,
   type OutcomeSlot,
 } from "../../lib/booking/session-outcome-sweep";
 
 const at = (m: number) => new Date(Date.UTC(2026, 8, 25, 10, 0) + m * 60_000);
-const slot = (hostLeaves: number): OutcomeSlot =>
-  ({
+const stays = (hostLeaves: number) => [
+  { userId: "host", joinedAt: at(0), leftAt: at(hostLeaves) },
+  { userId: "learner", joinedAt: at(0), leftAt: at(60) },
+];
+const slot = (hostLeaves: number): OutcomeSlot => {
+  settle.mockResolvedValue({ kind: "settled", intervals: stays(hostLeaves) });
+  return {
     id: "occ-1",
     appointmentId: "apt-1",
     startsAt: at(0),
     endsAt: at(60),
-    meeting: { streamCallId: "c", endedAt: at(60), endedReason: "call_ended" },
-    presences: [
-      { userId: "host", joinedAt: at(0), leftAt: at(hostLeaves) },
-      { userId: "learner", joinedAt: at(0), leftAt: at(60) },
-    ],
+    meeting: {
+      id: "m-1",
+      streamCallId: "c",
+      extendedSeconds: 0,
+      attendanceSettledAt: null,
+      endedAt: at(60),
+      endedReason: "call_ended",
+    },
     appointment: {
       organizationId: null,
       subscriptionId: "sub-1",
@@ -84,9 +117,32 @@ const slot = (hostLeaves: number): OutcomeSlot =>
         subscriptionPlan: { consultantProfile: { userId: "host" } },
       },
     },
-  }) as unknown as OutcomeSlot;
+  } as unknown as OutcomeSlot;
+};
 
 beforeEach(() => jest.clearAllMocks());
+
+it("a room rotated while its record was settled leaves the session SCHEDULED: the write fences on the call id loaded before the settle", async () => {
+  const db = jest.requireMock("../../lib/prisma").default as {
+    meeting: { findUnique: jest.Mock };
+    $queryRaw: jest.Mock;
+  };
+  const rotated = {
+    endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
+    endedReason: "call_ended",
+    streamCallId: "c-r2",
+  };
+  db.meeting.findUnique.mockResolvedValueOnce({
+    ...rotated,
+    attendanceSettledAt: null,
+  });
+  db.$queryRaw.mockResolvedValueOnce([{ ...rotated, settledAt: null }]);
+
+  const d = await decideSlotOutcome(slot(60), { now: at(120), outages: [] });
+
+  expect(d).toMatchObject({ kind: "written", moved: false });
+  expect(transition).not.toHaveBeenCalled();
+});
 
 it.each([
   [60, "COMPLETED", { outcome: "HELD", completedAt: at(120) }],
@@ -97,7 +153,6 @@ it.each([
     const d = await decideSlotOutcome(slot(hostLeaves), {
       now: at(120),
       outages: [],
-      witness: createStreamWitnessBudget(),
     });
     expect(d).toMatchObject({ kind: "written", to, moved: true });
     expect(transition).toHaveBeenCalledWith(
@@ -121,7 +176,6 @@ it.each([
     await decideSlotOutcome(slot(hostLeaves), {
       now: at(120),
       outages: [],
-      witness: createStreamWitnessBudget(),
     });
     expect(seatUpdate.mock.calls).toEqual(
       Array.from({ length: writes }, () => [
@@ -159,7 +213,6 @@ it.each([
     await decideSlotOutcome(group, {
       now: at(120),
       outages: [],
-      witness: createStreamWitnessBudget(),
     });
     // Only the absent seat, keyed like the 1:1 no-show bell.
     expect(stageBell.mock.calls.map((c) => c[1])).toEqual(
@@ -173,6 +226,60 @@ it.each([
     );
   },
 );
+
+it.each([
+  ["not-final", 71],
+  ["unavailable", 71],
+] as const)(
+  "Stream answers %s %i h past the end: deferred, nothing written",
+  async (kind, hours) => {
+    const target = slot(60);
+    settle.mockResolvedValue({ kind });
+    const d = await decideSlotOutcome(target, {
+      now: new Date(at(60).getTime() + hours * 3_600_000),
+      outages: [],
+    });
+    expect(d).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
+    expect(transition).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["unavailable", 73],
+  ["expired", 2],
+] as const)(
+  "Stream answers %s %i h past the end: parked UNVERIFIED as INCONCLUSIVE, no host attribution",
+  async (kind, hours) => {
+    const target = slot(60);
+    settle.mockResolvedValue({ kind });
+    const onUnreadable = jest.fn();
+    const d = await decideSlotOutcome(target, {
+      now: new Date(at(60).getTime() + hours * 3_600_000),
+      outages: [],
+      onUnreadable,
+    });
+    expect(d).toMatchObject({
+      kind: "written",
+      to: "UNVERIFIED",
+      verdict: { outcome: "INCONCLUSIVE", hostAttributed: false },
+    });
+    expect(onUnreadable).toHaveBeenCalledWith("occ-1");
+  },
+);
+
+it("a declared incident voids before any Stream read, so a Stream outage never blocks it", async () => {
+  const target = slot(60);
+  const d = await decideSlotOutcome(target, {
+    now: at(120),
+    outages: [{ startsAt: at(10), endsAt: at(20), source: "incident" }],
+  });
+  expect(settle).not.toHaveBeenCalled();
+  expect(d).toMatchObject({
+    kind: "written",
+    to: "VOIDED",
+    verdict: { outcome: "PLATFORM_OUTAGE" },
+  });
+});
 
 it("a needs-human item older than 72 h records one finding keyed on the queued ids, not a Sentry event", async () => {
   const db = {

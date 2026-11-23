@@ -65,7 +65,7 @@ Three code changes were one rollout with the DDL, because each is wrong under th
 Each of the following is designed or diagnosed and tracked as an issue; none is restated here.
 
 - #1541 — the support-case unification, which replaces four models and two transcript tables and needs its own push and a decision about 62 open tickets.
-- #1543 — `MeetingAttendance` is empty platform-wide, so the eligibility gate's attendance arm has never fired; do not tighten it before the pipeline works.
+- The eligibility gate's attendance arm reads Stream's settled record, which previews can exercise with a real call; production data so far is almost all QA, so watch the first real sessions before tightening the `UNVERIFIED` arm.
 - #1544 — `AppointmentParticipant` is four percent populated and is the only model separating payer from attendee from sponsoring organisation.
 - #1547 — no UI reaches the reply or report endpoints for a review, and a consultant cannot see their own reviews.
 - #1548 — nothing asks for a rating, which is why the corpus is empty; placement is settled on the dashboard, never the meeting room.

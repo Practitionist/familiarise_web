@@ -78,13 +78,18 @@ jest.mock("../../lib/payments/operations/refund-owed", () => ({
   driveRefundOwed: (...args: unknown[]) => mockDriveRefundOwed(...args),
 }));
 
-// The no-show detector corroborates against Stream before moving money; one
-// distinct participant is Stream agreeing only the consultee was ever there.
-jest.mock("../../lib/stream/call-presence", () => ({
+// The no-show detector moves money only on Stream's settled record: only the consultee was there.
+jest.mock("../../lib/meetings/settle-attendance", () => ({
   __esModule: true,
-  getCallPresenceEvidence: jest.fn(async () => ({
-    unique: 1,
-    maxConcurrent: 1,
+  settleOccurrenceAttendance: jest.fn(async () => ({
+    kind: "settled",
+    intervals: [
+      {
+        userId: "user-consultee",
+        joinedAt: new Date(Date.now() - 4 * 3_600_000),
+        leftAt: new Date(Date.now() - 3 * 3_600_000),
+      },
+    ],
   })),
 }));
 
@@ -269,18 +274,13 @@ function noShowCandidate(paymentId: string) {
           outcome: null,
           deletedAt: null,
           isTentative: false,
-          presences: [
-            {
-              userId: "user-consultee",
-              joinedAt: hoursAgo(4),
-              leftAt: hoursAgo(3),
-            },
-          ],
           meeting: {
+            id: "meeting-1",
             streamCallId: "call-1",
+            extendedSeconds: 0,
+            attendanceSettledAt: null,
             endedAt: hoursAgo(3),
             endedReason: "call_ended",
-            attendances: [{ userId: "user-consultee" }],
           },
         },
       ],

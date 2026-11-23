@@ -15,6 +15,8 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     appointment: { findMany: jest.fn(async () => []) },
     membership: { findMany: jest.fn(async () => []) },
+    // No ended room is waiting for Stream's record.
+    meeting: { findMany: jest.fn(async () => []) },
     consultantReview: { findMany: jest.fn(async () => []) },
   },
 }));

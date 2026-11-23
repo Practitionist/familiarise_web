@@ -1,32 +1,36 @@
 /**
- * Stream Session Event Handlers
- * Handles webhook events for call lifecycle (session start/end)
- *
- * Events handled:
- * - call.session_ended: When call session ends (last participant leaves + timeout)
- * - call.ended: When call is explicitly ended
- *
- * #1569 D2 — these stamp Meeting.endedAt only. The end + 1 h slot pass in
- * auto-complete-appointments is the one writer of an occurrence's outcome.
+ * Stream call lifecycle webhooks, which keep room state only: `call.session_ended`
+ * and `call.ended` stamp `Meeting.endedAt` and `endedReason`, and a join to the
+ * current call after a non-deliberate, rejoinable end clears them, because Stream resumed
+ * the room. Attendance is never written here; the outcome sweep reads Stream's
+ * settled record (`settleOccurrenceAttendance`).
  */
 
-import prisma, { type Tx } from "@/lib/prisma";
-import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import prisma from "@/lib/prisma";
 import {
-  endBlocksRejoin,
+  END_REASON_POLICY,
+  MEETING_END_REASONS,
   mapStreamCallEndedReason,
   recordedEndHolds,
   type MeetingEndReason,
 } from "@/lib/meetings/end-reasons";
-import { parseSlotIdFromCallId, toCallId } from "@/lib/stream/call-cid";
-import { getCallParticipantSessionsFromStream } from "@/lib/stream/call-presence";
-import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
+import {
+  parseSlotIdFromCallId,
+  STREAM_CALL_TYPE,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
+import {
+  getStreamVideoClient,
+  isStreamConfigured,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 
 export interface StreamSessionEndedEvent {
   call_cid: string;
   type: "call.session_ended";
   created_at: string;
+  session_id?: string;
   call?: {
     id: string;
     type: string;
@@ -43,6 +47,7 @@ export interface StreamCallEndedEvent {
     type: string;
     created_by_user_id?: string | null;
     ended_by_user_id?: string | null;
+    session?: { id: string } | null;
   };
   user?: {
     id: string;
@@ -56,25 +61,14 @@ export interface StreamSessionParticipantJoinedEvent {
   call_cid: string;
   type: "call.session_participant_joined";
   created_at: string;
-  session_id: string;
-  participant: {
-    user: { id: string };
-    user_session_id?: string;
-    role?: string;
-  };
+  session_id?: string;
 }
 
-export interface StreamSessionParticipantLeftEvent {
+export interface StreamStatsReportReadyEvent {
   call_cid: string;
-  type: "call.session_participant_left";
+  type: "call.stats_report_ready" | "call.report_ready";
   created_at: string;
   session_id: string;
-  duration_seconds?: number;
-  participant: {
-    user: { id: string };
-    user_session_id?: string;
-    role?: string;
-  };
 }
 
 export function extractEndedByUserId(
@@ -88,160 +82,7 @@ export function extractEndedByUserId(
   );
 }
 
-const MEETING_END_INCLUDE = {
-  occurrence: {
-    include: {
-      appointment: {
-        select: {
-          webinar: { select: { id: true } },
-          class: { select: { id: true } },
-        },
-      },
-    },
-  },
-} as const;
-
-type GroupSessionCandidate = {
-  occurrence?: {
-    appointment?: {
-      webinar?: unknown;
-      class?: unknown;
-    } | null;
-  } | null;
-};
-
-function summarizeParticipantIntervals(
-  intervals: Array<{ userId: string; joinedAt: Date; leftAt: Date | null }>,
-  endedAt: Date,
-): Map<string, { firstJoinedAt: Date; lastLeftAt: Date; count: number }> {
-  const summaryByUser = new Map<
-    string,
-    { firstJoinedAt: Date; lastLeftAt: Date; count: number }
-  >();
-  for (const interval of intervals) {
-    const effectiveLeft = interval.leftAt ?? endedAt;
-    const existing = summaryByUser.get(interval.userId);
-    if (!existing) {
-      summaryByUser.set(interval.userId, {
-        firstJoinedAt: interval.joinedAt,
-        lastLeftAt: effectiveLeft,
-        count: 1,
-      });
-      continue;
-    }
-    if (interval.joinedAt < existing.firstJoinedAt) {
-      existing.firstJoinedAt = interval.joinedAt;
-    }
-    if (effectiveLeft > existing.lastLeftAt) {
-      existing.lastLeftAt = effectiveLeft;
-    }
-    existing.count += 1;
-  }
-  return summaryByUser;
-}
-
-/**
- * Backfills webinar/class participant presence and attendance rows missed during end-of-call bursts,
- * preserving `Meeting -> MeetingPresence -> MeetingAttendance` lock ordering.
- */
-export async function reconcileWebinarAttendance(
-  meeting: {
-    id: string;
-    streamCallId: string;
-    appointmentOccurrenceId: string;
-  } & GroupSessionCandidate,
-  endedAt: Date,
-): Promise<void> {
-  const slotOfAppointment = meeting.occurrence?.appointment;
-  if (!slotOfAppointment?.webinar && !slotOfAppointment?.class) {
-    return;
-  }
-
-  const intervals = await getCallParticipantSessionsFromStream(
-    meeting.streamCallId,
-  );
-  if (!intervals?.length) return;
-
-  const summaryByUser = summarizeParticipantIntervals(intervals, endedAt);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.meetingPresence.createMany({
-      data: intervals.map((interval) => ({
-        meetingId: meeting.id,
-        appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-        userId: interval.userId,
-        userSessionId: interval.userSessionId,
-        streamCallId: meeting.streamCallId,
-        joinedAt: interval.joinedAt,
-        leftAt: interval.leftAt ?? endedAt,
-        closedByEnd: interval.leftAt === null,
-      })),
-      skipDuplicates: true,
-    });
-
-    for (const [userId, summary] of summaryByUser) {
-      await tx.meetingAttendance.upsert({
-        where: {
-          meetingId_userId: { meetingId: meeting.id, userId },
-        },
-        create: {
-          meetingId: meeting.id,
-          appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-          userId,
-          firstJoinedAt: summary.firstJoinedAt,
-          lastLeftAt: summary.lastLeftAt,
-          joinCount: summary.count,
-        },
-        update: {},
-      });
-      await tx.meetingAttendance.updateMany({
-        where: {
-          meetingId: meeting.id,
-          userId,
-          firstJoinedAt: { gt: summary.firstJoinedAt },
-        },
-        data: { firstJoinedAt: summary.firstJoinedAt },
-      });
-      await tx.meetingAttendance.updateMany({
-        where: {
-          meetingId: meeting.id,
-          userId,
-          OR: [
-            { lastLeftAt: null },
-            { lastLeftAt: { lt: summary.lastLeftAt } },
-          ],
-        },
-        data: { lastLeftAt: summary.lastLeftAt },
-      });
-    }
-  });
-}
-
-async function runBestEffortGroupReconciliation(
-  meeting: {
-    id: string;
-    streamCallId: string;
-    appointmentOccurrenceId: string;
-  } & GroupSessionCandidate,
-  endedAt: Date,
-): Promise<void> {
-  try {
-    await reconcileWebinarAttendance(meeting, endedAt);
-  } catch (reconcileErr) {
-    streamLogger.warn(
-      "Webinar attendance backfill failed; end stamp preserved",
-      {
-        meetingId: meeting.id,
-        sessionId: meeting.id,
-        streamCallId: meeting.streamCallId,
-        error:
-          reconcileErr instanceof Error
-            ? reconcileErr.message
-            : String(reconcileErr),
-      },
-    );
-  }
-}
+const MEETING_END_INCLUDE = { occurrence: true } as const;
 
 export async function handleSessionEnded(
   event: StreamSessionEndedEvent,
@@ -269,14 +110,7 @@ export async function handleSessionEnded(
 
     const endedAt = new Date(created_at);
 
-    if (
-      recordedEndHolds(meeting, "session_timeout") ||
-      !supersedesRecordedEnd(meeting.endedAt, endedAt)
-    ) {
-      await runBestEffortGroupReconciliation(
-        meeting,
-        meeting.endedAt ?? endedAt,
-      );
+    if (!endSupersedes(meeting, "session_timeout", endedAt)) {
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
         streamCallId,
@@ -285,13 +119,24 @@ export async function handleSessionEnded(
       return;
     }
 
+    if (await newerSessionHolds(streamCallId, endedAt)) {
+      streamLogger.info("Stale timeout — a newer session holds the room", {
+        sessionId: meeting.id,
+        streamCallId,
+      });
+      return;
+    }
+
     const slotEndsAt = meeting.occurrence.endsAt;
     const bookedTimeIsOver = !slotEndsAt || endedAt >= new Date(slotEndsAt);
 
-    const stamped = await stampEnd(meeting, endedAt, "session_timeout");
+    const stamped = await stampEnd(
+      meeting,
+      endedAt,
+      "session_timeout",
+      event.session_id ?? null,
+    );
     if (!stamped) return;
-
-    await runBestEffortGroupReconciliation(meeting, endedAt);
 
     if (!bookedTimeIsOver) {
       streamLogger.info(
@@ -366,14 +211,7 @@ export async function handleCallEnded(
       streamReason: event.reason,
     });
 
-    if (
-      recordedEndHolds(meeting, endedReason) ||
-      !supersedesRecordedEnd(meeting.endedAt, endedAt)
-    ) {
-      await runBestEffortGroupReconciliation(
-        meeting,
-        meeting.endedAt ?? endedAt,
-      );
+    if (!endSupersedes(meeting, endedReason, endedAt)) {
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
         streamCallId,
@@ -382,9 +220,15 @@ export async function handleCallEnded(
       return;
     }
 
-    if (!(await stampEnd(meeting, endedAt, endedReason))) return;
-
-    await runBestEffortGroupReconciliation(meeting, endedAt);
+    if (
+      !(await stampEnd(
+        meeting,
+        endedAt,
+        endedReason,
+        event.call?.session?.id ?? null,
+      ))
+    )
+      return;
 
     const slotStartTime = meeting.occurrence.startsAt;
     if (slotStartTime) {
@@ -445,400 +289,306 @@ export async function recordMeetingEndedSynchronously(
   const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
   const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
-  if (
-    recordedEndHolds(meeting, endedReason) ||
-    !supersedesRecordedEnd(meeting.endedAt, endedAt)
-  ) {
-    return alreadyEnded;
-  }
+  if (!endSupersedes(meeting, endedReason, endedAt)) return alreadyEnded;
 
   if (endedBeforeStart) {
     const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
-    // The rotated-away segment closes its presence and attendance like any other end.
-    const rotated = await prisma.$transaction(async (tx) => {
-      const updated = await tx.meeting.updateMany({
-        where: { id: meeting.id, endedAt: meeting.endedAt },
+    const rotate = (expected: RecordedEnd, at: Date) =>
+      prisma.meeting.updateMany({
+        where: {
+          id: meeting.id,
+          streamCallId: meeting.streamCallId,
+          endedAt: expected.endedAt,
+          endedReason: expected.endedReason,
+        },
         data: {
-          endedAt,
+          endedAt: at,
           endedReason,
           streamCallId: nextStreamCallId,
           isRecording: false,
         },
       });
-      if (updated.count === 0) return false;
-      await closeSegmentAttendance(tx, meeting, endedAt);
-      return true;
-    });
-    if (!rotated) return alreadyEnded;
+    let rotated = await rotate(meeting, endedAt);
+    if (rotated.count === 0) {
+      // The end webhook may have stamped this call first; rotate on top of a non-deliberate end, never a deliberate one.
+      const room = await prisma.meeting.findUnique({
+        where: { id: meeting.id },
+        select: { streamCallId: true, endedAt: true, endedReason: true },
+      });
+      if (!room || room.streamCallId !== meeting.streamCallId) {
+        return {
+          kind: "already_ended",
+          streamCallId: room?.streamCallId ?? meeting.streamCallId,
+        };
+      }
+      if (recordedEndHolds(room, endedReason)) return alreadyEnded;
+      const at =
+        room.endedAt && room.endedAt > endedAt ? room.endedAt : endedAt;
+      rotated = await rotate(room, at);
+    }
+    if (rotated.count === 0) return alreadyEnded;
     return { kind: "recorded", endedReason, streamCallId: nextStreamCallId };
   }
 
-  if (!(await stampEnd(meeting, endedAt, endedReason))) return alreadyEnded;
+  const sessionId = await sessionStreamHolds(meeting.streamCallId);
+  const guard = {
+    lastStreamSessionId: meeting.lastStreamSessionId,
+    lastJoinedAt: meeting.lastJoinedAt,
+  };
+  if (!(await stampEnd(meeting, endedAt, endedReason, sessionId, guard))) {
+    // A reopen during the lookup may have moved the room: answer the call that represents it now.
+    const room = await prisma.meeting.findUnique({
+      where: { id: meeting.id },
+      select: { streamCallId: true },
+    });
+    return {
+      kind: "already_ended",
+      streamCallId: room?.streamCallId ?? meeting.streamCallId,
+    };
+  }
   return { kind: "recorded", endedReason, streamCallId: meeting.streamCallId };
 }
 
+/** A host's end waits at most this long for Stream to name the call's session. */
+const SESSION_LOOKUP_BUDGET_MS = 3_000;
+
 /**
- * Resolve the Meeting for a Stream call_cid (format "type:callId").
- * Returns null (not throw) when no session matches — Stream emits participant
- * events for ad-hoc calls that may never have been persisted; those are skipped.
+ * The session Stream holds as this call's current or last one: the latest on
+ * the call, so it may replace the recorded id. Null when the lookup fails or
+ * runs past its budget; the end is then stamped without it.
  */
-async function resolveMeeting(streamCallId: string) {
-  const select = {
-    id: true,
-    endedAt: true,
-    endedReason: true,
-    appointmentOccurrenceId: true,
-  } as const;
-
-  const direct = await prisma.meeting.findUnique({
-    where: { streamCallId },
-    select,
-  });
-  if (direct) return { meeting: direct, isCurrentSegment: true };
-
-  // A prior segment of the same occurrence (before a reopen or rotation): its rows keep their own call id.
-  const occurrenceId = parseSlotIdFromCallId(streamCallId);
-  if (!occurrenceId) return null;
-
-  const prior = await prisma.meeting.findUnique({
-    where: { appointmentOccurrenceId: occurrenceId },
-    select,
-  });
-  return prior ? { meeting: prior, isCurrentSegment: false } : null;
+async function sessionStreamHolds(
+  streamCallId: string,
+): Promise<string | null> {
+  if (!isStreamConfigured()) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const lookup = withStreamCircuitBreaker(() =>
+      getStreamVideoClient().video.call(STREAM_CALL_TYPE, streamCallId).get(),
+    );
+    // A lookup that answers after the budget is dropped, not reported as unhandled.
+    lookup.catch(() => undefined);
+    const expiry = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("session lookup timed out")),
+        SESSION_LOOKUP_BUDGET_MS,
+      );
+    });
+    const { call } = await Promise.race([lookup, expiry]);
+    return call.session?.id || null;
+  } catch (error) {
+    streamLogger.warn("Host end stamped without Stream's session id", {
+      streamCallId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-function presenceKey(
-  sessionId: string,
-  participant: { user_session_id?: string },
-  userId: string,
-): string {
-  return participant.user_session_id || `${sessionId}:${userId}`;
-}
-
-/** Closes the segment's open presence (as assumed) and the meeting's open attendance at its end stamp. */
-async function closeSegmentAttendance(
-  tx: Tx,
-  meeting: { id: string; streamCallId: string },
+/**
+ * True when Stream is running a session on this call that began after `endedAt`,
+ * so a timeout delivered late belongs to an earlier session. A failed read
+ * answers false, which stamps the timeout as before.
+ */
+async function newerSessionHolds(
+  streamCallId: string,
   endedAt: Date,
-): Promise<void> {
-  await closeSegmentPresences(tx, {
-    meetingId: meeting.id,
-    streamCallId: meeting.streamCallId,
-    endedAt,
-  });
-  await tx.meetingAttendance.updateMany({
-    where: { meetingId: meeting.id, lastLeftAt: null },
-    data: { lastLeftAt: endedAt },
-  });
+): Promise<boolean> {
+  if (!isStreamConfigured()) return false;
+  try {
+    const { call } = await withStreamCircuitBreaker(() =>
+      getStreamVideoClient().video.call(STREAM_CALL_TYPE, streamCallId).get(),
+    );
+    const session = call.session;
+    if (!session || session.ended_at || !session.started_at) return false;
+    return new Date(session.started_at).getTime() > endedAt.getTime();
+  } catch {
+    return false;
+  }
 }
 
-function stampEnd(
-  meeting: { id: string; streamCallId: string; endedAt: Date | null },
+type RecordedEnd = { endedAt: Date | null; endedReason: string | null };
+
+/** The session and join the room held before Stream was asked; a looked-up session id is written only while both still hold. */
+type SessionGuard = {
+  lastStreamSessionId: string | null;
+  lastJoinedAt: Date | null;
+};
+
+/** Stamps the end on the room's current call, compare-and-set on the call id and the end (stamp and reason) the caller read. */
+function casEnd(
+  meeting: { id: string; streamCallId: string },
+  expected: RecordedEnd,
   endedAt: Date,
   endedReason: MeetingEndReason,
-): Promise<boolean> {
-  return prisma.$transaction(async (tx) => {
-    const { count } = await tx.meeting.updateMany({
-      where: { id: meeting.id, endedAt: meeting.endedAt },
-      data: { endedAt, endedReason, isRecording: false },
-    });
-    if (count === 0) {
-      streamLogger.info(
-        "End not stamped — the room's end changed concurrently",
-        {
-          sessionId: meeting.id,
-        },
-      );
-      return false;
-    }
-    await closeSegmentAttendance(tx, meeting, endedAt);
-    return true;
+  sessionId: string | null,
+  guard?: SessionGuard,
+) {
+  return prisma.meeting.updateMany({
+    where: {
+      id: meeting.id,
+      streamCallId: meeting.streamCallId,
+      endedAt: expected.endedAt,
+      endedReason: expected.endedReason,
+      ...guard,
+      // A join newer than a non-deliberate end means a newer session holds the room.
+      ...(!END_REASON_POLICY[endedReason].deliberate && {
+        OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lte: endedAt } }],
+      }),
+    },
+    data: {
+      endedAt,
+      endedReason,
+      isRecording: false,
+      ...(sessionId ? { lastStreamSessionId: sessionId } : {}),
+    },
   });
 }
 
-/**
- * A leave reported after the current room ended is clamped to that end, unless the
- * device joined after it (a rejoin the join webhook has not reopened yet).
- */
-function clampLeaveToRoomEnd(
-  meeting: { endedAt: Date | null; endedReason: string | null },
-  joinedAt: Date,
-  leftAt: Date,
-): Date {
-  const { endedAt } = meeting;
-  if (!endedAt || leftAt <= endedAt) return leftAt;
-  return endBlocksRejoin(meeting) || joinedAt <= endedAt ? endedAt : leftAt;
-}
-
-function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
-  return !recorded || incoming.getTime() > recorded.getTime();
-}
-
-/** `inCurrentRoom`: the join is to the live current segment, so the person is in the room now. */
-function buildAttendanceJoinUpdate(
-  newSessions: number,
-  inCurrentRoom: boolean,
-): { joinCount?: { increment: number }; lastLeftAt?: null } {
-  if (newSessions <= 0) return {};
-  if (!inCurrentRoom) {
-    return { joinCount: { increment: newSessions } };
+async function stampEnd(
+  meeting: { id: string; streamCallId: string } & RecordedEnd,
+  endedAt: Date,
+  endedReason: MeetingEndReason,
+  sessionId: string | null = null,
+  guard?: SessionGuard,
+): Promise<boolean> {
+  if (sessionId && guard) {
+    const { count } = await casEnd(
+      meeting,
+      meeting,
+      endedAt,
+      endedReason,
+      sessionId,
+      guard,
+    );
+    if (count > 0) return true;
+    // Another end landed during the lookup: the session is still kept unless a join changed the guard.
+    await prisma.meeting.updateMany({
+      where: { id: meeting.id, streamCallId: meeting.streamCallId, ...guard },
+      data: { lastStreamSessionId: sessionId },
+    });
+    sessionId = null;
   }
-  return { joinCount: { increment: newSessions }, lastLeftAt: null };
+  let { count } = await casEnd(
+    meeting,
+    meeting,
+    endedAt,
+    endedReason,
+    sessionId,
+  );
+  if (count === 0) {
+    // Another end committed first: re-decide against it, on the same call only.
+    const room = await prisma.meeting.findUnique({
+      where: { id: meeting.id },
+      select: { streamCallId: true, endedAt: true, endedReason: true },
+    });
+    if (
+      room?.streamCallId === meeting.streamCallId &&
+      endSupersedes(room, endedReason, endedAt)
+    ) {
+      ({ count } = await casEnd(
+        meeting,
+        room,
+        endedAt,
+        endedReason,
+        sessionId,
+      ));
+    }
+  }
+  if (count === 0) {
+    streamLogger.info("End not stamped — the room's end changed concurrently", {
+      sessionId: meeting.id,
+    });
+  }
+  return count > 0;
 }
 
+/** True when an incoming end replaces the recorded one: a deliberate end beats a non-deliberate one whatever their stamps; otherwise the later end wins. */
+function endSupersedes(
+  recorded: RecordedEnd,
+  incoming: MeetingEndReason,
+  incomingAt: Date,
+): boolean {
+  if (!recorded.endedAt) return true;
+  if (recordedEndHolds(recorded, incoming)) return false;
+  if (END_REASON_POLICY[incoming].deliberate) return true;
+  return incomingAt.getTime() > recorded.endedAt.getTime();
+}
+
+/** The ends a later join may undo: no person closed the room and its policy lets participants rejoin it. */
+const REOPENABLE_END_REASONS = MEETING_END_REASONS.filter(
+  (reason) =>
+    !END_REASON_POLICY[reason].deliberate &&
+    END_REASON_POLICY[reason].rejoinable,
+);
+
+/**
+ * A join to the current call after a non-deliberate, rejoinable end means Stream resumed
+ * the room, so the end is cleared; Extend, recording and seat adds need an open room.
+ */
 export async function handleSessionParticipantJoined(
   event: StreamSessionParticipantJoinedEvent,
 ): Promise<void> {
-  const { call_cid, created_at, participant } = event;
-  const streamCallId = toCallId(call_cid);
-  const userId = participant?.user?.id;
-
-  if (!userId) {
-    streamLogger.warn("Participant joined event missing user id", {
-      streamCallId,
-    });
-    return;
-  }
-
-  try {
-    const resolved = await resolveMeeting(streamCallId);
-    if (!resolved) {
-      streamLogger.warn("Meeting not found for participant joined", {
+  const streamCallId = toCallId(event.call_cid);
+  const joinedAt = new Date(event.created_at);
+  const newerJoin = {
+    OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lt: joinedAt } }],
+  };
+  // The session it names is recorded only when the join postdates the last join and any recorded end,
+  // so an earlier session's late join never replaces a later one's identity.
+  if (event.session_id) {
+    await prisma.meeting.updateMany({
+      where: {
         streamCallId,
-        userId,
-      });
-      return;
-    }
-    const { meeting, isCurrentSegment } = resolved;
-    const meetingId = meeting.id;
-    const joinedAt = new Date(created_at);
-
-    // A prior segment's join never reopens, or takes the end of, the current room.
-    const currentEndedAt = isCurrentSegment ? meeting.endedAt : null;
-    const reopensSession = Boolean(
-      currentEndedAt && joinedAt > currentEndedAt && !isDeliberateEnd(meeting),
-    );
-    const userSessionId = presenceKey(event.session_id, participant, userId);
-
-    // Touch rows in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
-    await prisma.$transaction(async (tx) => {
-      let effectiveEndedAt = currentEndedAt;
-      if (reopensSession) {
-        const reopened = await tx.meeting.updateMany({
-          where: { id: meetingId, endedAt: meeting.endedAt },
-          data: { endedAt: null, endedReason: null },
-        });
-        if (reopened.count > 0) {
-          effectiveEndedAt = null;
-        } else {
-          const latest = await tx.meeting.findUnique({
-            where: { id: meeting.id },
-            select: { endedAt: true },
-          });
-          effectiveEndedAt = latest?.endedAt ?? meeting.endedAt ?? null;
-        }
-      }
-
-      const { count: newSessions } = await tx.meetingPresence.createMany({
-        data: [
-          {
-            meetingId,
-            appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-            userId,
-            userSessionId,
-            streamCallId,
-            joinedAt,
-            ...(effectiveEndedAt
-              ? { leftAt: effectiveEndedAt, closedByEnd: true }
-              : {}),
-          },
+        AND: [
+          newerJoin,
+          { OR: [{ endedAt: null }, { endedAt: { lt: joinedAt } }] },
         ],
-        skipDuplicates: true,
-      });
-
-      if (newSessions === 0) {
-        await tx.meetingPresence.updateMany({
-          where: {
-            meetingId,
-            userSessionId,
-            joinedAt: { gt: joinedAt },
-          },
-          data: { joinedAt },
-        });
-      }
-
-      await tx.meetingAttendance.upsert({
-        where: {
-          meetingId_userId: { meetingId, userId },
-        },
-        create: {
-          meetingId,
-          appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-          userId,
-          firstJoinedAt: joinedAt,
-          ...(effectiveEndedAt ? { lastLeftAt: effectiveEndedAt } : {}),
-        },
-        update: buildAttendanceJoinUpdate(
-          newSessions,
-          isCurrentSegment && !effectiveEndedAt,
-        ),
-      });
-
-      await tx.meetingAttendance.updateMany({
-        where: {
-          meetingId,
-          userId,
-          firstJoinedAt: { gt: joinedAt },
-        },
-        data: { firstJoinedAt: joinedAt },
-      });
+      },
+      data: { lastJoinedAt: joinedAt, lastStreamSessionId: event.session_id },
     });
-
-    streamLogger.info("Recorded participant join", {
+  }
+  // The watermark moves before the reopen, so an older non-deliberate end can no longer stamp this call.
+  await prisma.meeting.updateMany({
+    where: { streamCallId, ...newerJoin },
+    data: { lastJoinedAt: joinedAt },
+  });
+  const { count } = await prisma.meeting.updateMany({
+    where: {
       streamCallId,
-      meetingId,
-      userId,
-      userSessionId: participant.user_session_id,
-    });
-  } catch (error) {
-    streamLogger.error("Failed to handle participant joined event", error, {
+      endedAt: { lt: joinedAt },
+      endedReason: { in: [...REOPENABLE_END_REASONS] },
+    },
+    data: { endedAt: null, endedReason: null },
+  });
+  if (count > 0) {
+    streamLogger.info("Room reopened by a join after its end", {
       streamCallId,
-      userId,
     });
-    throw error;
   }
 }
 
-export async function handleSessionParticipantLeft(
-  event: StreamSessionParticipantLeftEvent,
+/** Records that Stream announced one session's stats report ready; attendance for it settles only after this. */
+export async function handleStatsReportReady(
+  event: StreamStatsReportReadyEvent,
 ): Promise<void> {
-  const { call_cid, created_at, participant } = event;
-  const streamCallId = toCallId(call_cid);
-  const userId = participant?.user?.id;
-
-  if (!userId) {
-    streamLogger.warn("Participant left event missing user id", {
-      streamCallId,
-    });
-    return;
-  }
-
-  try {
-    const resolved = await resolveMeeting(streamCallId);
-    if (!resolved) {
-      streamLogger.warn("Meeting not found for participant left", {
-        streamCallId,
-        userId,
-      });
-      return;
-    }
-    const { meeting, isCurrentSegment } = resolved;
-    const meetingId = meeting.id;
-
-    const leftAt = new Date(created_at);
-    const joinedAt = new Date(
-      leftAt.getTime() - Math.max(0, event.duration_seconds ?? 0) * 1000,
-    );
-    const userSessionId = presenceKey(event.session_id, participant, userId);
-    const attendanceLeftAt = isCurrentSegment
-      ? clampLeaveToRoomEnd(meeting, joinedAt, leftAt)
-      : leftAt;
-
-    // Acquire row locks in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
-    await prisma.$transaction(async (tx) => {
-      const { count: newSessions } = await tx.meetingPresence.createMany({
-        data: [
-          {
-            meetingId,
-            appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-            userId,
-            userSessionId,
-            streamCallId,
-            joinedAt,
-            leftAt,
-          },
-        ],
-        skipDuplicates: true,
-      });
-
-      // A reported leave always replaces an end-stamp close; between reported leaves the later wins.
-      await tx.meetingPresence.updateMany({
-        where: {
-          meetingId,
-          userSessionId,
-          OR: [
-            { leftAt: null },
-            { closedByEnd: true },
-            { leftAt: { lt: leftAt } },
-          ],
-        },
-        data: { leftAt, closedByEnd: false },
-      });
-
-      if (newSessions === 0 && (event.duration_seconds ?? 0) > 0) {
-        await tx.meetingPresence.updateMany({
-          where: {
-            meetingId,
-            userSessionId,
-            joinedAt: { gt: joinedAt },
-          },
-          data: { joinedAt },
-        });
-      }
-
-      await tx.meetingAttendance.upsert({
-        where: {
-          meetingId_userId: { meetingId, userId },
-        },
-        create: {
-          meetingId,
-          appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-          userId,
-          firstJoinedAt: joinedAt,
-          lastLeftAt: attendanceLeftAt,
-        },
-        update:
-          newSessions > 0 ? { joinCount: { increment: newSessions } } : {},
-      });
-
-      // A prior segment's late leave never marks a user back in the current room as left.
-      if (isCurrentSegment) {
-        await tx.meetingAttendance.updateMany({
-          where: {
-            meetingId,
-            userId,
-            OR: [
-              { lastLeftAt: null },
-              { lastLeftAt: { lt: attendanceLeftAt } },
-            ],
-          },
-          data: { lastLeftAt: attendanceLeftAt },
-        });
-      }
-
-      if ((event.duration_seconds ?? 0) > 0) {
-        await tx.meetingAttendance.updateMany({
-          where: {
-            meetingId,
-            userId,
-            firstJoinedAt: { gt: joinedAt },
-          },
-          data: { firstJoinedAt: joinedAt },
-        });
-      }
-    });
-
-    streamLogger.info("Recorded participant leave", {
-      streamCallId,
-      meetingId,
-      userId,
-      durationSeconds: event.duration_seconds,
-    });
-  } catch (error) {
-    streamLogger.error("Failed to handle participant left event", error, {
-      streamCallId,
-      userId,
-    });
-    throw error;
-  }
+  const callId = toCallId(event.call_cid);
+  // A rotated-away call's report belongs to the same occurrence's room.
+  const occurrenceId = parseSlotIdFromCallId(callId);
+  const { count } = await prisma.meeting.updateMany({
+    where: {
+      OR: [
+        { streamCallId: callId },
+        ...(occurrenceId ? [{ appointmentOccurrenceId: occurrenceId }] : []),
+      ],
+      NOT: { streamReportReadySessionIds: { has: event.session_id } },
+    },
+    data: { streamReportReadySessionIds: { push: event.session_id } },
+  });
+  streamLogger.info("Stream stats report ready", {
+    streamCallId: callId,
+    recorded: count > 0,
+  });
 }

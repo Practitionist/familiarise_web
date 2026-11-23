@@ -36,7 +36,10 @@ import {
   recordStreamEventReceipt,
   streamBaseEventSchema,
 } from "@/lib/stream/webhook-dispatch";
-import { isIgnoredEventType } from "@/lib/stream/webhook-events";
+import {
+  canonicalStreamEventType,
+  isIgnoredEventType,
+} from "@/lib/stream/webhook-events";
 import {
   MAX_WEBHOOK_COMPRESSED_BYTES,
   MAX_WEBHOOK_DECOMPRESSED_BYTES,
@@ -224,7 +227,7 @@ export async function POST(req: NextRequest) {
 
     const event = JSON.parse(body);
     const baseEvent = streamBaseEventSchema.parse(event);
-    const eventType = baseEvent.type;
+    const eventType = canonicalStreamEventType(baseEvent.type);
 
     if (isIgnoredEventType(eventType)) {
       return NextResponse.json({ status: "ok", handled: false, ignored: true });

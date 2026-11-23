@@ -31,7 +31,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 | **ADR-03** | Synchronous CAS end stamp + monotonic `supersedesRecordedEnd`                                 | `app/api/meetings/[meetingId]/end/route.ts`, `lib/stream/session-handlers.ts`                                                    | Eliminates webhook lag on dashboard cards while preventing out-of-order webhooks from rewinding terminal state                       |
 | **ADR-04** | Immutable booked `endsAt`; `+15m` extension on `Meeting.extendedSeconds`                      | `app/api/meetings/[meetingId]/extend/route.ts`, `lib/meetings/duration-cap.ts`, `app/meetings/[id]/components/OverrunBanner.tsx` | Keeps the sold end intact for outcome and money, while the Stream cap, banner and conflict horizon derive from one Postgres value    |
 | **ADR-05** | Unified `<CallExitButton />` (participant leave vs host 2-way popover)                        | `app/meetings/[id]/components/EndCallButton.tsx`, `app/meetings/[id]/components/MeetingRoom.tsx`                                 | Prevents accidental room termination when a host leaves early while keeping room closure one deliberate choice                       |
-| **ADR-06** | Stream participant sessions resolve every assumed or missing interval                         | `lib/booking/session-outcome-sweep.ts`, `lib/stream/{call-presence,session-handlers}.ts`, `lib/meetings/segment-presence.ts`     | A lost webhook can neither stretch a host's presence into a `HELD` verdict nor turn a delivered session into `NOBODY_JOINED`         |
+| **ADR-06** | Stream's settled participant record, stored once, is the only attendance evidence             | `lib/meetings/settle-attendance.ts`, `lib/stream/call-presence.ts`, `lib/booking/session-outcome-sweep.ts`                       | No webhook writes attendance, so a lost or reordered delivery cannot change a refund, a forfeit or a strike                          |
 | **ADR-07** | Interactive WebRTC with a 200-participant cap, no HLS at launch                               | `lib/events/capacity.ts`, `schemas/plans.ts`, `lib/meetings/room-ready.ts`, `lib/meetings/call-provisioning.ts`                  | Keeps every attendee able to ask a question or be brought on stage, and bounds the per-room cost and SFU load                        |
 | **ADR-08** | Staff-editable `PlatformVideoConfig`, 720p default                                            | `lib/stream/{video-quality,video-config}.ts`, `lib/meetings/room-ready.ts`, `app/api/admin/video-config/route.ts`                | Keeps video and recording quality a priced, audited staff decision instead of a constant in code or an environment variable          |
 | **ADR-09** | Chat unread digest from Stream's `user.unread_message_reminder`                               | `lib/stream/chat/unread-digest.ts`, `lib/stream/control-plane-contract.ts`                                                       | One durable email and bell per user per 30-minute window, never quoting message text                                                 |
@@ -46,7 +46,7 @@ Stream Video SFU and PostgreSQL (`PG_POOL_MAX=1`) enforce distinct operational c
 
 Multi-occurrence appointments (`SUBSCRIPTION` weekly calls and multi-session `CLASS` cohorts) span weeks or months under a single parent `Appointment`. Reusing a permanent Stream call identifier per `Appointment` or per human pair creates four severe distributed systems failure modes:
 
-1. **Cross-Occurrence Attendance Contamination**: `MeetingPresence` and `MeetingAttendance` (`firstJoinedAt`, `lastLeftAt`, `joinCount`) key settlement (`HELD`, `CUT_SHORT`, `NO_SHOW_*`) and payout release (`release-earnings.ts`) per occurrence. Sharing one Stream call across occurrences conflates late departures from session $N$ with early arrivals for session $N+1$.
+1. **Cross-Occurrence Attendance Contamination**: `MeetingPresence` intervals key settlement (`HELD`, `CUT_SHORT`, `NO_SHOW_*`) and payout release (`release-earnings.ts`) per occurrence. Sharing one Stream call across occurrences conflates late departures from session $N$ with early arrivals for session $N+1$.
 2. **Recording Ownership & Retention Ambiguity**: Each `Recording` row inherits per-occurrence titles, participant consent decisions (`MeetingRecordingConsent`), and retention expiries.
 3. **Permanent `call.end()` Seal**: Once Stream stamps `ended_at` on a call object, subsequent `call.join()` calls from non-admin roles fail at the SFU boundary. If week 1 calls `call.end()`, week 2 cannot reuse the same `cid`.
 4. **Duration Cap Drift**: Each occurrence computes its own `max_duration_seconds = clamp(bookedDuration + 45m, 45m, 12h)` (`resolveMaxCallDurationSeconds`) and independent `+15m` host extension budget.
@@ -73,7 +73,7 @@ flowchart LR
 
 ### Consequences
 
-- Every occurrence has deterministic lifecycle boundaries, isolated `MeetingAttendance` / `MeetingPresence` ledger rows, isolated Q&A namespaces (`stage-qa:<callId>:<questionId>`), and isolated recording pipelines.
+- Every occurrence has deterministic lifecycle boundaries, isolated `MeetingPresence` rows, isolated Q&A namespaces (`stage-qa:<callId>:<questionId>`), and isolated recording pipelines.
 - Bookmarks and transactional booking emails (`occurrence-<uuid>`) remain permanently valid even if a room is rotated one or more times before or during the session.
 
 ---
@@ -89,7 +89,7 @@ In Stream Video's control plane, invoking `call.end()` irreversibly stamps `call
 
 If reopening simply overwrote `Meeting.streamCallId = "occurrence-<uuid>-r<base36>"` and all webhook handlers used the same lookup query, one of two catastrophic bugs would occur:
 
-- If all webhooks only queried `where: { streamCallId }`, `call.recording_ready` and late `call.session_participant_left` events from segment 1 would fail with `Meeting not found`, silently dropping paid recordings and participant attendance intervals.
+- If all webhooks only queried `where: { streamCallId }`, `call.recording_ready` events from segment 1 would fail with `Meeting not found`, silently dropping paid recordings. (Attendance is not at stake: the settle step lists every call id of the occurrence from Stream, ADR-06.)
 - Conversely, if all webhooks fell back to `appointmentOccurrenceId`, a delayed `call.ended` or `call.session_ended` webhook from segment 1 would match segment 2's active `Meeting` row and prematurely stamp `endedAt` on the live reopened room!
 
 ### Decision
@@ -104,11 +104,11 @@ Combine **atomic call-ID rotation (`occurrence-<uuid>-r<base36>`)** with **stric
    - Reopen builds the fresh call with the same payload the provisioner uses (`buildRoomCallPlan` in `lib/meetings/call-provisioning.ts`: `settings_override`, members, custom fields and the cap from the room end) and creates it on Stream first with `getOrCreate` on the new id. Only then does it update `Meeting` atomically via compare-and-set (`updateMany` predicated on the expected `streamCallId` and `endedAt`), clearing `endedAt = null`, `endedReason = null`, and `isRecording = false`. A Stream failure therefore rotates nothing, and a lost CAS leaves the fresh call unused and answers `reopened: false` with the current id.
 2. **Asymmetric Webhook Lookup Matrix**:
 
-| Webhook Event Family                                               | Lookup Strategy                                                                               | Architectural Rationale                                                                                                               |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `call.ended`, `call.session_ended`                                 | **Strict exact match only**: `where: { streamCallId }`                                        | Termination belongs strictly to one Stream call segment. A delayed end webhook from segment 1 must **never** kill reopened segment 2. |
-| `call.recording_ready`, `call.recording_failed`                    | **Exact match + occurrence fallback**: `where: { streamCallId }` -> `appointmentOccurrenceId` | Transcoding finishes asynchronously after segment 1 closes; every segment's MP4 belongs to the occurrence's `Meeting` row.            |
-| `call.session_participant_joined`, `call.session_participant_left` | **Exact match + occurrence fallback**: `where: { streamCallId }` -> `appointmentOccurrenceId` | Participant stay durations (`userSessionId` intervals) from segment 1 must be preserved for accurate `deliveredMinutes` settlement.   |
+| Webhook Event Family                            | Lookup Strategy                                                                               | Architectural Rationale                                                                                                               |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `call.ended`, `call.session_ended`              | **Strict exact match only**: `where: { streamCallId }`                                        | Termination belongs strictly to one Stream call segment. A delayed end webhook from segment 1 must **never** kill reopened segment 2. |
+| `call.recording_ready`, `call.recording_failed` | **Exact match + occurrence fallback**: `where: { streamCallId }` -> `appointmentOccurrenceId` | Transcoding finishes asynchronously after segment 1 closes; every segment's MP4 belongs to the occurrence's `Meeting` row.            |
+| `call.session_participant_joined`               | **Strict exact match only**: `where: { streamCallId }`                                        | It only reopens the room Stream resumed after a non-deliberate end; a join to an earlier call never touches the current room.         |
 
 ```mermaid
 sequenceDiagram
@@ -155,7 +155,7 @@ Implement **Synchronous CAS Dual-Write + Monotonic Webhook Convergence** in `lib
    - Immediately executes `recordMeetingEndedSynchronously(resolvedCallId, now)`:
      - Evaluates pre-start vs live termination:
        - If `endedAt < startsAt` (**Pre-Start Device Check**): stamps `endedReason = "ended_early"` and immediately rotates `streamCallId = occurrence-<id>-r<base36>` while keeping the occurrence upcoming (`SCHEDULED`). `ended_early` is rejoinable, so real session entry makes the provisioner build a clean room and clear the end stamp.
-       - If `endedAt >= startsAt` (**Live Session Termination**): stamps `endedReason = "call_ended"`, closes all open `MeetingPresence` intervals (`leftAt = endedAt`) and `MeetingAttendance` (`lastLeftAt = endedAt`) inside a single CAS transaction predicated on `where: { id: meeting.id, endedAt: meeting.endedAt }`.
+       - If `endedAt >= startsAt` (**Live Session Termination**): stamps `endedReason = "call_ended"` by compare-and-set on `where: { id, streamCallId, endedAt, endedReason }` as read, re-deciding once against the row on a miss; no attendance is written.
      - If the synchronous DB update throws an unexpected exception, the route reports to Sentry and returns **HTTP `500`** (`"Could not end this meeting. Please try again."`) rather than returning a false HTTP `200`.
 2. **Monotonic Webhook Convergence (`supersedesRecordedEnd`)**:
    - Both `recordMeetingEndedSynchronously` and async webhook handlers (`handleCallEnded`, `handleSessionEnded`) enforce:
@@ -231,60 +231,31 @@ Standardize all meeting rooms on a single primary red exit control (`CallExitBut
 
 ## ADR-06: Stream Participant Sessions Are the Attendance Witness
 
-### Context & Problem Statement
-
-The outcome classifier (`classifySessionOutcome` in `lib/booking/session-outcome.ts`) decides refunds and voids from `MeetingPresence` intervals, one row per device stay. Those rows come from the `call.session_participant_joined` and `call.session_participant_left` webhooks, and any single delivery can be lost. Three failures followed from treating our rows as the whole truth:
-
-1. Every end stamp closed all open rows at the room end. A host whose leave webhook was lost therefore looked present until the end, which could turn `CUT_SHORT` or `HOST_ABSENT` into `HELD` and suppress a refund. The classifier's own rule that an open interval is `INCONCLUSIVE` could never fire, because no interval was ever open by the time it ran.
-2. Rows carried no call id. After a reopen or a pre-start rotation, a late join from the old call was written against the current segment, could reopen it, and was closed at the later segment's end.
-3. With zero rows (a total webhook outage), the sweep never asked Stream and wrote `NOBODY_JOINED`.
-
-Stream keeps its own per-device record of each call session (`queryCallParticipantSessions`), independent of our webhook pipeline, and that record outlives the call report's participant summary.
-
-### Decision
-
-Treat Stream's participant sessions as the attendance witness, and keep our rows honest about which closes are evidence.
-
-1. **Evidence versus assumption.** `MeetingPresence.closedByEnd` is true while `leftAt` is a room end stamp rather than a leave Stream reported. Every end stamp (`stampEnd`, the pre-start `ended_early` rotation, the orphan reconciler, and a join that arrives after the room ended) closes rows through `closeSegmentPresences` (`lib/meetings/segment-presence.ts`) with `closedByEnd = true`. A reported leave always replaces an assumed close and clears the flag, whatever the order of arrival.
-2. **Segments.** `MeetingPresence.streamCallId` names the call each row belongs to. A participant event that matches the current call id is the current segment; one that only matches through the occurrence id is a prior segment, recorded under its own call id, and never reopens or takes the end of the current room. An end stamp closes only its own segment's rows plus legacy rows with a null call id.
-3. **Resolution before classification.** `decideSlotOutcome` (`lib/booking/session-outcome-sweep.ts`) reads the call report and, for every segment with an open or assumed interval, Stream's participant sessions (`getCallParticipantSessionsFromStream` in `lib/stream/call-presence.ts`). It also reads the current segment whenever our rows may be missing someone: when we hold no rows, when the call report has no participant count, or when Stream saw more people than we did. A matching device session with a leave replaces the assumed close (a CAS on `closedByEnd = true OR leftAt IS NULL`); a device stay we never recorded is added. All of this runs before, and outside, the outcome transaction.
-4. **No fabricated presence.** When Stream is unreachable or has no record, the interval stays open and the classifier returns `INCONCLUSIVE`, which parks the session `UNVERIFIED` for ops. With zero rows and no Stream record the verdict remains `NOBODY_JOINED`, also `UNVERIFIED`. A webhook outage alone therefore never voids a delivered session.
-5. **Bounded reads, one report.** One run of `auto-complete-appointments` may spend `STREAM_WITNESS_READS_PER_RUN` (100) Stream reads. A slot that needs a read after the budget is spent is deferred to the next run with nothing written. Reads that could not resolve an interval are counted and reported as one `attendance witness unavailable` Sentry message per run.
-
-6. **One-sided webhook rows wait for Stream, then park.** When the webhook rows show only one side (the classifier says `LEARNER_ABSENT` or `HOST_ABSENT`) and Stream gave neither a call report nor a participant-sessions answer for the call, `decideSlotOutcome` defers the session (`stream-evidence`) and writes nothing until 24 hours past its booked end (`STREAM_EVIDENCE_WAIT_MS`). It then writes it `UNVERIFIED` with outcome `INCONCLUSIVE` and no host attribution, so there is no forfeit, void or strike on webhook rows alone. A participant-sessions read that answers, even with an empty list, counts as Stream evidence and the classified verdict stands. The options not chosen were parking at once and deciding on the rows; the owner recorded the choice without a reason for each. The recorded decision is [the bug hunt record](../decisions/2026-11-12-bug-hunt-support-and-stream.md).
-
-Example. Hannah hosts a 10:00–11:00 IST subscription session with Priya. Hannah's laptop drops at 10:20 IST and the leave webhook is lost; Priya waits until 11:00 IST and Stream ends the idle session at 11:01 IST. The end stamp closes Hannah's row at 11:01 IST with `closedByEnd = true`. At the sweep, Stream's participant sessions show Hannah's device leaving at 10:20 IST, so the row is corrected and the session is `CUT_SHORT` with 40 lost minutes, which returns the session to Priya's allowance. Had Stream been unreachable, the session would have parked `UNVERIFIED` for ops instead of being paid out as `HELD`.
-
-### Consequences
-
-- A lost leave or join no longer moves money in either direction; it either resolves from Stream or waits for a person.
-- A Stream outage during the sweep parks sessions with a lost leave as `UNVERIFIED`, so ops review more sessions during an outage instead of the platform guessing.
-- `MeetingPresence` rows written before this change carry `closedByEnd = false` and a null call id, so they keep the earlier behaviour.
-- A session with one-sided rows and no Stream answer stays `SCHEDULED` for up to a day after its booked end before it reaches ops, so a Stream outage that lasts through that day sends those sessions to the `UNVERIFIED` queue as `INCONCLUSIVE`.
-- The participant-sessions read covers the latest Stream session of each call id. A call that Stream split into two sessions (an idle timeout followed by a rejoin on the same id) resolves only the latest one; an assumed close from the earlier session stays open and parks the outcome for ops.
-
-## ADR-07: Interactive WebRTC with a 200-participant cap, not HLS, at launch
+Revised 2026-11-22 by [Session outcomes from Stream's settled record](../decisions/2026-11-22-session-outcomes-from-settled-stream-record.md): the witness is now the only source.
 
 ### Context & Problem Statement
 
-Webinars and classes are the only rooms with more than a handful of people. They rely on live interaction: attendees raise a hand, the host brings them on stage, and the Q&A drawer and reactions have to feel immediate. The product therefore needs a ceiling on how many people a room can hold, and a decision about whether very large audiences are served by something other than interactive WebRTC.
+The outcome classifier (`classifySessionOutcome` in `lib/booking/session-outcome.ts`) decides refunds, voids, forfeits and the expert's reliability flag from `MeetingPresence` intervals, one row per device stay. Those rows used to be a live mirror built from the `call.session_participant_joined` and `call.session_participant_left` webhooks, which Stream does not promise to deliver in order or at all. Every defect found was a symptom of keeping a second copy: a lost leave stretched a host's presence to the room end, a late join from an old call was written to the new segment, a late `call.session_ended` stamped a live room ended, and with zero rows the sweep once wrote `NOBODY_JOINED`.
+
+Stream keeps its own per-device record of every call session (`queryCallParticipantSessions`), with millisecond join and leave times, final once the session has ended. It keeps the detail for 90 days and then answers HTTP 404; the call report's retention is not stated.
 
 ### Decision
 
-Webinars and classes are capped at 200 participants at launch (`MAX_GROUP_SESSION_PARTICIPANTS` in `lib/events/capacity.ts`). The cap is enforced in three places:
+Read Stream's settled record once, store it, and classify only from what was stored.
 
-- **At authoring.** Every plan and per-instance capacity goes through `maxParticipantsSchema` in `schemas/plans.ts` (the plan editor, the crud-with-plan routes, the legacy plan routes and the organisation catalog route), and the editor input carries the same maximum.
-- **At purchase.** Checkout already refuses a sale past the effective capacity through the Serializable seat count, so the cap needs no new checkout logic.
-- **At the room.** Each 1-to-Many call is created with Stream `limits.max_participants` equal to the effective capacity plus a headroom of 5, with the call owner and the `co_presenter` and `admin` roles excluded from the count (`resolveCallParticipantLimits`). This is the last line of defence if a room is ever joined outside the seat count.
+1. **One writer.** `settleOccurrenceAttendance` (`lib/meetings/settle-attendance.ts`) is the only writer of `MeetingPresence`. It lists every call id the occurrence used (the current `Meeting.streamCallId` plus each call Stream returns for `custom.occurrenceId`), every session of each call (`queryCallSessionStats`, one query per call id), and every device stay of each session, and stores them in one transaction that first moves `Meeting.attendanceSettledAt` from null by compare-and-set. A settled room is answered from the stored rows without asking Stream again.
+2. **Strict readiness.** Nothing is read before six hours (`ATTENDANCE_SETTLE_DELAY_MS`) past the latest of the room end, the recorded end and the last join, nor stored while stats list a session that ended less than six hours ago. A read is then accepted only when every session has ended, none is live, each session is announced ready by Stream (`call.stats_report_ready`) or corroborated by our room-state webhooks, the call's own current session (if Stream names one) is listed and ended, and each session's detail rows equal the detail's own `total_participant_sessions` exactly, with none repeated, and hold at least as many distinct stays and people as session stats count; the stamp's compare-and-set also matches the call id and extension the read used. Anything short of that stores nothing.
+3. **Typed answers.** `readSettledAttendance` (`lib/stream/call-presence.ts`) answers `read`, `no-session`, `not-final`, `expired`, `unavailable` or `out-of-time` (the caller's deadline passed first, retried and never parked); it never collapses a failure into an empty list.
+4. **Callers.** The outcome sweep checks a declared incident first, then settles and classifies, and writes only if the room's end and call id are unchanged once it holds the occurrence and room locks; a session it cannot settle is retried and, 72 hours past the booked end, parked `UNVERIFIED` as `INCONCLUSIVE` with no host attribution. The consultant no-show detector and the rating gate call the same step and act only on a settled record. Ops can run it again from the needs-human queue until day 80.
+5. **Webhooks keep room state only.** `call.session_ended` and `call.ended` stamp `Meeting.endedAt` and `endedReason`; a join after a non-deliberate, rejoinable end clears them because Stream resumed the room. No webhook writes attendance.
 
-We stay on interactive WebRTC and do not add HLS. Stream delivers WebRTC through an SFU with adaptive simulcast (Dynascale), which the video SDK already uses, so a 200-person room is a supported shape and not a special mode. HLS would add 10 to 30 seconds of latency, which breaks Q&A and stage requests, and Stream bills it as a separate per-viewer add-on (see `14-pricing-and-cost-model.md`).
+Example. Hannah hosts a 10:00–11:00 IST consultation with Priya. Hannah joins at 10:02:10, Priya's connection drops from 10:20:10 to 10:23:12, and both leave just before 11:00. The slot pass first looks at 12:15 IST but reads nothing until six hours past the room end; at the 17:15 IST pass, the first after that cutoff, Stream reports one ended session, announced ready, with three device stays; they are stored with `attendanceSettledAt`, Priya's two stays merge under the five-minute reconnect grace, only 10:00 and 10:01 are host loss, and the session is `HELD` with 58 minutes delivered. Had Stream been down until Thursday, the session would have parked for ops rather than being guessed at.
 
 ### Consequences
 
-- The worst-case cost of one session is bounded: 200 attendees for 90 minutes is 18,000 participant minutes.
-- A host who needs more than 200 seats cannot sell them until the cap is lifted. The cap can be raised by changing one constant after the load test tracked in the Stream productionization umbrella confirms the SFU, the stage-request flow and the client render path at the new size.
-- Stream documents the `limits` fields but not their exact counting rules, so the headroom is deliberately generous and the authoritative sell-out stays the Postgres seat count. A client that hits the room limit sees the SFU error `CALL_PARTICIPANT_LIMIT_REACHED`; no server route observes it, because the join route admits users by membership and never joins the SFU.
-- No stored row is above the cap: the seed data never creates a plan or instance above 100 seats. Rows created through a path that bypassed these schemas (direct database writes) would still need a manual review; nothing is backfilled.
+- A lost, late or reordered participant webhook can no longer change the stored attendance intervals, because no webhook writes them. The end webhooks still supply `Meeting.endedAt` and `endedReason`, which the classifier's host-end and outage rules read; those writes are compare-and-set on the call id and the recorded end.
+- A session settles six hours after its room's last activity at the earliest (the sweep looks from an hour after the booked end, but reads only then), and parks for ops 72 hours after the booked end when Stream stays unreadable. Money never moves on a read that is not final.
+- The stored record keeps the three-year evidence retention, well past Stream's 90 days.
 
 ---
 
@@ -399,12 +370,13 @@ Example. Grace's session ends at 17:12 IST on Tuesday 3 November 2026 and the re
 ## Deprecated & Superseded Approaches
 
 - **Permanent Per-Appointment / Per-Consultant Stream Call IDs**: Superseded by strict `1 AppointmentOccurrence = 1 active Stream Call ID` isolation (`occurrence-<uuid>`) so recurring `SUBSCRIPTION` and `CLASS` sessions never bleed attendance, duration caps, or recording state across occurrences.
-- **Uniform `where: { streamCallId }` Webhook Lookup Across All Events**: Superseded by asymmetric webhook lookup (`ADR-02`) so recordings and presence from pre-reopen segments attach via `parseOccurrenceIdFromCallId`, while late `call.ended` / `call.session_ended` webhooks strictly check `where: { streamCallId }`.
+- **Uniform `where: { streamCallId }` Webhook Lookup Across All Events**: Superseded by asymmetric webhook lookup (`ADR-02`) so recordings from pre-reopen segments attach via `parseOccurrenceIdFromCallId`, while late `call.ended` / `call.session_ended` webhooks strictly check `where: { streamCallId }`.
 - **Dual-Synced Extension (`endsAt` Advanced in Postgres plus Stream `custom`)**: Superseded by ADR-04. Advancing `AppointmentOccurrence.endsAt` moved the column the classifier reads as the booked end, so "extend, then leave on time" lost 15 minutes. The extension counter lived in Stream `custom`, which a reopen reset, and a failed revert let a retry add time. Delete any code that writes `AppointmentOccurrence.endsAt` from the extend path or reads the extension count from Stream.
 - **Fire-and-Forget End Endpoint Swallowing DB Errors as HTTP 200**: Superseded by `recordMeetingEndedSynchronously` CAS dual-write that rotates pre-start `"ended_early"` rooms and returns HTTP `500` on database failure.
 - **Pull-Only Chat With No Unread Notification**: Superseded by the unread digest (`ADR-09`), one email and bell per user per 30-minute window from Stream's unread reminders.
 - **Dual Red Hangup Buttons in `MeetingRoom.tsx`**: Superseded by the single Zoom/Meet-style `<CallExitButton />` with role-aware direct leave vs host two-action popover and `< 10m` remaining caution banner.
 - **End Stamps Closing Every Open Presence Row as Fact**: Superseded by ADR-06. `stampEnd` and the outcome sweep's `capOpenSlotPresences` closed every open row at the room end before classification, so a lost leave read as presence until the end. Delete any code that closes `MeetingPresence` at an end stamp without `closedByEnd = true`, or that classifies an assumed close without first asking Stream.
+- **A live webhook mirror of attendance, with the witness as a patch**: Superseded by the revised ADR-06. `MeetingPresence` and `MeetingAttendance` were written by the join and leave webhooks, end stamps closed open rows as assumptions (`closedByEnd`), and the sweep patched them from Stream's latest session only, inside a read budget, waiting 24 hours before parking. Every fix added state that could disagree with Stream. Do not reintroduce a webhook writer of attendance or a `null` that money code can read as either proof or doubt.
 - **Hard-coded 720p in the 1-to-Many builder and quality left on the call type**: Superseded by `PlatformVideoConfig` (ADR-08). Delete any literal `target_resolution` in `lib/meetings/**` and any environment variable that tunes video quality.
 - **Client-cooperative revocation (browser sync gates and a session flag):** Superseded by ADR-10. Delete any residue of the `initialSyncCompletedUsers` set and the `stream_sync_<id>` flag.
 - **Leaving Stream's copy of a recording until its 14-day expiry, and Supabase or a push to our bucket as recording stores:** Superseded by ADR-11. Delete any code that treats Stream's copy as permanent or adds a second recording destination.

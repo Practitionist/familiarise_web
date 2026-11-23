@@ -21,6 +21,12 @@ import {
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
 
+// The capture's chat channels are a fire-and-forget step this suite does not judge; left real, it logs after the suite ends.
+jest.mock("../../../lib/payments/webhooks/ensure-channels", () => ({
+  __esModule: true,
+  ensureChannelsForAppointment: jest.fn(async () => ({ ensured: true })),
+}));
+
 const refundDoor = jest.requireMock(
   "../../../lib/payments/operations/booking-refund",
 ) as { refundBookingPayment: jest.Mock };

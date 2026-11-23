@@ -49,6 +49,7 @@ const streamRecordingStoppedSchema = streamCallBaseEventSchema.extend({
 
 const streamSessionEndedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.session_ended"),
+  session_id: z.string().optional(),
   call: z
     .object({
       id: z.string(),
@@ -66,6 +67,7 @@ export const streamCallEndedSchema = streamCallBaseEventSchema.extend({
       type: z.string(),
       created_by_user_id: z.string().nullish(),
       ended_by_user_id: z.string().nullish(),
+      session: z.object({ id: z.string() }).nullish(),
     })
     .optional(),
   // Stream sends `user: null` when the call ends without an acting user (server end, timeout).
@@ -74,24 +76,16 @@ export const streamCallEndedSchema = streamCallBaseEventSchema.extend({
   ended_by_user_id: z.string().nullish(),
 });
 
-// Handlers need only the app user id (participant.user.id) and the session id.
-const streamParticipantSchema = z.object({
-  user: z.object({ id: z.string() }),
-  user_session_id: z.string().optional(),
-  role: z.string().optional(),
-});
-
+// The join is room state only (a reopen, the join watermark and the session it names), so who joined is never stored.
 const streamSessionParticipantJoinedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.session_participant_joined"),
-  session_id: z.string(),
-  participant: streamParticipantSchema,
+  session_id: z.string().optional(),
 });
 
-const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
-  type: z.literal("call.session_participant_left"),
-  session_id: z.string(),
-  duration_seconds: z.number().optional(),
-  participant: streamParticipantSchema,
+// Stream's docs name the payload type `call.report_ready`; the SDK's event union says `call.stats_report_ready`.
+const streamStatsReportReadySchema = streamCallBaseEventSchema.extend({
+  type: z.enum(["call.stats_report_ready", "call.report_ready"]),
+  session_id: z.string().min(1),
 });
 
 // Message `text` is deliberately undeclared, so no message content is ever parsed or stored.
@@ -132,6 +126,6 @@ export const STREAM_EVENT_SCHEMAS = {
   "call.session_ended": streamSessionEndedSchema,
   "call.ended": streamCallEndedSchema,
   "call.session_participant_joined": streamSessionParticipantJoinedSchema,
-  "call.session_participant_left": streamSessionParticipantLeftSchema,
+  "call.stats_report_ready": streamStatsReportReadySchema,
   "user.unread_message_reminder": streamUnreadMessageReminderSchema,
 } satisfies Record<HandledEventType, z.ZodTypeAny>;

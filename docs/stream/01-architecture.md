@@ -32,7 +32,7 @@ The real-time collaboration platform integrates six core subsystems across synch
 4. **Stream Chat (`messaging` & `team` Channels)**:
    - Persistent 1:1 human-pair DMs (`dm-<a>-<b>` for personal scope, `dmo-<orgHash>-<pairHash>` for enterprise org scope), cohort `team` channels (`webinar-<id>`, `class-<id>`), and collaborator threads (`collab-webinar-<planId>`, `collab-class-<planId>`).
 5. **PostgreSQL Relational Core & Upstash Redis**:
-   - PostgreSQL (`PG_POOL_MAX=1`) stores authoritative appointment schedules (`AppointmentOccurrence`), room metadata (`Meeting`), device stay intervals (`MeetingPresence`), user attendance ledgers (`MeetingAttendance`), recording lifecycles (`Recording`), webhook deduplication receipts (`WebhookEvent`), and DPDP revocation queues (`StreamRevocationRetry`).
+   - PostgreSQL (`PG_POOL_MAX=1`) stores authoritative appointment schedules (`AppointmentOccurrence`), room metadata (`Meeting`), Stream's settled device-stay record (`MeetingPresence`, stored once with `Meeting.attendanceSettledAt`), recording lifecycles (`Recording`), webhook deduplication receipts (`WebhookEvent`), and DPDP revocation queues (`StreamRevocationRetry`).
    - Upstash Redis (`lib/redis.ts`) stores ephemeral session Q&A question payloads (`stage-qa:<callId>:<questionId>`, 6-hour TTL) and rate-limit sliding windows.
 6. **Cloudflare R2 Durable Storage & Background Cron Fleet**:
    - Scheduled sweeps. Stream recovery and lifecycle jobs run through the active Netlify ticker. Session recovery runs every 30 minutes; recording transfer queues a background worker every 15 minutes; the five daily lifecycle jobs queue bounded background slices in staggered daily UTC windows. Their Actions steps are removed. PostgreSQL leases and row ownership fences protect execution; deployment and completed-work evidence remain separate. See the [scheduling map](../start-here/06-chat-and-video-system-hld.md#10-scheduling-truth) and [background sync architecture](./09-background-sync.md).
@@ -115,8 +115,7 @@ PostgreSQL acts as the single system of record for scheduling, access authorizat
 erDiagram
     Appointment ||--o{ AppointmentOccurrence : "schedules"
     AppointmentOccurrence ||--|| Meeting : "isolates 1 active room"
-    Meeting ||--o{ MeetingPresence : "tracks device stays"
-    Meeting ||--o{ MeetingAttendance : "aggregates per-user joins"
+    Meeting ||--o{ MeetingPresence : "stores Stream's settled device stays"
     Meeting ||--o{ Recording : "owns captured segments"
     Meeting ||--o{ MeetingRecordingConsent : "stores opt-out/ack"
     Recording ||--o{ RecordingTransfer : "tracks R2 multipart copies"
@@ -145,6 +144,7 @@ erDiagram
         boolean isRecording
         datetime recordingStartedAt
         string recordingStartedBy
+        datetime attendanceSettledAt
     }
 
     MeetingPresence {
@@ -156,17 +156,6 @@ erDiagram
         string streamCallId
         datetime joinedAt
         datetime leftAt
-        boolean closedByEnd
-    }
-
-    MeetingAttendance {
-        string id PK
-        string meetingId FK
-        string appointmentOccurrenceId FK
-        string userId FK
-        int joinCount
-        datetime firstJoinedAt
-        datetime lastLeftAt
     }
 
     Recording {
@@ -189,8 +178,7 @@ erDiagram
 | --------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`Meeting`**               | `streamCallId @unique`, `appointmentOccurrenceId @unique`                         | Stores bare `streamCallId` (`occurrence-<uuid>` or `occurrence-<uuid>-r<base36>`), never prefixed with `default:`. `endedAt` advances monotonically via CAS.                                                                                                                                                    |
 | **`AppointmentOccurrence`** | Indexed on `(appointmentId, startsAt)`, `(consultantProfileId, startsAt, endsAt)` | `endsAt` is the immutable booked end; the host extension lives in `Meeting.extendedSeconds`, and the room end is `endsAt + extendedSeconds`. Excluded when `deletedAt != null` or `completionStatus in [CANCELLED, RESCHEDULED]`.                                                                               |
-| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Keyed by Stream's `user_session_id` (or `sessionId:userId` when absent), so duplicate deliveries never inflate session counts. `streamCallId` names the room segment; `closedByEnd` marks an end stamp's assumed `leftAt`, which a reported leave always replaces.                                              |
-| **`MeetingAttendance`**     | `@@unique([meetingId, userId])`, indexed on `appointmentOccurrenceId`             | `firstJoinedAt` is write-once immutable; `joinCount` increments only when a genuinely new `MeetingPresence` session interval is inserted (`newSessions > 0`).                                                                                                                                                   |
+| **`MeetingPresence`**       | `@@unique([meetingId, userSessionId])`, indexed on `appointmentOccurrenceId`      | Written only by `settleOccurrenceAttendance`, in the transaction that moves `Meeting.attendanceSettledAt` from null; keyed by Stream's `user_session_id` (or `sessionId:userId` when absent), and `streamCallId` names the call each stay came from. No webhook writes it.                                      |
 | **`Recording`**             | Indexed on `(meetingId, streamRecordingId)`, `(status, streamUrlExpiresAt)`       | `READY` rows live on `STREAM_S3` (`streamUrlExpiresAt = end + 14d`) until `transfer-recordings` copies MP4 to R2 (`status = AVAILABLE`, `storageType = PLATFORM`).                                                                                                                                              |
 | **`WebhookEvent`**          | `eventId @unique`                                                                 | Written before dispatch with a `claimedAt` lease stamp. A redelivery re-claims a row whose earlier attempt was abandoned (no error, claim older than 5 minutes, fewer than 5 reclaims) through `reclaimAbandonedWebhookReceipt`; the sweeper re-claims through the fenced `reclaimStaleProcessingWebhookEvent`. |
 

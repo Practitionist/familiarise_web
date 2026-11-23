@@ -14,23 +14,6 @@ jest.mock("../../lib/prisma", () => {
       update: jest.fn(),
       updateMany: jest.fn(),
     },
-    meetingPresence: {
-      createMany: jest.fn(),
-      findMany: jest.fn(),
-      upsert: jest.fn(),
-      findFirst: jest.fn(),
-      update: jest.fn(),
-      create: jest.fn(),
-      updateMany: jest.fn(),
-    },
-    meetingAttendance: {
-      upsert: jest.fn(),
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-      updateMany: jest.fn(),
-      findMany: jest.fn(),
-    },
     appointmentOccurrence: {
       update: jest.fn(),
     },
@@ -103,20 +86,14 @@ jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
 }));
 
-jest.mock("../../lib/stream/call-presence", () => ({
-  getCallParticipantSessionsFromStream: jest.fn().mockResolvedValue([]),
-}));
-
 import prisma from "../../lib/prisma";
 import {
   isDbHealthy,
   markWebhookEventProcessed,
 } from "../../lib/webhooks/event-log";
-import { streamLogger } from "../../lib/stream-logger";
 import { notifyRecordingFailed } from "../../lib/novu/service";
 import { getEventAttendeeIds } from "../../lib/stream/recording-utils";
 import { getStreamChatClient } from "../../lib/stream-client";
-import { getCallParticipantSessionsFromStream } from "../../lib/stream/call-presence";
 import { POST } from "../../app/api/stream/webhooks/route";
 import {
   MAX_WEBHOOK_COMPRESSED_BYTES,
@@ -134,12 +111,7 @@ import {
   ensureWebhookSubscription,
 } from "../../scripts/stream/ensure-webhook-subscription";
 import { classifySessionOutcome } from "../../lib/booking/session-outcome";
-import {
-  handleCallEnded,
-  handleSessionEnded,
-  handleSessionParticipantJoined,
-  handleSessionParticipantLeft,
-} from "../../lib/stream/session-handlers";
+import { handleCallEnded } from "../../lib/stream/session-handlers";
 import {
   handleRecordingFailed,
   handleRecordingReady,
@@ -181,13 +153,6 @@ function postSignedJsonWebhook(
       ...extraHeaders,
     }),
   );
-}
-
-function recordStep<T>(steps: string[], label: string, result: T) {
-  return async () => {
-    steps.push(label);
-    return result;
-  };
 }
 
 describe("Stream Webhook Megafix Regression Suite", () => {
@@ -391,6 +356,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
   describe("3. Exact handled-event subscription & wildcard drift pruning", () => {
     it("ignores legacy webhook_events wildcard when webhook_url is empty, and clears active legacy webhook_url on apply", async () => {
       expect(DESIRED_EVENT_TYPES).toHaveLength(9);
+      expect(DESIRED_EVENT_TYPES).toContain("call.stats_report_ready");
       expect(DESIRED_EVENT_TYPES).toEqual(HANDLED_EVENT_TYPES);
       expect(DESIRED_EVENT_TYPES).not.toContain("call.session_started");
 
@@ -500,7 +466,6 @@ describe("Stream Webhook Megafix Regression Suite", () => {
           endedReason: "call_ended",
           endedByUserId: "learner-1",
         },
-        report: { unique: 2 },
         maintenanceWindows: [],
       });
       expect(learnerEnded.outcome).not.toBe("CUT_SHORT");
@@ -517,7 +482,6 @@ describe("Stream Webhook Megafix Regression Suite", () => {
           endedReason: "session_timeout",
           endedByUserId: null,
         },
-        report: { unique: 2 },
         maintenanceWindows: [],
       });
       expect(timeoutEnded.outcome).not.toBe("CUT_SHORT");
@@ -534,7 +498,6 @@ describe("Stream Webhook Megafix Regression Suite", () => {
           endedReason: "call_ended",
           endedByUserId: "host-1",
         },
-        report: { unique: 2 },
         maintenanceWindows: [],
       });
       expect(hostEnded.outcome).toBe("CUT_SHORT");
@@ -552,9 +515,6 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         },
       });
       (prisma.meeting.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
-      (prisma.meetingPresence.updateMany as jest.Mock).mockResolvedValue({
-        count: 1,
-      });
 
       await handleCallEnded({
         type: "call.ended",
@@ -571,242 +531,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
     });
   });
 
-  describe("5. Strict lock ordering & order-independent participant tracking", () => {
-    it("acquires Meeting -> MeetingPresence -> MeetingAttendance lock order and clamps left-before-joined", async () => {
-      const callOrder: string[] = [];
-      (prisma.meeting.findUnique as jest.Mock).mockResolvedValue({
-        id: "mtg-order",
-        endedAt: null,
-        endedReason: null,
-        appointmentOccurrenceId: "occ-1",
-      });
-      // Simulate left webhook having arrived BEFORE joined webhook for same session
-      (prisma.meetingPresence.createMany as jest.Mock).mockImplementation(
-        recordStep(callOrder, "create_presence", { count: 0 }),
-      );
-      (prisma.meetingPresence.updateMany as jest.Mock).mockImplementation(
-        recordStep(callOrder, "clamp_presence_joinedAt", { count: 1 }),
-      );
-      (prisma.meetingAttendance.upsert as jest.Mock).mockImplementation(
-        recordStep(callOrder, "upsert_attendance", {}),
-      );
-      (prisma.meetingAttendance.updateMany as jest.Mock).mockImplementation(
-        recordStep(callOrder, "clamp_attendance_firstJoinedAt", { count: 1 }),
-      );
-
-      await handleSessionParticipantJoined({
-        type: "call.session_participant_joined",
-        call_cid: "default:call-order",
-        session_id: "sess-parent",
-        participant: {
-          user: { id: "user-1" },
-          user_session_id: "sess-1",
-        },
-        created_at: "2026-10-10T10:02:00Z",
-      });
-
-      expect(callOrder).toEqual([
-        "create_presence",
-        "clamp_presence_joinedAt",
-        "upsert_attendance",
-        "clamp_attendance_firstJoinedAt",
-      ]);
-      expect(prisma.meetingAttendance.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: {},
-        }),
-      );
-    });
-
-    it("closes joined-after-ended interval immediately when initial read or concurrent call.ended sets endedAt", async () => {
-      const endedAt = new Date("2026-10-10T10:30:00Z");
-      // Concurrent race: initial read sees non-deliberate endedAt=10:20, reopen updateMany returns count=0 because call.ended stamped 10:30
-      (prisma.meeting.findUnique as jest.Mock)
-        .mockResolvedValueOnce({
-          id: "mtg-ended",
-          endedAt: new Date("2026-10-10T10:20:00Z"),
-          endedReason: "session_ended",
-          appointmentOccurrenceId: "occ-2",
-        })
-        .mockResolvedValueOnce({ endedAt });
-      (prisma.meeting.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
-      (prisma.meetingPresence.createMany as jest.Mock).mockResolvedValue({
-        count: 1,
-      });
-      (prisma.meetingAttendance.upsert as jest.Mock).mockResolvedValue({});
-      (prisma.meetingAttendance.updateMany as jest.Mock).mockResolvedValue({
-        count: 0,
-      });
-
-      await handleSessionParticipantJoined({
-        type: "call.session_participant_joined",
-        call_cid: "default:call-ended",
-        session_id: "sess-parent",
-        participant: {
-          user: { id: "user-2" },
-          user_session_id: "sess-late",
-        },
-        created_at: "2026-10-10T10:31:00Z",
-      });
-
-      expect(prisma.meetingPresence.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: [expect.objectContaining({ leftAt: endedAt })],
-        }),
-      );
-      expect(prisma.meetingAttendance.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: { joinCount: { increment: 1 } },
-        }),
-      );
-    });
-
-    it("scopes reconcileWebinarAttendance to webinar/class meetings and preserves end stamp on Stream errors", async () => {
-      const joinedAt = new Date("2026-10-10T10:02:00Z");
-      const endedAt = new Date("2026-10-10T11:05:00Z");
-      (prisma.meeting.findUnique as jest.Mock)
-        // 1. Webinar meeting -> reconciles participants
-        .mockResolvedValueOnce({
-          id: "mtg-web",
-          streamCallId: "webinar-call",
-          appointmentOccurrenceId: "occ-web",
-          endedAt: null,
-          occurrence: {
-            id: "occ-web",
-            startsAt: new Date("2026-10-10T10:00:00Z"),
-            endsAt: new Date("2026-10-10T11:00:00Z"),
-            appointment: { webinar: { id: "web-1" }, class: null },
-          },
-        })
-        // 2. 1-on-1 consultation -> skips Stream participant query
-        .mockResolvedValueOnce({
-          id: "mtg-consult",
-          streamCallId: "consult-call",
-          appointmentOccurrenceId: "occ-consult",
-          endedAt: null,
-          occurrence: {
-            id: "occ-consult",
-            startsAt: new Date("2026-10-10T10:00:00Z"),
-            endsAt: new Date("2026-10-10T11:00:00Z"),
-            appointment: { webinar: null, class: null },
-          },
-        })
-        // 3. Webinar retry when Stream API rejects -> warns without failing handler
-        .mockResolvedValueOnce({
-          id: "mtg-web-retry",
-          streamCallId: "webinar-retry",
-          appointmentOccurrenceId: "occ-web-retry",
-          endedAt,
-          occurrence: {
-            id: "occ-web-retry",
-            startsAt: new Date("2026-10-10T10:00:00Z"),
-            endsAt: new Date("2026-10-10T11:00:00Z"),
-            appointment: { webinar: null, class: { id: "cls-1" } },
-          },
-        });
-      (prisma.meeting.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
-      (prisma.meetingPresence.createMany as jest.Mock).mockResolvedValue({
-        count: 1,
-      });
-      (prisma.meetingPresence.updateMany as jest.Mock).mockResolvedValue({
-        count: 1,
-      });
-      (getCallParticipantSessionsFromStream as jest.Mock)
-        .mockResolvedValueOnce([
-          {
-            userId: "attendee-1",
-            userSessionId: "sess-a1",
-            joinedAt,
-            leftAt: null,
-          },
-        ])
-        .mockRejectedValueOnce(new Error("Stream rate limit"));
-      (prisma.meetingAttendance.upsert as jest.Mock).mockResolvedValue({});
-      (prisma.meetingAttendance.updateMany as jest.Mock).mockResolvedValue({
-        count: 1,
-      });
-
-      await handleSessionEnded({
-        type: "call.session_ended",
-        call_cid: "default:webinar-call",
-        created_at: endedAt.toISOString(),
-      });
-
-      expect(prisma.meetingAttendance.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            meetingId_userId: { meetingId: "mtg-web", userId: "attendee-1" },
-          },
-          create: expect.objectContaining({
-            firstJoinedAt: joinedAt,
-            lastLeftAt: endedAt,
-            joinCount: 1,
-          }),
-        }),
-      );
-
-      await handleSessionEnded({
-        type: "call.session_ended",
-        call_cid: "default:consult-call",
-        created_at: endedAt.toISOString(),
-      });
-      expect(getCallParticipantSessionsFromStream).toHaveBeenCalledTimes(1);
-
-      await expect(
-        handleSessionEnded({
-          type: "call.session_ended",
-          call_cid: "default:webinar-retry",
-          created_at: endedAt.toISOString(),
-        }),
-      ).resolves.toBeUndefined();
-      expect(streamLogger.warn).toHaveBeenCalledWith(
-        "Webinar attendance backfill failed; end stamp preserved",
-        expect.objectContaining({ meetingId: "mtg-web-retry" }),
-      );
-    });
-
-    it("executes handleSessionParticipantLeft in strict MeetingPresence -> MeetingAttendance order inside $transaction", async () => {
-      const order: string[] = [];
-      (prisma.meeting.findUnique as jest.Mock).mockResolvedValue({
-        id: "mtg-left",
-        endedAt: null,
-        endedReason: null,
-        appointmentOccurrenceId: "occ-left",
-      });
-      (prisma.meetingPresence.createMany as jest.Mock).mockImplementation(
-        recordStep(order, "create_presence", { count: 1 }),
-      );
-      (prisma.meetingPresence.updateMany as jest.Mock).mockImplementation(
-        recordStep(order, "update_presence_leftAt", { count: 1 }),
-      );
-      (prisma.meetingAttendance.upsert as jest.Mock).mockImplementation(
-        recordStep(order, "upsert_attendance", {}),
-      );
-      (prisma.meetingAttendance.updateMany as jest.Mock).mockImplementation(
-        recordStep(order, "advance_attendance_lastLeftAt", { count: 1 }),
-      );
-
-      await handleSessionParticipantLeft({
-        type: "call.session_participant_left",
-        call_cid: "default:call-left",
-        session_id: "sess-parent",
-        participant: {
-          user: { id: "user-left" },
-          user_session_id: "sess-left",
-        },
-        created_at: "2026-10-10T10:40:00Z",
-      });
-
-      expect(order).toEqual([
-        "create_presence",
-        "update_presence_leftAt",
-        "upsert_attendance",
-        "advance_attendance_lastLeftAt",
-      ]);
-    });
-  });
-
-  describe("6. Recording rebound fallback, CAS transitions & chunked notifications", () => {
+  describe("5. Recording rebound fallback, CAS transitions & chunked notifications", () => {
     it("extracts slotId from rebound call IDs and falls back to appointmentOccurrenceId", () => {
       expect(parseSlotIdFromCallId("slot-occ123-r1")).toBe("occ123");
       expect(parseSlotIdFromCallId("slot-occ123")).toBe("occ123");
