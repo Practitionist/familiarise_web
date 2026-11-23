@@ -37,7 +37,10 @@ import {
   UNCONFIRMED_LEARNER_ABSENT,
   unconfirmedClosedVerdictWhere,
 } from "@/lib/booking/misses";
-import { confirmClosedOutcomes } from "@/lib/booking/session-outcome-sweep";
+import {
+  confirmClosedOutcomes,
+  OUTAGE_READ_CAP,
+} from "@/lib/booking/session-outcome-sweep";
 import {
   confirmSessionOutcome,
   setSessionOutcome,
@@ -159,6 +162,26 @@ describe("the window-close pass", () => {
     const run = await confirmClosedOutcomes(NOW, () => false);
     expect(run.confirmed).toBe(0);
     expect(row("strong").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("confirms nothing when an outage read fills its cap, since an overlapping window may be missing", async () => {
+    const incidents = prisma.platformIncident as unknown as Table;
+    occurrences.rows.push(verdict("strong"));
+    for (let i = 0; i < OUTAGE_READ_CAP; i++) {
+      incidents.rows.push({
+        id: `pi-${i}`,
+        startsAt: hoursAgo(10),
+        endsAt: hoursAgo(9),
+      });
+    }
+    try {
+      const run = await confirmClosedOutcomes(NOW, () => false);
+      expect(run.confirmed).toBe(0);
+      expect(run.errors).toHaveLength(1);
+      expect(row("strong").outcomeConfirmedAt).toBeNull();
+    } finally {
+      incidents.rows.splice(0, incidents.rows.length);
+    }
   });
 
   it("starts nothing past its deadline", async () => {

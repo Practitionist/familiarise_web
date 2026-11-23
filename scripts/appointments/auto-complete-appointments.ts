@@ -1394,18 +1394,18 @@ async function autoCompleteAppointmentsUnlocked(
   const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
   let rounds = 0;
   try {
+    // Before the drain, which can spend the whole budget, and before the alerts, so a confirmed verdict is not counted as waiting.
+    const confirms = await confirmClosedOutcomes(new Date(), pastDeadline);
+    allErrors.push(...confirms.errors);
+    console.log(
+      `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
+    );
     rounds = await drainRounds(
       { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline },
       slotRun,
       parents,
       allErrors,
       classEnd,
-    );
-    // Before the alerts, so a verdict confirmed now is not counted as waiting.
-    const confirms = await confirmClosedOutcomes(new Date(), pastDeadline);
-    allErrors.push(...confirms.errors);
-    console.log(
-      `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
     );
     try {
       // Owner decision — a needs-human item older than 72 h is warned about, throttled.

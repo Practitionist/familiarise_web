@@ -105,6 +105,19 @@ export type SlotDecision =
       moved: boolean;
     };
 
+/** Rows read per outage source; a read that returns this many may be incomplete. */
+export const OUTAGE_READ_CAP = 200;
+
+/** True when either outage source filled its cap, so an overlapping window may be missing. */
+export function outageReadCapped(outages: readonly OutageWindow[]): boolean {
+  const count = (source: OutageWindow["source"]) =>
+    outages.filter((o) => o.source === source).length;
+  return (
+    count("maintenance") >= OUTAGE_READ_CAP ||
+    count("incident") >= OUTAGE_READ_CAP
+  );
+}
+
 /** Platform-wide DEGRADED/OFFLINE windows and declared incidents that overlap [from, now]. */
 export async function readOutageWindows(
   db: Pick<Tx, "maintenanceWindow" | "platformIncident">,
@@ -122,13 +135,13 @@ export async function readOutageWindows(
         ],
       },
       select: { startedAt: true, endedAt: true },
-      take: 200,
+      take: OUTAGE_READ_CAP,
     }),
     db.platformIncident.findMany({
       where: { endsAt: { gt: from } },
       select: { startsAt: true, endsAt: true },
       orderBy: { startsAt: "asc" },
-      take: 200,
+      take: OUTAGE_READ_CAP,
     }),
   ]);
   return [
@@ -846,6 +859,14 @@ export async function confirmClosedOutcomes(
         prisma,
         new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
       );
+      // A capped outage read may have dropped an overlapping window, so nothing is confirmed on it.
+      if (outageReadCapped(outages)) {
+        run.weak += rows.length;
+        run.errors.push(
+          `Outage read hit its ${OUTAGE_READ_CAP}-row cap; closed verdicts left unconfirmed`,
+        );
+        break;
+      }
       const strong = new Map<NegativeMoneyOutcome, string[]>();
       for (const row of rows) {
         if (!isNegativeMoneyOutcome(row.outcome)) continue;
