@@ -1,11 +1,4 @@
-import {
-  ArrowUpRight,
-  CalendarDays,
-  ChevronRight,
-  CircleCheck,
-  MessageSquareText,
-  Video,
-} from "lucide-react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -13,12 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { domainPath } from "@/lib/explore/domain-slug";
 import { cn } from "@/utils/tailwind";
-import {
-  FIELD_GROUPS,
-  GOAL_LINKS,
-  type FieldGroup,
-  type FieldMockup,
-} from "./fields";
+import { FIELD_GROUPS, GOAL_LINKS, type FieldGroup } from "./fields";
 
 const SPAN_CLASSES: Record<number, string> = {
   2: "lg:col-span-2",
@@ -40,76 +28,6 @@ function expertCount(count: number): string {
   return count === 1 ? "1 expert" : `${count} experts`;
 }
 
-const MOCKUP_CARD =
-  "rounded-2xl bg-white/90 p-4 shadow-elevation-2 backdrop-blur";
-
-/** Decorative product snippets; they illustrate the kind of session, not real bookings. */
-function Mockup({ kind }: Readonly<{ kind: FieldMockup }>) {
-  switch (kind) {
-    case "live":
-      return (
-        <div className="flex items-center gap-3 rounded-2xl bg-zinc-950 px-4 py-3 text-white shadow-elevation-2">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-red-500" />
-          </span>
-          <div>
-            <p className="text-xs text-zinc-400">Live now</p>
-            <p className="text-sm font-medium">System design review</p>
-          </div>
-          <Video className="ml-2 h-4 w-4 text-zinc-400" />
-        </div>
-      );
-    case "slots":
-      return (
-        <div className={cn(MOCKUP_CARD, "w-full max-w-xs")}>
-          <p className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-            <CalendarDays className="h-4 w-4" />
-            Book a 1:1 session
-          </p>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-medium">
-            <span className="rounded-lg border border-zinc-200 py-2 text-zinc-700">
-              4:00 PM
-            </span>
-            <span className="rounded-lg bg-zinc-950 py-2 text-white">
-              5:30 PM
-            </span>
-            <span className="rounded-lg border border-zinc-200 py-2 text-zinc-700">
-              7:00 PM
-            </span>
-          </div>
-          <p className="mt-3 rounded-lg bg-emerald-600 py-2 text-center text-xs font-semibold text-white">
-            Confirm booking
-          </p>
-        </div>
-      );
-    case "review":
-      return (
-        <div className={cn(MOCKUP_CARD, "w-full max-w-xs")}>
-          <div className="h-16 rounded-xl bg-gradient-to-br from-rose-300 via-orange-200 to-amber-100" />
-          <div className="mt-3 flex items-start gap-2">
-            <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
-            <p className="text-xs text-zinc-700">
-              Strong palette. Give the cards more breathing room.
-            </p>
-          </div>
-        </div>
-      );
-    case "progress":
-      return (
-        <div className={cn(MOCKUP_CARD, "w-60")}>
-          <p className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-            <CircleCheck className="h-4 w-4 text-lime-600" />
-            This month&apos;s plan
-          </p>
-          <div className="mt-3 h-2 rounded-full bg-zinc-100">
-            <div className="h-2 w-3/4 rounded-full bg-lime-500" />
-          </div>
-          <p className="mt-2 text-xs text-zinc-500">3 of 4 sessions done</p>
-        </div>
-      );
-  }
-}
-
 function GroupTile({
   group,
   domains,
@@ -123,7 +41,7 @@ function GroupTile({
   return (
     <article
       className={cn(
-        "relative isolate flex min-h-[26rem] flex-col justify-between overflow-hidden rounded-3xl bg-zinc-900 p-7 text-white md:p-9",
+        "relative isolate flex min-h-[22rem] flex-col justify-between overflow-hidden rounded-3xl bg-zinc-900 p-7 text-white md:p-9",
         SPAN_CLASSES[span],
       )}
     >
@@ -173,10 +91,6 @@ function GroupTile({
             </li>
           ))}
         </ul>
-      </div>
-
-      <div aria-hidden="true" className="mt-8 flex justify-end">
-        <Mockup kind={group.mockup} />
       </div>
     </article>
   );

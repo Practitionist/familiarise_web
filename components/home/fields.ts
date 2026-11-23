@@ -121,8 +121,6 @@ export function fieldDetail(domainName: string): FieldDetail | undefined {
   return key ? FIELD_DETAILS[key] : undefined;
 }
 
-export type FieldMockup = "live" | "slots" | "review" | "progress";
-
 export interface FieldGroup {
   title: string;
   benefit: string;
@@ -130,7 +128,6 @@ export interface FieldGroup {
   domains: string[];
   /** Fills the whole tile under a dark gradient. */
   photo: FieldPhoto;
-  mockup: FieldMockup;
 }
 
 /** The landing page's four field tiles, in demand order. Domains outside these groups never get a tile. */
@@ -140,28 +137,24 @@ export const FIELD_GROUPS: FieldGroup[] = [
     benefit: "Learn from engineers who build and ship software every day.",
     domains: ["Technology"],
     photo: PHOTOS.technology,
-    mockup: "live",
   },
   {
     title: "Business & finance",
     benefit: "Product, growth and money advice from people who run them.",
     domains: ["Business", "Finance"],
     photo: PHOTOS.business,
-    mockup: "slots",
   },
   {
     title: "Creative Arts",
     benefit: "Honest feedback on your work from practising creatives.",
     domains: ["Creative Arts"],
     photo: PHOTOS.creativeArts,
-    mockup: "review",
   },
   {
     title: "Health & personal growth",
     benefit: "Coaching for body and mind, one session at a time.",
     domains: ["Health", "Personal Development"],
     photo: PHOTOS.health,
-    mockup: "progress",
   },
 ];
 
