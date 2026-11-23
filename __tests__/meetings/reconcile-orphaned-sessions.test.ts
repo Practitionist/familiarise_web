@@ -47,6 +47,8 @@ const meeting = (id: string) => ({
   id,
   streamCallId: `call-${id}`,
   extendedSeconds: 0,
+  lastStreamSessionId: "s-early",
+  lastJoinedAt: null,
   occurrence: { endsAt: new Date("2026-10-01T11:00:00Z") },
 });
 beforeEach(() => {
@@ -83,13 +85,35 @@ it("records the session Stream names on the call with the end it reconciles", as
     call: { session: { id: "s-late", ended_at: endedAt.toISOString() } },
   });
   await reconcileOrphanedSessions();
+  expect(mockMeetingUpdateMany).toHaveBeenCalledTimes(1);
   expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
-    where: { id: "a", streamCallId: "call-a", endedAt: null },
+    where: {
+      id: "a",
+      streamCallId: "call-a",
+      endedAt: null,
+      lastStreamSessionId: "s-early",
+      lastJoinedAt: null,
+    },
     data: {
       endedAt,
       endedReason: "reconciled",
       lastStreamSessionId: "s-late",
     },
+  });
+});
+
+it("closes the room without the session id when a newer join recorded one during the lookup", async () => {
+  mockMeetingFindMany.mockResolvedValueOnce([meeting("a")]);
+  mockCallGet.mockResolvedValueOnce({
+    call: { session: { id: "s-late", ended_at: endedAt.toISOString() } },
+  });
+  mockMeetingUpdateMany
+    .mockResolvedValueOnce({ count: 0 })
+    .mockResolvedValueOnce({ count: 1 });
+  await reconcileOrphanedSessions();
+  expect(mockMeetingUpdateMany).toHaveBeenLastCalledWith({
+    where: { id: "a", streamCallId: "call-a", endedAt: null },
+    data: { endedAt, endedReason: "reconciled" },
   });
 });
 

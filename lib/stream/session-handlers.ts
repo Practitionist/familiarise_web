@@ -331,7 +331,11 @@ export async function recordMeetingEndedSynchronously(
   }
 
   const sessionId = await sessionStreamHolds(meeting.streamCallId);
-  if (!(await stampEnd(meeting, endedAt, endedReason, sessionId))) {
+  const guard = {
+    lastStreamSessionId: meeting.lastStreamSessionId,
+    lastJoinedAt: meeting.lastJoinedAt,
+  };
+  if (!(await stampEnd(meeting, endedAt, endedReason, sessionId, guard))) {
     return alreadyEnded;
   }
   return { kind: "recorded", endedReason, streamCallId: meeting.streamCallId };
@@ -399,6 +403,12 @@ async function newerSessionHolds(
 
 type RecordedEnd = { endedAt: Date | null; endedReason: string | null };
 
+/** The session and join the room held before Stream was asked; a looked-up session id is written only while both still hold. */
+type SessionGuard = {
+  lastStreamSessionId: string | null;
+  lastJoinedAt: Date | null;
+};
+
 /** Stamps the end on the room's current call, compare-and-set on the call id and the end (stamp and reason) the caller read. */
 function casEnd(
   meeting: { id: string; streamCallId: string },
@@ -406,6 +416,7 @@ function casEnd(
   endedAt: Date,
   endedReason: MeetingEndReason,
   sessionId: string | null,
+  guard?: SessionGuard,
 ) {
   return prisma.meeting.updateMany({
     where: {
@@ -413,6 +424,7 @@ function casEnd(
       streamCallId: meeting.streamCallId,
       endedAt: expected.endedAt,
       endedReason: expected.endedReason,
+      ...guard,
       // A join newer than a non-deliberate end means a newer session holds the room.
       ...(!END_REASON_POLICY[endedReason].deliberate && {
         OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lte: endedAt } }],
@@ -432,7 +444,21 @@ async function stampEnd(
   endedAt: Date,
   endedReason: MeetingEndReason,
   sessionId: string | null = null,
+  guard?: SessionGuard,
 ): Promise<boolean> {
+  if (sessionId && guard) {
+    const { count } = await casEnd(
+      meeting,
+      meeting,
+      endedAt,
+      endedReason,
+      sessionId,
+      guard,
+    );
+    if (count > 0) return true;
+    // A newer join may have recorded its session during the lookup: stamp the end alone.
+    sessionId = null;
+  }
   let { count } = await casEnd(
     meeting,
     meeting,

@@ -51,6 +51,8 @@ interface OrphanedSessionRow {
   id: string;
   streamCallId: string;
   extendedSeconds: number;
+  lastStreamSessionId: string | null;
+  lastJoinedAt: Date | null;
   occurrence: {
     endsAt: Date | string;
   };
@@ -150,18 +152,28 @@ async function reconcileSingleOrphanedSession(
     const { endedAt, endedReason, sessionId } = resolved;
 
     // The call id it asked Stream about: a room reopened on a new call since is not this one.
-    await prisma.meeting.updateMany({
-      where: {
-        id: session.id,
-        streamCallId: session.streamCallId,
-        endedAt: null,
-      },
-      data: {
-        endedAt,
-        endedReason,
-        ...(sessionId && { lastStreamSessionId: sessionId }),
-      },
-    });
+    const unended = {
+      id: session.id,
+      streamCallId: session.streamCallId,
+      endedAt: null,
+    };
+    // Stream's session is written only while the room holds the session and join read before the lookup.
+    const withSession = sessionId
+      ? await prisma.meeting.updateMany({
+          where: {
+            ...unended,
+            lastStreamSessionId: session.lastStreamSessionId,
+            lastJoinedAt: session.lastJoinedAt,
+          },
+          data: { endedAt, endedReason, lastStreamSessionId: sessionId },
+        })
+      : { count: 0 };
+    if (withSession.count === 0) {
+      await prisma.meeting.updateMany({
+        where: unended,
+        data: { endedAt, endedReason },
+      });
+    }
 
     result.details.push(
       `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,
@@ -227,6 +239,8 @@ async function reconcileOrphanedSessionsUnlocked(
         id: true,
         streamCallId: true,
         extendedSeconds: true,
+        lastStreamSessionId: true,
+        lastJoinedAt: true,
         occurrence: { select: { endsAt: true } },
       },
       orderBy: { id: "asc" },
