@@ -77,6 +77,22 @@ it("closes the room on the call id it asked Stream about, and nothing else", asy
   });
 });
 
+it("records the session Stream names on the call with the end it reconciles", async () => {
+  mockMeetingFindMany.mockResolvedValueOnce([meeting("a")]);
+  mockCallGet.mockResolvedValueOnce({
+    call: { session: { id: "s-late", ended_at: endedAt.toISOString() } },
+  });
+  await reconcileOrphanedSessions();
+  expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
+    where: { id: "a", streamCallId: "call-a", endedAt: null },
+    data: {
+      endedAt,
+      endedReason: "reconciled",
+      lastStreamSessionId: "s-late",
+    },
+  });
+});
+
 it("persists rotation past an unchanged active head and reaches the tail on the next invocation", async () => {
   const head = Array.from({ length: BATCH_SIZE }, (_, i) => meeting(`a${i}`));
   mockMeetingFindMany

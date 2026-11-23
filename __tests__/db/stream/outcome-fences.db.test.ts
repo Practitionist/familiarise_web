@@ -7,6 +7,7 @@
 import prisma from "../../../lib/prisma";
 import { decideSlotOutcome } from "../../../lib/booking/session-outcome-sweep";
 import { rereadSessionAttendance } from "../../../lib/backoffice/session-outcomes";
+import { recordMeetingEndedSynchronously } from "../../../lib/stream/session-handlers";
 import { detectConsultantNoShows } from "../../../scripts/appointments/detect-consultant-no-shows";
 import { ATTENDANCE_SETTLE_DELAY_MS } from "../../../lib/meetings/settle-attendance";
 import { fakeStream } from "./harness-stream";
@@ -287,4 +288,82 @@ it("an eight-hour consultation that overran to just before its booked end plus s
       outages: [],
     }),
   ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+});
+
+/** An eight-hour consultation: the host alone for 11 minutes in A (announced), then both in B from hour 6, none of B's webhooks seen. */
+async function stageOverrunWithLostWebhooks() {
+  const room = await seedConsultationRoom(30, { paid: true, hours: 8 });
+  const s = room.startsAt;
+  const sessionB = {
+    id: "B",
+    live: false,
+    hiddenFromStats: true,
+    stays: [
+      stay(room.hostId, s, 6 * HOUR, 13 * HOUR + 56 * MIN),
+      stay(room.learnerId, s, 6 * HOUR, 13 * HOUR + 56 * MIN),
+    ],
+  };
+  // At the host's end Stream still names B as the call's session.
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    currentSessionId: "B",
+    sessions: [
+      { id: "A", live: false, stays: [stay(room.hostId, s, 0, 11 * MIN)] },
+      sessionB,
+    ],
+  });
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: {
+      endedAt: new Date(s.getTime() + 16 * MIN),
+      streamReportReadySessionIds: ["A"],
+      lastStreamSessionId: "A",
+    },
+  });
+  return {
+    room,
+    sessionB,
+    hostEnd: new Date(s.getTime() + 13 * HOUR + 56 * MIN),
+  };
+}
+
+it("a host's End for everyone records the session Stream holds, so a lagging overrun session blocks the read until it is listed; then it is HELD", async () => {
+  const { room, sessionB, hostEnd } = await stageOverrunWithLostWebhooks();
+  await recordMeetingEndedSynchronously(room.streamCallId, hostEnd);
+  // Once idle, the call no longer names a current session.
+  fakeStream.calls.get(room.streamCallId)!.currentSessionId = undefined;
+
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(hostEnd.getTime() + READ_AT),
+      outages: [],
+    }),
+  ).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
+
+  sessionB.hiddenFromStats = false;
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["A", "B"] },
+  });
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(hostEnd.getTime() + READ_AT),
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+});
+
+it("a host's end whose session lookup fails is stamped as before, keeping the session already recorded", async () => {
+  const { room, hostEnd } = await stageOverrunWithLostWebhooks();
+  fakeStream.failStatus = 503;
+
+  expect(
+    await recordMeetingEndedSynchronously(room.streamCallId, hostEnd),
+  ).toMatchObject({ kind: "recorded", endedReason: "call_ended" });
+  expect(
+    await prisma.meeting.findUniqueOrThrow({
+      where: { id: room.meetingId },
+      select: { endedAt: true, lastStreamSessionId: true },
+    }),
+  ).toEqual({ endedAt: hostEnd, lastStreamSessionId: "A" });
 });

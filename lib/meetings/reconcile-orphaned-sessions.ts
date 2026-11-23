@@ -63,7 +63,12 @@ async function resolveOrphanedSessionEnd(
   session: OrphanedSessionRow,
   result: ReconciliationResult,
   failures: RunFailureReporter,
-): Promise<{ endedAt: Date; endedReason: MeetingEndReason } | null> {
+): Promise<{
+  endedAt: Date;
+  endedReason: MeetingEndReason;
+  /** The call's latest session as Stream names it, recorded with the end. */
+  sessionId?: string;
+} | null> {
   const fallbackEndedAt = roomEndOf(session);
   if (!isStreamConfigured()) {
     result.streamNotFound++;
@@ -82,20 +87,23 @@ async function resolveOrphanedSessionEnd(
       failures,
     );
 
+    const callSession = response.call.session;
+    const sessionId = callSession?.id || undefined;
     if (response.call.ended_at) {
       result.reconciled++;
       return {
         endedAt: new Date(response.call.ended_at),
         endedReason: "reconciled",
+        sessionId,
       };
     }
 
-    const callSession = response.call.session;
     if (callSession?.ended_at) {
       result.reconciled++;
       return {
         endedAt: new Date(callSession.ended_at),
         endedReason: "reconciled",
+        sessionId,
       };
     }
     if ((callSession?.participants?.length ?? 0) > 0) {
@@ -106,7 +114,11 @@ async function resolveOrphanedSessionEnd(
     }
 
     result.reconciled++;
-    return { endedAt: fallbackEndedAt, endedReason: "reconciled_no_end" };
+    return {
+      endedAt: fallbackEndedAt,
+      endedReason: "reconciled_no_end",
+      sessionId,
+    };
   } catch (streamError) {
     if (!isExpectedStreamError(streamError)) {
       throw streamError;
@@ -135,7 +147,7 @@ async function reconcileSingleOrphanedSession(
   try {
     const resolved = await resolveOrphanedSessionEnd(session, result, failures);
     if (!resolved) return;
-    const { endedAt, endedReason } = resolved;
+    const { endedAt, endedReason, sessionId } = resolved;
 
     // The call id it asked Stream about: a room reopened on a new call since is not this one.
     await prisma.meeting.updateMany({
@@ -144,7 +156,11 @@ async function reconcileSingleOrphanedSession(
         streamCallId: session.streamCallId,
         endedAt: null,
       },
-      data: { endedAt, endedReason },
+      data: {
+        endedAt,
+        endedReason,
+        ...(sessionId && { lastStreamSessionId: sessionId }),
+      },
     });
 
     result.details.push(

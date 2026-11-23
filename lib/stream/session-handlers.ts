@@ -330,8 +330,49 @@ export async function recordMeetingEndedSynchronously(
     return { kind: "recorded", endedReason, streamCallId: nextStreamCallId };
   }
 
-  if (!(await stampEnd(meeting, endedAt, endedReason))) return alreadyEnded;
+  const sessionId = await sessionStreamHolds(meeting.streamCallId);
+  if (!(await stampEnd(meeting, endedAt, endedReason, sessionId))) {
+    return alreadyEnded;
+  }
   return { kind: "recorded", endedReason, streamCallId: meeting.streamCallId };
+}
+
+/** A host's end waits at most this long for Stream to name the call's session. */
+const SESSION_LOOKUP_BUDGET_MS = 3_000;
+
+/**
+ * The session Stream holds as this call's current or last one: the latest on
+ * the call, so it may replace the recorded id. Null when the lookup fails or
+ * runs past its budget; the end is then stamped without it.
+ */
+async function sessionStreamHolds(
+  streamCallId: string,
+): Promise<string | null> {
+  if (!isStreamConfigured()) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const lookup = withStreamCircuitBreaker(() =>
+      getStreamVideoClient().video.call(STREAM_CALL_TYPE, streamCallId).get(),
+    );
+    // A lookup that answers after the budget is dropped, not reported as unhandled.
+    lookup.catch(() => undefined);
+    const expiry = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("session lookup timed out")),
+        SESSION_LOOKUP_BUDGET_MS,
+      );
+    });
+    const { call } = await Promise.race([lookup, expiry]);
+    return call.session?.id || null;
+  } catch (error) {
+    streamLogger.warn("Host end stamped without Stream's session id", {
+      streamCallId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
