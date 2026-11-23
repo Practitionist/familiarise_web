@@ -20,10 +20,15 @@ type Tables = Record<string, Row[]>;
 type PrismaDouble = {
   __tables: Tables;
   __catchUpWrites: Array<{ id: unknown; value: unknown }>;
+  /** One-shot hooks run before the next single-row read of a table. */
+  __beforeRead: Record<string, () => Promise<void>>;
 };
 type FakeGateway = {
   requests: Row[];
   timeoutNext: boolean;
+  /** What the reference list answers: lagging (nothing), current, or an error. */
+  list: "lagging" | "current" | "error";
+  lookups: number;
   reset(): void;
 };
 
@@ -105,6 +110,7 @@ import {
   createPayoutBatch,
   handlePayoutWebhook,
   processApprovedPayouts,
+  processPayoutById,
 } from "@/lib/payments/payouts/payout-service";
 import { reportSentryError } from "@/lib/observability/report";
 import { buildPayoutCompletionPostings } from "@/lib/payments/payouts/shared-lifecycle";
@@ -117,6 +123,7 @@ const LIVE = ["PROCESSING", "COMPLETED"];
 function mockPrismaDouble() {
   const tables: Tables = {};
   const catchUpWrites: Array<{ id: unknown; value: unknown }> = [];
+  const beforeRead: Record<string, () => Promise<void>> = {};
   const relations: Record<
     string,
     Record<
@@ -340,6 +347,11 @@ function mockPrismaDouble() {
     const find = (where?: Where) =>
       rows(table).filter((r) => matches(table, r, where));
     const first = async (args: QueryArgs = {}) => {
+      const hook = beforeRead[table];
+      if (hook) {
+        delete beforeRead[table];
+        await hook();
+      }
       const hit = find(args.where)[0];
       return hit ? project(table, hit, args) : null;
     };
@@ -415,6 +427,7 @@ function mockPrismaDouble() {
   const client: Row = {
     __tables: tables,
     __catchUpWrites: catchUpWrites,
+    __beforeRead: beforeRead,
     $executeRaw: async () => 0,
     // Notices are mocked out; these exist so the notice code takes its production branch.
     notificationOutbox: loud("notificationOutbox", { upsert: jest.fn() }),
@@ -449,14 +462,21 @@ function mockPrismaDouble() {
 
 /** RazorpayX under one idempotency key: the same body returns the payout, another body is a 400. */
 function mockFakeGateway(actual: typeof razorpayPayouts) {
-  const byKey = new Map<string, { body: string; id: string }>();
+  const byKey = new Map<
+    string,
+    { body: string; id: string; referenceId: unknown }
+  >();
   const gateway = {
     requests: [] as Row[],
     timeoutNext: false,
+    list: "lagging" as "lagging" | "current" | "error",
+    lookups: 0,
     reset() {
       byKey.clear();
       gateway.requests.length = 0;
       gateway.timeoutNext = false;
+      gateway.list = "lagging";
+      gateway.lookups = 0;
     },
     async createPayout(request: Row) {
       gateway.requests.push(request);
@@ -471,7 +491,7 @@ function mockFakeGateway(actual: typeof razorpayPayouts) {
         );
       }
       const id = prior?.id ?? `pout_${byKey.size + 1}`;
-      byKey.set(key, { body, id });
+      byKey.set(key, { body, id, referenceId: request.referenceId });
       if (gateway.timeoutNext) {
         gateway.timeoutNext = false;
         throw Object.assign(
@@ -481,9 +501,17 @@ function mockFakeGateway(actual: typeof razorpayPayouts) {
       }
       return { id, status: "processing" };
     },
-    // The reference list lags the create, so the stuck-payout job sees nothing.
-    async listPayouts() {
-      return { entity: "collection", count: 0, items: [] };
+    // By default the reference list lags the create, so a lookup sees nothing.
+    async listPayouts(params: { referenceId?: string }) {
+      gateway.lookups += 1;
+      if (gateway.list === "error") throw new Error("RazorpayX list failed");
+      const items =
+        gateway.list === "current"
+          ? [...byKey.values()]
+              .filter((p) => p.referenceId === params.referenceId)
+              .map((p) => ({ id: p.id, reference_id: p.referenceId }))
+          : [];
+      return { entity: "collection", count: items.length, items };
     },
     determinePayoutMode:
       actual.RazorpayPayoutsService.prototype.determinePayoutMode,
@@ -556,7 +584,7 @@ function completedPayout(
     payoutRow({
       id,
       status: "COMPLETED",
-      tdsFinancialYear: FY,
+      tdsFinancialYear: getIndianFinancialYear(),
       tdsRateAppliedBps: 0,
       netAmount: payout.amount,
       processedAt: new Date(),
@@ -744,7 +772,7 @@ describe("a retried consultant payout sends the body staged at its first submit"
     await firstSubmitTimesOut();
     const staged = stagedFields("po_A");
     await stuckJobReArms();
-    // Planned while A was APPROVED, so it could not see A and took the catch-up too.
+    // B holds the catch-up, as a payout planned before staged retries were counted could.
     completedPayout("po_B", {
       amount: 1_600_000,
       grossPaise: 2_000_000,
@@ -762,11 +790,13 @@ describe("a retried consultant payout sends the body staged at its first submit"
         ([, opts]) => opts?.op === "payout-tds-catch-up-taken",
       );
 
-  it("fails the retry unsent and releases its earnings when another payout took the FY catch-up while it waited", async () => {
+  it("fails the retry unsent and releases its earnings when another payout took the FY catch-up and a fresh lookup finds none", async () => {
     await catchUpTakenWhileWaiting();
+    const lookupsBefore = gateway.lookups;
 
     const results = await processApprovedPayouts();
 
+    expect(gateway.lookups).toBe(lookupsBefore + 1);
     expect(gateway.requests).toHaveLength(1);
     expect(results).toEqual([
       expect.objectContaining({
@@ -833,7 +863,11 @@ describe("a retried consultant payout sends the body staged at its first submit"
 
     expect(gateway.requests).toHaveLength(1);
     expect(results).toEqual([
-      expect.objectContaining({ payoutId: "po_A", success: false }),
+      expect.objectContaining({
+        payoutId: "po_A",
+        success: false,
+        skipped: true,
+      }),
     ]);
     expect(row("consultantPayout", "po_A")).toMatchObject({
       status: "APPROVED",
@@ -948,5 +982,321 @@ describe("a retried consultant payout sends the body staged at its first submit"
         tdsPaise: 100_000,
       }),
     );
+  });
+  /** An instant payout of ₹20,000 gross, minted while A waits re-armed and sent at once. */
+  async function instantPayoutWhileWaiting() {
+    db.__tables.consultantPayout.push(
+      payoutRow({
+        id: "po_B",
+        status: "APPROVED",
+        amount: 1_600_000,
+        kind: "INSTANT",
+        idempotencyKey: "instant_cp_1_today",
+      }),
+    );
+    db.__tables.consultantEarnings.push(
+      earningRow({
+        id: "e_B",
+        payoutId: "po_B",
+        status: "BATCHED",
+        grossAmount: 2_000_000,
+        consultantSharePaise: 1_600_000,
+      }),
+    );
+    await processPayoutById("po_B");
+  }
+
+  it("counts a staged retry when planning a payout made while it waits, so the year's catch-up is withheld once", async () => {
+    // ₹4,70,000 before: A stages no TDS at ₹4,90,000.
+    seed({ priorAmountPaise: 0, priorGrossPaise: 47_000_000 });
+    await firstSubmitTimesOut();
+    await stuckJobReArms();
+
+    await instantPayoutWhileWaiting();
+    // B sees A, so the year is ₹5,10,000 and B withholds the ₹510 catch-up.
+    expect(gateway.requests[1]).toMatchObject({
+      referenceId: "po_B",
+      amount: 1_549_000,
+    });
+    expect(stagedFields("po_B")).toMatchObject({
+      tdsDeducted: 51_000,
+      tdsCatchUpFy: FY,
+    });
+
+    await processApprovedPayouts();
+    expect(gateway.requests[2]).toEqual(gateway.requests[0]);
+    expect(row("consultantPayout", "po_A").status).toBe("PROCESSING");
+  });
+
+  it("counts a staged retry's TDS credit when planning a payout made while it waits, so the credit is paid once", async () => {
+    // ₹600 already withheld this FY against ₹510 due: A stages a ₹90 credit.
+    seed({ priorAmountPaise: 0, priorGrossPaise: 49_000_000 });
+    Object.assign(row("consultantPayout", "po_prior"), {
+      tdsDeducted: 60_000,
+      tdsRateAppliedBps: 10,
+    });
+    await firstSubmitTimesOut();
+    expect(stagedFields("po_A")).toMatchObject({
+      netAmount: 1_609_000,
+      tdsCreditPaise: 9_000,
+    });
+    await stuckJobReArms();
+
+    await instantPayoutWhileWaiting();
+    // The year is ₹5,30,000 (₹530 due) and ₹510 is assigned net of A's credit: B withholds ₹20.
+    expect(gateway.requests[1]).toMatchObject({
+      referenceId: "po_B",
+      amount: 1_598_000,
+    });
+    expect(stagedFields("po_B")).toMatchObject({
+      tdsDeducted: 2_000,
+      tdsCreditPaise: 0,
+    });
+  });
+
+  it("does not resend a staged retry whose original transfer completed after the claim", async () => {
+    seed({ priorAmountPaise: 0, priorGrossPaise: 47_000_000 });
+    await firstSubmitTimesOut();
+    await stuckJobReArms();
+    // The original's delayed webhook lands while the retry reads the tax info after claiming.
+    db.__beforeRead.consultantTaxInfo = () =>
+      handlePayoutWebhook(
+        PaymentGateway.RAZORPAY,
+        "pout_1",
+        "COMPLETED",
+        undefined,
+        "UTR123",
+        "po_A",
+      );
+
+    const results = await processApprovedPayouts();
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(results).toEqual([
+      expect.objectContaining({ payoutId: "po_A", skipped: true }),
+    ]);
+    expect(row("consultantPayout", "po_A")).toMatchObject({
+      status: "COMPLETED",
+      providerPayoutId: "pout_1",
+      netAmount: 1_600_000,
+    });
+  });
+  /** Books the completion of po_A and returns its TDS records and its completion journal. */
+  async function completeA() {
+    await handlePayoutWebhook(
+      PaymentGateway.RAZORPAY,
+      "pout_1",
+      "COMPLETED",
+      undefined,
+      "UTR123",
+      "po_A",
+    );
+    const journal = jest
+      .mocked(postLedgerTxn)
+      .mock.calls.map(([, txn]) => txn)
+      .filter((txn) => txn.idempotencyKey === "payout:po_A");
+    return {
+      records: db.__tables.tDSRecord.filter((r) => r.payoutId === "po_A"),
+      journal,
+    };
+  }
+  const completionPostings = (cash: number, tds: number) =>
+    buildPayoutCompletionPostings({
+      payableAccount: {
+        kind: "CONSULTANT_PAYABLE",
+        consultantProfileId: "cp_1",
+      },
+      grossPayablePaise: 1_600_000,
+      netCashPaise: cash,
+      tdsPaise: tds,
+    });
+
+  it("records the found payout and sends nothing when a fresh lookup after the catch-up collision finds it, then books its completion", async () => {
+    await catchUpTakenWhileWaiting();
+    gateway.list = "current";
+
+    const results = await processApprovedPayouts();
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(results).toEqual([
+      expect.objectContaining({
+        payoutId: "po_A",
+        skipped: true,
+        providerPayoutId: "pout_1",
+      }),
+    ]);
+    // PROCESSING with a gateway id, the state the webhook and both reconcilers read;
+    // the catch-up flag is dropped so the completion clears the index.
+    expect(row("consultantPayout", "po_A")).toMatchObject({
+      status: "PROCESSING",
+      providerPayoutId: "pout_1",
+      netAmount: 1_549_000,
+      tdsDeducted: 51_000,
+      tdsCatchUpFy: null,
+    });
+    expect(row("consultantEarnings", "e_A")).toMatchObject({
+      status: "BATCHED",
+      payoutId: "po_A",
+    });
+
+    const { records, journal } = await completeA();
+    expect(row("consultantPayout", "po_A").status).toBe("COMPLETED");
+    expect(records).toEqual([
+      expect.objectContaining({ tdsDeducted: 51_000, tdsRateBps: 10 }),
+    ]);
+    expect(journal[0].postings).toEqual(completionPostings(1_549_000, 51_000));
+  });
+
+  it("changes nothing and reports once when the fresh lookup after the catch-up collision fails", async () => {
+    const staged = await catchUpTakenWhileWaiting();
+    gateway.list = "error";
+
+    const results = await processApprovedPayouts();
+
+    expect(gateway.requests).toHaveLength(1);
+    expect(results).toEqual([
+      expect.objectContaining({ payoutId: "po_A", skipped: true }),
+    ]);
+    expect(row("consultantPayout", "po_A")).toMatchObject({
+      status: "APPROVED",
+      providerPayoutId: null,
+      ...staged,
+    });
+    expect(row("consultantEarnings", "e_A")).toMatchObject({
+      status: "BATCHED",
+      payoutId: "po_A",
+    });
+    expect(catchUpReports()).toHaveLength(1);
+  });
+
+  describe("a staged retry that crosses into a new financial year", () => {
+    const MARCH = new Date("2027-03-30T12:00:00+05:30");
+    const APRIL = new Date("2027-04-03T12:00:00+05:30");
+    const yearReports = () =>
+      jest
+        .mocked(reportSentryError)
+        .mock.calls.filter(
+          ([, opts]) => opts?.op === "payout-retry-crossed-financial-year",
+        );
+
+    beforeEach(() => {
+      jest.useFakeTimers({
+        now: MARCH,
+        doNotFake: [
+          "hrtime",
+          "nextTick",
+          "performance",
+          "queueMicrotask",
+          "requestAnimationFrame",
+          "cancelAnimationFrame",
+          "requestIdleCallback",
+          "cancelIdleCallback",
+          "setImmediate",
+          "clearImmediate",
+          "setInterval",
+          "clearInterval",
+          "setTimeout",
+          "clearTimeout",
+        ],
+      });
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it("fails unsent on a fresh none and is re-planned in the new year by the next batch", async () => {
+      seed({ priorAmountPaise: 0, priorGrossPaise: 47_000_000 });
+      await firstSubmitTimesOut();
+      expect(stagedFields("po_A")).toMatchObject({
+        tdsFinancialYear: "2026-27",
+        netAmount: 1_600_000,
+      });
+      jest.setSystemTime(APRIL);
+      // ₹4,90,000 already paid in the new year, so A's ₹20,000 crosses its ₹5L.
+      completedPayout("po_apr", {
+        amount: 39_200_000,
+        grossPaise: 49_000_000,
+        tdsFinancialYear: "2027-28",
+      });
+      await stuckJobReArms();
+
+      const results = await processApprovedPayouts();
+
+      expect(gateway.requests).toHaveLength(1);
+      expect(results).toEqual([
+        expect.objectContaining({
+          payoutId: "po_A",
+          success: false,
+          error: expect.stringContaining("TDS_FY_CROSSED"),
+        }),
+      ]);
+      expect(row("consultantPayout", "po_A")).toMatchObject({
+        status: "FAILED",
+        failureReason: expect.stringContaining("TDS_FY_CROSSED"),
+        netAmount: null,
+        tdsFinancialYear: null,
+      });
+      expect(row("consultantEarnings", "e_A")).toMatchObject({
+        status: "READY",
+        payoutId: null,
+      });
+      expect(yearReports()).toHaveLength(1);
+
+      await createPayoutBatch(["cp_1"]);
+      const next = db.__tables.consultantPayout.find(
+        (p) => p.status === "PENDING",
+      );
+      await approvePayout(String(next?.id), "admin_1");
+      await processApprovedPayouts();
+
+      // The new year's ₹5,10,000 takes the whole-year 0.1% catch-up: ₹510.
+      expect(gateway.requests[1]).toMatchObject({
+        referenceId: next?.id,
+        amount: 1_549_000,
+      });
+      expect(stagedFields(String(next?.id))).toMatchObject({
+        tdsFinancialYear: "2027-28",
+        tdsDeducted: 51_000,
+        tdsCatchUpFy: "2027-28",
+      });
+    });
+
+    it("records a payout the fresh lookup finds, sends nothing, and books its staged TDS on completion", async () => {
+      seed({ priorAmountPaise: 0, priorGrossPaise: 49_000_000 });
+      await firstSubmitTimesOut();
+      expect(stagedFields("po_A")).toMatchObject({
+        tdsFinancialYear: "2026-27",
+        tdsDeducted: 51_000,
+        tdsCatchUpFy: "2026-27",
+      });
+      jest.setSystemTime(APRIL);
+      await stuckJobReArms();
+      gateway.list = "current";
+
+      const results = await processApprovedPayouts();
+
+      expect(gateway.requests).toHaveLength(1);
+      expect(results).toEqual([
+        expect.objectContaining({
+          payoutId: "po_A",
+          skipped: true,
+          providerPayoutId: "pout_1",
+        }),
+      ]);
+      expect(row("consultantPayout", "po_A")).toMatchObject({
+        status: "PROCESSING",
+        providerPayoutId: "pout_1",
+        tdsFinancialYear: "2026-27",
+        tdsCatchUpFy: "2026-27",
+        netAmount: 1_549_000,
+      });
+
+      const { records, journal } = await completeA();
+      expect(row("consultantPayout", "po_A").status).toBe("COMPLETED");
+      expect(records).toEqual([
+        expect.objectContaining({ tdsDeducted: 51_000, tdsRateBps: 10 }),
+      ]);
+      expect(journal[0].postings).toEqual(
+        completionPostings(1_549_000, 51_000),
+      );
+    });
   });
 });

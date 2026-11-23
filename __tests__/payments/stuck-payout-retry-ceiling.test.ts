@@ -59,6 +59,10 @@ const mockDb = strict("prisma", {
     findMany: jest.fn(async ({ where }: { where: Where }) =>
       [mockPayout].filter((r) => matches(r, where)),
     ),
+    count: jest.fn(
+      async ({ where }: { where: Where }) =>
+        [mockPayout].filter((r) => matches(r, where)).length,
+    ),
     updateMany: jest.fn(
       async ({ where, data }: { where: Where; data: Row }) => {
         if (!matches(mockPayout, where)) return { count: 0 };
