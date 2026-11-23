@@ -63,7 +63,11 @@ import {
   type NegativeMoneyOutcome,
 } from "./misses";
 import { judgeOutcomeEvidence } from "./outcome-evidence";
-import { CLASSIFIED_REPORT_REASONS, judgeReports } from "./outcome-reports";
+import {
+  CLASSIFIED_REPORT_REASONS,
+  judgeReports,
+  REPORT_EFFECT,
+} from "./outcome-reports";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -981,11 +985,24 @@ async function confirmPage(
       run.weak++;
     }
   }
-  // A relabel or confirm since the read changes the outcome or the stamp, so the CAS skips it.
+  // A relabel, a confirm or a disputing report since the read makes the CAS skip the row.
   const counts = await Promise.all(
     [...strong].map(([outcome, ids]) =>
       prisma.appointmentOccurrence.updateMany({
-        where: { AND: [where, { id: { in: ids }, outcome }] },
+        where: {
+          AND: [
+            where,
+            { id: { in: ids }, outcome },
+            {
+              supportCases: {
+                none: {
+                  deletedAt: null,
+                  flowReason: { in: [...REPORT_EFFECT[outcome].dispute] },
+                },
+              },
+            },
+          ],
+        },
         data: { outcomeConfirmedAt: now },
       }),
     ),

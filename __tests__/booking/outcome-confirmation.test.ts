@@ -178,6 +178,21 @@ describe("the window-close pass", () => {
     expect(row("strong").outcomeConfirmedAt).toBeNull();
   });
 
+  it("loses the CAS to a dispute filed between its read and its write", async () => {
+    occurrences.rows.push(verdict("strong"));
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementationOnce(async (args) => {
+      const rows = (await read(args)) as Row[];
+      // A fresh array, so the page the pass judges still shows no report.
+      const pageRows = rows.map((r) => ({ ...r, supportCases: [] }));
+      row("strong").supportCases = [filed("attendee_attended", "priya")];
+      return pageRows;
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(0);
+    expect(row("strong").outcomeConfirmedAt).toBeNull();
+  });
+
   it("confirms nothing when an outage read fills its cap, since an overlapping window may be missing", async () => {
     const incidents = prisma.platformIncident as unknown as Table;
     occurrences.rows.push(verdict("strong"));

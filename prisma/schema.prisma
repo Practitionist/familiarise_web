@@ -382,7 +382,7 @@ model SupportCase {
   category        String?           @db.VarChar(64)
   flowKey         String?           @db.VarChar(64)
   currentNodeId   String?           @db.VarChar(64)
-  /// The appointment flow terminal's reason (SupportFlowReasonEnum); written once, from null.
+  /// The no-show flow terminal's reason (SupportFlowReasonEnum); a reason that counts for a verdict is never replaced.
   flowReason      String?           @db.VarChar(64)
   activeChannel   SupportChannel    @default(SELF_SERVE)
   issueType       SupportIssueType?
