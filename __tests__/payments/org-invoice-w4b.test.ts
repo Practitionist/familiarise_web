@@ -536,8 +536,26 @@ describe("bank transfer receipts", () => {
       "invoicereceipt:rcpt-1",
       "invoicereceipt:rcpt-2",
     ]);
-    // The gateway path's downstream: PENDING_TRUST released.
-    expect(raw.consultantEarnings.updateMany).toHaveBeenCalledTimes(1);
+    // The gateway path's downstream: PENDING_TRUST released, and a held row's prior status with it.
+    const earningsWrite = raw.consultantEarnings.updateMany;
+    expect(earningsWrite).toHaveBeenCalledTimes(2);
+    expect(earningsWrite).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "PENDING_TRUST" }),
+        data: { status: "PENDING" },
+      }),
+    );
+    expect(earningsWrite).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "HELD",
+          preHoldStatus: "PENDING_TRUST",
+        }),
+        data: { preHoldStatus: "PENDING" },
+      }),
+    );
   });
 });
 
