@@ -213,7 +213,10 @@ it("cancel after 6: tranche 0 matured and untouched, tranche 1 keeps a stamped r
     consultantProfileId: "cp-1",
     cycleOrdinal: { not: null },
     holdUntil: null,
-    status: { in: ["PENDING", "PENDING_TRUST"] },
+    OR: [
+      { status: { in: ["PENDING", "PENDING_TRUST"] } },
+      { status: "HELD", preHoldStatus: { in: ["PENDING", "PENDING_TRUST"] } },
+    ],
   });
   expect(cancel.data.holdUntil).toEqual(
     new Date(NOW.getTime() + HOLD_HOURS * HOUR),

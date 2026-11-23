@@ -34,6 +34,13 @@ type SettleTx = Pick<Tx, "appointment" | "consultantEarnings"> &
 
 /** Tranches the accrual parked and nothing has stamped yet. */
 const UNSTAMPED_STATUSES = ["PENDING", "PENDING_TRUST"] as const;
+/** A held tranche is stamped too: its hold keeps it HELD, and its release then finds a date to wait for. */
+const UNSTAMPED = {
+  OR: [
+    { status: { in: [...UNSTAMPED_STATUSES] } },
+    { status: "HELD" as const, preHoldStatus: { in: [...UNSTAMPED_STATUSES] } },
+  ],
+};
 
 /**
  * Terminal stamp on cancellation: whatever tranche value the refund leaves
@@ -64,7 +71,7 @@ export async function stampTranchesOnCancel(
           paymentId: args.paymentId,
           cycleOrdinal: { not: null },
           holdUntil: null,
-          status: { in: [...UNSTAMPED_STATUSES] },
+          ...UNSTAMPED,
         },
         holdUntil,
       )
@@ -73,7 +80,7 @@ export async function stampTranchesOnCancel(
     where: {
       paymentId: args.paymentId,
       holdUntil: null,
-      status: { in: [...UNSTAMPED_STATUSES] },
+      ...UNSTAMPED,
     },
     data: { holdUntil },
   });
@@ -177,7 +184,7 @@ export async function settleSubscriptionCycleWithNotice(
         paymentId: { in: wrapper.payment.map((p) => p.id) },
         cycleOrdinal: { lte: matured },
         holdUntil: null,
-        status: { in: [...UNSTAMPED_STATUSES] },
+        ...UNSTAMPED,
       },
       holdUntil,
     );
@@ -186,7 +193,7 @@ export async function settleSubscriptionCycleWithNotice(
         where: {
           paymentId: { in: wrapper.payment.map((p) => p.id) },
           holdUntil: null,
-          status: { in: [...UNSTAMPED_STATUSES] },
+          ...UNSTAMPED,
         },
         data: { holdUntil },
       });
