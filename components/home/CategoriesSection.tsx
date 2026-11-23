@@ -64,9 +64,9 @@ function FieldCard({
             alt={field.photo.alt}
             fill
             sizes={
-              hero
-                ? "(min-width: 1024px) 50vw, 100vw"
-                : "(min-width: 1024px) 25vw, 50vw"
+              size === "small"
+                ? "(min-width: 1024px) 25vw, 50vw"
+                : "(min-width: 1024px) 50vw, 100vw"
             }
             className="object-cover transition-transform duration-500 group-hover:scale-105"
           />
