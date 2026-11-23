@@ -4,52 +4,7 @@
 
 // Event-lock contention leaves POST /api/checkout as a 409 with retryAfter, through the real checkout core.
 
-jest.mock("../../lib/auth-helpers", () => ({
-  requireApiAuth: jest.fn(async () => ({
-    session: { user: { id: "buyer" } },
-  })),
-}));
-jest.mock("../../lib/rate-limit", () => ({
-  __esModule: true,
-  applyRateLimit: jest.fn(async () => null),
-  checkoutLimiter: { limit: jest.fn() },
-}));
-jest.mock("../../lib/redis", () => ({
-  __esModule: true,
-  default: {},
-  withCircuitBreaker: (fn: () => unknown) => fn(),
-  checkRedisHealth: jest.fn().mockResolvedValue(true),
-}));
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
-jest.mock("../../lib/payments/operations/checkout-replay", () => ({
-  replayByIdempotencyKey: jest.fn(async () => null),
-  checkoutRequestFingerprint: () => "fp",
-}));
-jest.mock("../../lib/payments/tax/checkout-context", () => ({
-  resolveCheckoutTaxContext: jest.fn(async () => ({ buyerCountry: "IN" })),
-}));
-jest.mock("../../lib/payments/gateway-router", () => ({
-  routeGateway: jest.fn(() => ({ gateway: "RAZORPAY", reason: "domestic" })),
-}));
-jest.mock("../../schemas/checkout", () => ({
-  checkoutSchema: { parse: (body: Record<string, unknown>) => ({ ...body }) },
-  consumerBuyerStateSchema: { parse: jest.fn() },
-}));
-jest.mock("../../lib/payments/checkout/org-funding", () => ({
-  resolveOrgFunding: jest.fn(async (validatedData: unknown) => ({
-    validatedData,
-    organizationId: null,
-    programAssignmentId: null,
-    fundingProgramId: null,
-    callerMembershipId: null,
-    referralCreditsDropped: false,
-    billingAccountId: null,
-    fundingSource: null,
-    creditEffectiveLimit: null,
-  })),
-  readInvoiceExposurePaise: jest.fn(),
-  assertWithinInvoiceCreditLimit: jest.fn(),
-}));
 jest.mock("../../lib/payments/checkout/pricing", () => ({
   calculateAmountAndValidate: jest.fn(async () => ({
     amount: 100_000,
@@ -58,9 +13,6 @@ jest.mock("../../lib/payments/checkout/pricing", () => ({
     currency: "INR",
     creditsApplied: 0,
   })),
-}));
-jest.mock("../../lib/payments/core/saved-card-customer", () => ({
-  savedCardCustomerId: jest.fn(async () => undefined),
 }));
 const acquireCheckoutLock = jest.fn();
 jest.mock("../../lib/payments/checkout/locks", () => ({
@@ -72,15 +24,7 @@ jest.mock("../../lib/payments/checkout/locks", () => ({
 jest.mock("../../lib/payments/checkout/commit", () => ({
   commitCheckout: jest.fn(),
 }));
-jest.mock("@sentry/nextjs", () => ({
-  captureException: jest.fn(),
-  captureMessage: jest.fn(),
-  startSpan: (_opts: unknown, fn: () => unknown) => fn(),
-  getCurrentScope: () => ({ setTag: jest.fn() }),
-  metrics: { count: jest.fn() },
-}));
-jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
-
+import "../fixtures/checkout-route-boundary";
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/checkout/route";
 import { EventCheckoutBusyError } from "../../utils/appointmentlock";
