@@ -180,10 +180,11 @@ jest.mock("../../lib/stream-logger", () => ({
   __esModule: true,
   streamLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
+const recordSystemErrorSafe = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("../../lib/enterprise/system-events", () => ({
   __esModule: true,
   recordSystemError: () => Promise.resolve(),
-  recordSystemErrorSafe: () => Promise.resolve(),
+  recordSystemErrorSafe: (...a: unknown[]) => recordSystemErrorSafe(...a),
 }));
 
 import { AppointmentsType, TrialStatus } from "@prisma/client";
@@ -322,6 +323,36 @@ function expectConfirmed(outcome: unknown) {
   expect(createAppointmentFromWebhook).not.toHaveBeenCalled();
   expectNoGatewayRead();
 }
+
+/** The one operator event a parked capture writes, in the capture's own transaction. */
+function expectOneParkedEvent(reason: RegExp) {
+  expect(recordSystemErrorSafe).toHaveBeenCalledTimes(1);
+  expect(recordSystemErrorSafe).toHaveBeenCalledWith(
+    expect.objectContaining({
+      db: tx,
+      category: "PAYMENT",
+      correlationId: "parked-capture:pay1",
+      context: expect.objectContaining({
+        paymentId: "pay1",
+        reason: expect.stringMatching(reason),
+      }),
+    }),
+  );
+}
+
+/** The structured console line the parking branch prints. */
+const parkedLogLine = () =>
+  (console.error as jest.Mock).mock.calls
+    .map((call) => call[0])
+    .filter((line): line is string => typeof line === "string")
+    .map((line) => {
+      try {
+        return JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    })
+    .find((line) => line?.alert_priority === "P1");
 
 /** The pin went through the existing-payment path, never the pre-mint adoption read. */
 function expectNoGatewayRead() {
@@ -531,7 +562,41 @@ describe("a capture on a booking that already exists", () => {
     expect(transitionTrial).not.toHaveBeenCalled();
     expect(createEarningsFromPayment).not.toHaveBeenCalled();
     expectNoGatewayRead();
+    expectOneParkedEvent(/^Trial booking appt-1 has no trial$/);
+    // The booking exists and is unconfirmed; the log line must not say it is missing.
+    expect(parkedLogLine()).toEqual(
+      expect.objectContaining({
+        event: "CRITICAL_PAYMENT_BOOKING_UNCONFIRMED",
+        appointment_id: "appt-1",
+      }),
+    );
   });
+
+  it.each([
+    ["before the transaction", true],
+    ["inside the transaction", false],
+  ])(
+    "writes no second event when a later delivery finds the parked payment SUCCEEDED %s",
+    async (_where, seenBeforeTx) => {
+      primeBooking("TRIAL", { trial: false });
+      const parked = {
+        ...(await tx.payment.findUnique()),
+        paymentStatus: "SUCCEEDED",
+        gatewayPaymentId: "pay_1",
+      };
+      if (seenBeforeTx) globalPaymentFindUnique.mockResolvedValue(parked);
+      tx.payment.findUnique.mockResolvedValue(parked);
+
+      await handlePaymentSuccess(
+        "order_1",
+        trialRequestNotes(),
+        599400,
+        "pay_1",
+      );
+      expect(recordSystemErrorSafe).not.toHaveBeenCalled();
+      expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("a capture with no booking yet", () => {
@@ -554,5 +619,12 @@ describe("a capture with no booking yet", () => {
     expect(createAppointmentFromWebhook).not.toHaveBeenCalled();
     expect(createEarningsFromPayment).not.toHaveBeenCalled();
     expectNoGatewayRead();
+    expectOneParkedEvent(/^Metadata validation failed: /);
+    expect(parkedLogLine()).toEqual(
+      expect.objectContaining({
+        event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
+        appointment_id: null,
+      }),
+    );
   });
 });

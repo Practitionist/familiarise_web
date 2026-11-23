@@ -27,9 +27,8 @@ function age(ms: number): string {
 }
 
 function limit(queue: AttentionQueue): string {
-  return queue.deadline
-    ? "inside 48 h of the deadline"
-    : `older than ${age(queue.limitMs)}`;
+  if (queue.deadline) return "inside 48 h of the deadline";
+  return queue.limitMs > 0 ? `older than ${age(queue.limitMs)}` : "at any age";
 }
 
 function due(ms: number, deadline: boolean): string {

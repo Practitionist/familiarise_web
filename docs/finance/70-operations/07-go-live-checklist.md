@@ -144,7 +144,7 @@ flowchart TD
 - **Idempotency.** Every payout carries its deterministic idempotency key so a retry cannot pay twice; the schema makes it unique.
 - **Reconcile is clean:** `reconcile-ledgers` reports `ok: true` with no unbaselined findings, including `ORG_PAYOUT_TOTAL_MISMATCH`.
 - **Monitoring is on:** `handle-stuck-payouts` and the webhook sweep report to Sentry, and a Sentry alert exists for them.
-- **The Better Stack responder seat is bought when its trigger fires.** Until then Better Stack stays on the free plan (3-day logs, email and Slack alerts); the trigger for the responder seat and the Telemetry Nano bundle is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Once the seat exists, add phone and SMS to the four money backlog alerts (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) described in the [Better Stack setup guide](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts). Without it those four alert by email and Slack, and someone must read them daily.
+- **The Better Stack responder seat is bought when its trigger fires.** Until then Better Stack stays on the free plan (3-day logs, email and Slack alerts); the trigger for the responder seat and the Telemetry Nano bundle is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Once the seat exists, add phone and SMS to the five money backlog alerts (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`, `parkedCaptures`) described in the [Better Stack setup guide](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts). Without it those five alert by email and Slack, and someone must read them daily.
 - **The job-freshness monitor exists and is green.** A Better Stack uptime monitor polls `https://familiarisenow.com/api/health/jobs` every 5 minutes with `Authorization: Bearer <CRON_SECRET>` and alerts on any non-2xx status (keyword `"healthy":false` as a belt). It exists since 2026-11-05 (monitor `familiarise job fleet probe (prod)`; see [the detector rollout decision](../../decisions/2026-11-05-detector-rollout-and-redundancy.md)). At launch, confirm it still shows Up, is not paused, and that its body reads `"healthy":true`; the [runbook](../../maintenance/00-betterstack-setup.md#runbook-create-the-better-stack-monitor-owner-step-done-2026-11-05) recreates it.
 - **Better Stack backlog alerts are unmuted.** The freshness alert and the seven backlog alerts were created paused on 2026-11-05 (ids in the [runbook](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts)). They are paused before launch because seeded and QA money rows on the shared database would fire them. Unmute them after the go-live data reset, once every money gauge in the latest `cron-tick summary` event reads zero. The digest cannot see these Telemetry alerts, so tick each one off here:
   - [ ] `Ticker telemetry stale` (the tick-summary freshness alert)
@@ -155,6 +155,7 @@ flowchart TD
   - [ ] `Backlog: webhookEvents`
   - [ ] `Backlog: emailRetries`
   - [ ] `Backlog: notificationRetries`
+  - [ ] `Backlog: parkedCaptures` (not created yet: create it paused with the others' settings, threshold above 0 s, **If data is missing** set to start an incident)
 
 ### 2.2 Sandbox proof
 

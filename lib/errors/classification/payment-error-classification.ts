@@ -113,6 +113,8 @@ export const ErrorTypes = {
   // so this map is what the SECOND failure reads — the one the buyer actually
   // sees, because the first one already toasted "someone is one step ahead".
   SERIALIZATION_CONFLICT: "SERIALIZATION_CONFLICT",
+  // An expired transaction or a driver read timeout before the booking commits; 503 + retryAfter.
+  DATABASE_BUSY: "DATABASE_BUSY",
   EVENT_SOLD_OUT: "EVENT_SOLD_OUT",
   EVENT_CHECKOUT_LOCK_UNAVAILABLE: "EVENT_CHECKOUT_LOCK_UNAVAILABLE",
   BOOKING_LOCK_UNAVAILABLE: "BOOKING_LOCK_UNAVAILABLE",

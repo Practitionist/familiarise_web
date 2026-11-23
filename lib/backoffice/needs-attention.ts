@@ -9,6 +9,9 @@ import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import {
   DEAD_LETTER_BELL_WHERE,
   DEAD_LETTER_EMAIL_WHERE,
+  PARKED_CAPTURE_WHERE,
+  parkedCaptureOrder,
+  parkedCaptureSince,
 } from "@/lib/backoffice/queue-predicates";
 import {
   DUNNABLE_ORG_STATUSES,
@@ -175,6 +178,53 @@ const SOURCES: readonly AttentionSource[] = [
             },
           };
         }),
+        total,
+      );
+    },
+  },
+  {
+    key: "parkedCaptures",
+    label: "Captures parked for manual recovery",
+    money: true,
+    note: "A payment with a refund owed, pending or paid, or an open or lost dispute, is not listed here.",
+    read: async (now) => {
+      const where = PARKED_CAPTURE_WHERE;
+      const { rows, total } = await windowOf(
+        (order, take) =>
+          prisma.payment.findMany({
+            where,
+            orderBy: parkedCaptureOrder(order),
+            take,
+            select: {
+              id: true,
+              appointmentId: true,
+              description: true,
+              capturedAt: true,
+              createdAt: true,
+            },
+          }),
+        () => prisma.payment.count({ where }),
+      );
+      return splitWindow(
+        rows.map((p) => ({
+          key: p.createdAt.getTime(),
+          item: {
+            id: p.id,
+            state: p.appointmentId
+              ? "Parked, booking exists"
+              : "Parked, no booking",
+            ageMs: now.getTime() - parkedCaptureSince(p).getTime(),
+            attempts: null,
+            lastError: lastError(p.description),
+            links: [
+              {
+                label: "Payment",
+                path: `payments/${encodeURIComponent(p.id)}`,
+              },
+              tracePayment(p.id),
+            ],
+          },
+        })),
         total,
       );
     },
@@ -530,7 +580,7 @@ const SOURCES: readonly AttentionSource[] = [
 
 /**
  * The stuck items of every watched queue, read-only and in sequence for
- * `PG_POOL_MAX=1`: eight statements while each table fits the cap, two more
+ * `PG_POOL_MAX=1`: nine statements while each table fits the cap, two more
  * (newest rows and a count) for each table that overflows it.
  */
 export async function readNeedsAttention(

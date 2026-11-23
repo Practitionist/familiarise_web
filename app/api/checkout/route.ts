@@ -24,7 +24,6 @@ import { WalletInsufficientFundsError } from "@/lib/api/organizations/wallet";
 import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
-import { Prisma } from "@prisma/client";
 import {
   checkoutRequestFingerprint,
   replayByIdempotencyKey,
@@ -32,7 +31,13 @@ import {
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import { isDeadlock, isExclusionViolation } from "@/lib/db/pg-errors";
+import {
+  isDeadlock,
+  isExclusionViolation,
+  isQueryReadTimeout,
+  isTransactionExpired,
+  isWriteConflict,
+} from "@/lib/db/pg-errors";
 import {
   EXPERT_VIA_COOKIE,
   parseViaToken,
@@ -46,6 +51,25 @@ import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhauste
 /** Contention refusals per reason; their share of checkout attempts is the slot-reservation trigger. */
 function countCheckoutConflict(reason: string): void {
   Sentry.metrics.count("checkout.conflict", 1, { attributes: { reason } });
+}
+
+/** A transient refusal raised before anything committed: nothing was charged and the same key may retry. */
+function notChargedRetryAnswer(
+  errorType: string,
+  status: number,
+  retryAfter: number,
+): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
+      errorType,
+      retryAfter,
+      yourCardWasNotCharged: true,
+      timestamp: new Date().toISOString(),
+    },
+    { status },
+  );
 }
 
 /** A 1:1 time another buyer holds: the pre-check refusal or the overlap constraint at insert. */
@@ -89,11 +113,14 @@ export async function POST(req: NextRequest) {
     // pre-MVP reset.
     validatedData.clientIdempotencyKey ??= globalThis.crypto.randomUUID();
     replayFingerprint = checkoutRequestFingerprint(validatedData);
+    // The key may name a paid checkout, so a failed lookup is a fault, never a not-charged answer.
     const replay = await replayByIdempotencyKey(
       session.user.id,
       validatedData.clientIdempotencyKey,
       replayFingerprint,
-    );
+    ).catch((cause: unknown) => {
+      throw new Error("Checkout replay lookup failed", { cause });
+    });
     if (replay === "fingerprint-mismatch") {
       // A changed price input is a new attempt; order reuse retires the stale order.
       validatedData.clientIdempotencyKey = globalThis.crypto.randomUUID();
@@ -363,14 +390,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // #1319 — an exhausted serialization retry (P2034 or 40P01 ×4) means the tx
-    // never committed: nothing was charged and a retry will see the sibling's
-    // state. classifyError is message-only and would label it 500.
-    if (
-      (error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2034") ||
-      isDeadlock(error)
-    ) {
+    // An exhausted serialization retry (40001 at a statement or at COMMIT, or
+    // 40P01) never committed: nothing was charged and a retry sees the sibling's state.
+    if (isWriteConflict(error) || isDeadlock(error)) {
       countCheckoutConflict("SERIALIZATION_CONFLICT");
       reportSentryError(error, {
         subsystem: "checkout",
@@ -378,17 +400,19 @@ export async function POST(req: NextRequest) {
         expected: true,
         level: "warning",
       });
-      return NextResponse.json(
-        {
-          error:
-            "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
-          errorType: "SERIALIZATION_CONFLICT",
-          retryAfter: 2,
-          yourCardWasNotCharged: true,
-          timestamp: new Date().toISOString(),
-        },
-        { status: 409 },
-      );
+      return notChargedRetryAnswer(ErrorTypes.SERIALIZATION_CONFLICT, 409, 2);
+    }
+
+    // Only a timeout after the replay lookup and before the booking commits arrives bare:
+    // the lookup's and the booking transaction's (whose COMMIT may have landed) are wrapped.
+    if (isTransactionExpired(error) || isQueryReadTimeout(error)) {
+      reportSentryError(error, {
+        subsystem: "checkout",
+        op: "database-timeout",
+        expected: true,
+        level: "warning",
+      });
+      return notChargedRetryAnswer(ErrorTypes.DATABASE_BUSY, 503, 5);
     }
 
     // A taken 1:1 time is an answer the client acts on (refetch the grid), never a fault.

@@ -2,6 +2,10 @@ import type { DisputeStatus, ErasureStatus, Prisma } from "@prisma/client";
 
 import { HELD_PRE_LAUNCH } from "@/lib/email/held";
 import { EXPECTED_REFUSAL_PREFIXES } from "@/lib/email/replay-policy";
+import {
+  MANUAL_RECOVERY_PREFIX,
+  unreturnedCaptureWhere,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 
 /**
  * #1527 Q12 — the `where` behind every back-office queue, shared by the page's
@@ -43,6 +47,28 @@ export const OPEN_DISPUTE_STATUSES: DisputeStatus[] = [
 export const OPEN_DISPUTE_WHERE: Prisma.DisputeWhereInput = {
   status: { in: OPEN_DISPUTE_STATUSES },
 };
+
+/** Captures parked for manual recovery and not returned; the Stuck work queue and its gauge read this. */
+export const PARKED_CAPTURE_WHERE: Prisma.PaymentWhereInput = {
+  paymentStatus: "SUCCEEDED",
+  deletedAt: null,
+  description: { startsWith: MANUAL_RECOVERY_PREFIX },
+  ...unreturnedCaptureWhere,
+};
+
+/** The queue's order; the gauge reads its first row. */
+export const parkedCaptureOrder = (
+  order: Prisma.SortOrder,
+): Prisma.PaymentOrderByWithRelationInput[] => [
+  { createdAt: order },
+  { id: order },
+];
+
+/** A parked capture waits from its capture. */
+export const parkedCaptureSince = (p: {
+  capturedAt: Date | null;
+  createdAt: Date;
+}): Date => p.capturedAt ?? p.createdAt;
 
 // Payouts: `payoutListWhere({ status: "PENDING" })` in
 // lib/api/operators/payouts.ts, the Awaiting approval tab's own builder.

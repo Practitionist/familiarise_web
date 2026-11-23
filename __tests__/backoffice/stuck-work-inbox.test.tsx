@@ -79,7 +79,7 @@ it("shows each queue's total, its newest items beside the oldest, and disputes a
     (n, m) => n + m.findMany.mock.calls.length + m.count.mock.calls.length,
     0,
   );
-  expect(statements).toBe(10);
+  expect(statements).toBe(11);
 
   render(<NeedsAttentionInbox queues={queues} basePath="/dashboard/admin" />);
   expect(screen.getByText("10 more in between")).toBeTruthy();
@@ -88,4 +88,5 @@ it("shows each queue's total, its newest items beside the oldest, and disputes a
   ).toBeTruthy();
   expect(screen.getByText("overdue by 42 d 0 h")).toBeTruthy();
   expect(screen.getByText("due in 5 h 0 min")).toBeTruthy();
+  expect(screen.getByText(/^Listed when at any age\./)).toBeTruthy();
 });

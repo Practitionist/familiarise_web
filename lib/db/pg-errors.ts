@@ -93,6 +93,36 @@ export function isWriteConflict(error: unknown): boolean {
 }
 
 /**
+ * Prisma P2028 for an interactive transaction past its timeout. The transaction
+ * manager rolls back instead of sending COMMIT, so nothing the transaction wrote persists.
+ */
+export function isTransactionExpired(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  return (
+    (error as MaybePgError).code === "P2028" &&
+    message(error).includes("expired transaction")
+  );
+}
+
+/**
+ * The transaction certainly did not commit: Postgres aborted it on a write
+ * conflict or a deadlock, or Prisma rolled it back past its timeout.
+ */
+export function isRolledBackTransaction(error: unknown): boolean {
+  return (
+    isWriteConflict(error) || isDeadlock(error) || isTransactionExpired(error)
+  );
+}
+
+/**
+ * node-postgres stopped waiting past `query_timeout` (PG_QUERY_TIMEOUT_MS). The
+ * cut is client-side: the server may still finish the statement, a COMMIT included.
+ */
+export function isQueryReadTimeout(error: unknown): boolean {
+  return message(error).includes("Query read timeout");
+}
+
+/**
  * #1696 — the pool ran dry. Prisma P2024 is "timed out fetching a connection
  * from the pool"; the interactive-transaction twin has no code and only the
  * text "Unable to start a transaction in the given time". With PG_POOL_MAX=1
