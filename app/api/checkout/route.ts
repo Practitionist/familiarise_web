@@ -113,11 +113,14 @@ export async function POST(req: NextRequest) {
     // pre-MVP reset.
     validatedData.clientIdempotencyKey ??= globalThis.crypto.randomUUID();
     replayFingerprint = checkoutRequestFingerprint(validatedData);
+    // The key may name a paid checkout, so a failed lookup is a fault, never a not-charged answer.
     const replay = await replayByIdempotencyKey(
       session.user.id,
       validatedData.clientIdempotencyKey,
       replayFingerprint,
-    );
+    ).catch((cause: unknown) => {
+      throw new Error("Checkout replay lookup failed", { cause });
+    });
     if (replay === "fingerprint-mismatch") {
       // A changed price input is a new attempt; order reuse retires the stale order.
       validatedData.clientIdempotencyKey = globalThis.crypto.randomUUID();
@@ -400,8 +403,8 @@ export async function POST(req: NextRequest) {
       return notChargedRetryAnswer(ErrorTypes.SERIALIZATION_CONFLICT, 409, 2);
     }
 
-    // Only a timeout before the booking commits arrives bare: the checkout core
-    // wraps a read timeout from the booking transaction, whose COMMIT may have landed.
+    // Only a timeout after the replay lookup and before the booking commits arrives bare:
+    // the lookup's and the booking transaction's (whose COMMIT may have landed) are wrapped.
     if (isTransactionExpired(error) || isQueryReadTimeout(error)) {
       reportSentryError(error, {
         subsystem: "checkout",
