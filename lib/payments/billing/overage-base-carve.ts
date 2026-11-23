@@ -113,11 +113,8 @@ async function unpaidMemberOverageWhere(
   };
 }
 
-/** Unreleased statuses the overage hold freezes; a trust-parked row keeps its park under the hold. */
-const OVERAGE_HOLDABLE = [EarningStatus.PENDING, EarningStatus.PENDING_TRUST];
-
 /**
- * Places the parent's OVERAGE hold on its unreleased earnings; rows an earlier
+ * Places the parent's OVERAGE hold on its PENDING earnings; rows an earlier
  * batch already holds are written again, so a concurrent release waits for this one.
  */
 export async function holdParentEarningsForMemberOverage(
@@ -127,8 +124,8 @@ export async function holdParentEarningsForMemberOverage(
   const holdable = {
     paymentId: parentPaymentId,
     OR: [
-      { status: { in: OVERAGE_HOLDABLE } },
-      { status: EarningStatus.HELD, preHoldStatus: { in: OVERAGE_HOLDABLE } },
+      { status: EarningStatus.PENDING },
+      { status: EarningStatus.HELD, preHoldStatus: EarningStatus.PENDING },
     ],
   };
   const consultantIds = (

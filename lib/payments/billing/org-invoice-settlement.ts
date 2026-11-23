@@ -224,20 +224,6 @@ export async function settleOrgInvoicePaid(
     where: trustReleaseWhere,
     data: { status: "PENDING" },
   });
-  // A held row keeps its hold; it returns to PENDING, not the park, when the hold lifts.
-  const heldTrustWhere = {
-    payment: trustReleaseWhere.payment,
-    status: "HELD" as const,
-    preHoldStatus: "PENDING_TRUST" as const,
-  };
-  await tx.organizationEarnings.updateMany({
-    where: heldTrustWhere,
-    data: { preHoldStatus: "PENDING" },
-  });
-  await tx.consultantEarnings.updateMany({
-    where: heldTrustWhere,
-    data: { preHoldStatus: "PENDING" },
-  });
 
   return {
     organizationId,
