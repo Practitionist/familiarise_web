@@ -10,6 +10,7 @@
  * against strict client doubles, so a missing delegate method throws.
  */
 
+import { Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import {
   applyData,
@@ -31,6 +32,8 @@ const mockMintConsumerCreditNote = jest.fn(async (..._a: unknown[]) => ({
   consumerCreditNoteId: null,
 }));
 const mockGetRazorpayDispute = jest.fn();
+/** Every telemetry line, and whether a transaction was open when it left. */
+const mockTelemetry: Array<{ message: string; inTx: boolean }> = [];
 
 jest.mock("@/lib/prisma", () => {
   const { strictClientDouble } = jest.requireActual<
@@ -50,6 +53,7 @@ jest.mock("@/lib/prisma", () => {
         },
         systemEvent: {
           create: (a: { data: Row }) => mockCreateEvent("global", a),
+          findFirst: (a: { where: Where }) => mockFindEvent(a),
         },
       },
       "prisma",
@@ -81,7 +85,10 @@ jest.mock("@/lib/email/senders/money", () => ({
 }));
 jest.mock("@/lib/observability/betterstack-telemetry", () => ({
   ...jest.requireActual("@/lib/observability/betterstack-telemetry"),
-  emitTelemetryLog: jest.fn(async () => undefined),
+  emitTelemetryLog: async (log: { message: string }) => {
+    mockTelemetry.push({ message: log.message, inTx: mockTxOpen() });
+    return "skipped";
+  },
 }));
 jest.mock("@/lib/payments/payouts/cancel-open-payouts", () => ({
   cancelOpenPayoutsForPayment: jest.fn(async () => undefined),
@@ -152,6 +159,9 @@ const world = {
 };
 let tx: Tx;
 let seq = 0;
+let txDepth = 0;
+/** Set to abort the next transaction at commit, rolling its writes back. */
+let abortNextCommit = false;
 
 function pick(row: Row | undefined, select?: Record<string, unknown>) {
   if (!row) return null;
@@ -159,8 +169,34 @@ function pick(row: Row | undefined, select?: Record<string, unknown>) {
   return Object.fromEntries(Object.keys(select).map((k) => [k, row[k]]));
 }
 
-function mockRunTransaction(fn: (t: Tx) => Promise<unknown>) {
-  return fn(tx);
+function mockTxOpen(): boolean {
+  return txDepth > 0;
+}
+async function mockRunTransaction(fn: (t: Tx) => Promise<unknown>) {
+  const before = structuredClone({
+    disputes: world.disputes,
+    events: world.events,
+    consultant: holds.consultant,
+    holds: holds.holds,
+  });
+  txDepth++;
+  try {
+    const result = await fn(tx);
+    if (abortNextCommit) {
+      abortNextCommit = false;
+      world.disputes.splice(0, Infinity, ...before.disputes);
+      world.events.splice(0, Infinity, ...before.events);
+      holds.consultant.splice(0, Infinity, ...before.consultant);
+      holds.holds.splice(0, Infinity, ...before.holds);
+      throw new Prisma.PrismaClientKnownRequestError("could not serialize", {
+        code: "P2034",
+        clientVersion: "test",
+      });
+    }
+    return result;
+  } finally {
+    txDepth--;
+  }
 }
 async function mockFindPayment(a: { where: Where }) {
   const hit = world.payments.find((p) => matchesWhere(p, a.where));
@@ -177,6 +213,10 @@ async function mockFindDisputes(a: { where: Where }) {
 async function mockMarkWebhook(a: { where: { eventId: string }; data: Row }) {
   world.marks.push({ eventId: a.where.eventId, data: a.data });
   return a.data;
+}
+async function mockFindEvent(a: { where: Where }) {
+  const hit = world.events.find((e) => matchesWhere(e, a.where));
+  return hit ? { id: String(hit.correlationId) } : null;
 }
 async function mockCreateEvent(via: "tx" | "global", a: { data: Row }) {
   world.events.push({ via, ...a.data });
@@ -293,6 +333,8 @@ beforeEach(() => {
   world.disputes.length = 0;
   world.events.length = 0;
   world.marks.length = 0;
+  mockTelemetry.length = 0;
+  abortNextCommit = false;
   holds.consultant.length = 0;
   holds.org.length = 0;
   holds.holds.length = 0;
@@ -367,8 +409,8 @@ let delivery = 0;
 async function deliver(
   eventType: string,
   dispute: Row & { id: string; payment_id: string },
+  eventId = `${eventType}:${dispute.id}:evt_${++delivery}`,
 ): Promise<void> {
-  const eventId = `${eventType}:${dispute.id}:evt_${++delivery}`;
   const envelope = razorpayWebhookEnvelopeSchema.parse({
     entity: "event",
     event: eventType,
@@ -504,6 +546,67 @@ describe("a terminal dispute that the gateway reports differently", () => {
       expect(errorEvents()).toHaveLength(expected);
     },
   );
+
+  test("a terminal change retried at commit records once, and telemetry leaves after the commit", async () => {
+    seedSubscription();
+    await deliver("payment.dispute.created", {
+      ...SUB,
+      status: "open",
+      phase: "chargeback",
+    });
+    await deliver("payment.dispute.won", {
+      ...SUB,
+      status: "won",
+      phase: "chargeback",
+    });
+
+    abortNextCommit = true;
+    await deliver("payment.dispute.lost", {
+      ...SUB,
+      status: "lost",
+      phase: "chargeback",
+    });
+
+    expect(errorEvents()).toHaveLength(1);
+    const lines = mockTelemetry.filter((t) =>
+      t.message.includes("disp_sub is WON"),
+    );
+    expect(lines).toEqual([{ message: expect.any(String), inTx: false }]);
+  });
+
+  test("the sweeper's re-drive of one delivery adds no event; another delivery does", async () => {
+    seedSubscription();
+    await deliver("payment.dispute.created", {
+      ...SUB,
+      status: "open",
+      phase: "chargeback",
+    });
+    await deliver("payment.dispute.won", {
+      ...SUB,
+      status: "won",
+      phase: "chargeback",
+    });
+    const lost = { ...SUB, status: "lost", phase: "chargeback" };
+
+    await deliver(
+      "payment.dispute.lost",
+      lost,
+      "payment.dispute.lost:disp_sub:rzp_1",
+    );
+    await deliver(
+      "payment.dispute.lost",
+      lost,
+      "payment.dispute.lost:disp_sub:rzp_1",
+    );
+    expect(errorEvents()).toHaveLength(1);
+
+    await deliver(
+      "payment.dispute.lost",
+      lost,
+      "payment.dispute.lost:disp_sub:rzp_2",
+    );
+    expect(errorEvents()).toHaveLength(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -522,12 +625,14 @@ describe("the amount a lost dispute settles on, through each caller", () => {
     caller: "webhook" | "poll",
     status: "lost" | "closed",
     amountDeducted: number | null,
+    abortVerdictCommit = false,
   ): Promise<void> {
     await deliver("payment.dispute.created", {
       ...TRIAL,
       status: "open",
       phase: "chargeback",
     });
+    abortNextCommit = abortVerdictCommit;
     if (caller === "webhook") {
       await deliver(`payment.dispute.${status}`, {
         ...TRIAL,
@@ -588,7 +693,6 @@ describe("the amount a lost dispute settles on, through each caller", () => {
       expect(settledOn()).toEqual(FULL_LOSS);
       expect(infoEvents()).toHaveLength(1);
       expect(infoEvents()[0]).toMatchObject({
-        via: "tx",
         context: expect.objectContaining({
           disputeId: "disp_trial",
           paymentId: "pay_trial",
@@ -597,6 +701,21 @@ describe("the amount a lost dispute settles on, through each caller", () => {
           settledPaise: 11_300,
         }),
       });
+    },
+  );
+
+  test.each(["webhook", "poll"] as const)(
+    "%s: a differing deduction retried at commit records once, and telemetry leaves after the commit",
+    async (caller) => {
+      seedPaidTrial();
+      await verdict(caller, "lost", 0, true);
+
+      expect(settledOn().share).toEqual(["REFUNDED", 9_040]);
+      expect(infoEvents()).toHaveLength(1);
+      const lines = mockTelemetry.filter((t) =>
+        t.message.includes("reported 0 paise deducted"),
+      );
+      expect(lines).toEqual([{ message: expect.any(String), inTx: false }]);
     },
   );
 

@@ -484,7 +484,11 @@ export async function processRazorpayWebhookEvent(
           disputeCreatedEvent.status,
           disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
-          { isRedrive: !claim, phase: disputeCreatedEvent.phase ?? null },
+          {
+            isRedrive: !claim,
+            phase: disputeCreatedEvent.phase ?? null,
+            webhookEventId: eventId,
+          },
         );
         if (createdResult instanceof DeferSignal) {
           deferred = true;
@@ -504,6 +508,7 @@ export async function processRazorpayWebhookEvent(
           disputeProgressEvent.respond_by ?? null,
           null,
           disputeProgressEvent.phase ?? null,
+          eventId,
         );
         if (disputeProgressResult instanceof DeferSignal) {
           deferred = true;
@@ -527,6 +532,7 @@ export async function processRazorpayWebhookEvent(
           verdictEvent.respond_by ?? null,
           verdictEvent.amount_deducted ?? null,
           verdictEvent.phase ?? null,
+          eventId,
         );
         if (verdictResult instanceof DeferSignal) {
           deferred = true;

@@ -169,6 +169,7 @@ describe("dispute lifecycle event routing", () => {
       null,
       null,
       null,
+      "payment.dispute.under_review:disp_test_1",
     );
   });
 
@@ -185,6 +186,7 @@ describe("dispute lifecycle event routing", () => {
       null,
       null,
       null,
+      "payment.dispute.action_required:disp_test_1",
     );
   });
 });
