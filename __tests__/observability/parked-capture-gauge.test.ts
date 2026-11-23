@@ -73,12 +73,13 @@ jest.mock("@/lib/prisma", () => ({
 
 import { readPendingAges } from "@/lib/cron/pending-ages";
 import { readNeedsAttention } from "@/lib/backoffice/needs-attention";
-import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+import {
+  emitTelemetryLog,
+  type PendingAges,
+} from "@/lib/observability/betterstack-telemetry";
 
 /** The `oldestPendingAgeS` the Better Stack summary line carries for these gauges. */
-async function summaryGauges(
-  ages: Awaited<ReturnType<typeof readPendingAges>>,
-) {
+async function summaryGauges(ages: PendingAges) {
   const sent = jest.fn(async (..._a: unknown[]) => new Response(null));
   process.env.ENABLE_BETTERSTACK_TELEMETRY = "true";
   process.env.BETTERSTACK_SOURCE_TOKEN = "token";
