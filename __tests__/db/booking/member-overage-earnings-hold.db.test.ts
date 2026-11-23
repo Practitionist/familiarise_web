@@ -14,6 +14,7 @@ import {
   seedConsultee,
   seedHost,
   seedOneToOne,
+  seedPaidSubscription,
 } from "./harness";
 import {
   consultationCheckout,
@@ -21,6 +22,13 @@ import {
   seedBuyer,
   seedConsultationPlan,
 } from "./harness-host";
+import {
+  earningsOf,
+  overageHeld,
+  released,
+  seedLicensedMember,
+  seedUnpaidMemberOverage,
+} from "./harness-overage";
 
 jest.mock("../../../lib/payments/index", () => ({
   __esModule: true,
@@ -56,6 +64,16 @@ import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
 import { handleOverageMemberSuccess } from "../../../lib/payments/webhooks/overage-handlers";
 import { settleFailedMemberOverageAsOrg } from "../../../lib/payments/billing/overage-settlement";
 import { runTimeoutMemberOverages } from "../../../jobs/billing/timeout-member-overages";
+import { replaceOccurrence } from "../../../lib/appointments/occurrences";
+import { settleSubscriptionCycle } from "../../../lib/booking/subscription-cycle";
+import {
+  computeHoldUntil,
+  holdHoursFor,
+} from "../../../lib/payments/payouts/earnings-hold";
+import {
+  createEarningsFromPayment,
+  resolvePaymentForEarnings,
+} from "../../../lib/payments/payouts";
 
 const DAY_MS = 24 * HOUR_MS;
 const OLD_GSTIN = process.env.PLATFORM_GSTIN;
@@ -67,64 +85,6 @@ afterAll(() => {
   if (OLD_GSTIN === undefined) delete process.env.PLATFORM_GSTIN;
   else process.env.PLATFORM_GSTIN = OLD_GSTIN;
 });
-
-/** An ACTIVE licence-funded organisation whose member's seat covers `cap` sessions and charges the member past it. */
-async function seedLicensedMember(userId: string, cap: number) {
-  const org = await prisma.organization.create({
-    data: {
-      name: "Licensed org",
-      slug: `licensed-${randomUUID()}`,
-      status: "ACTIVE",
-    },
-  });
-  const account = await prisma.billingAccount.create({
-    data: {
-      ownerOrgId: org.id,
-      billingEmail: `${randomUUID()}@db-tier.example.invalid`,
-      fundingSource: "LICENSE",
-    },
-  });
-  await prisma.organization.update({
-    where: { id: org.id },
-    data: { billingAccountId: account.id },
-  });
-  const contract = await prisma.contract.create({
-    data: {
-      organizationId: org.id,
-      billingAccountId: account.id,
-      status: "ACTIVE",
-      effectiveFrom: new Date(Date.now() - DAY_MS),
-    },
-  });
-  const program = await prisma.program.create({
-    data: {
-      contractId: contract.id,
-      type: "LICENSED_SEAT",
-      name: "Seat",
-      coveredPlanTypes: ["CONSULTATION"],
-      licensedSeatConfig: {
-        create: {
-          ratePerSeatPaise: BigInt(0),
-          cycle: "MONTHLY",
-          coveredEngagementsPerCycle: cap,
-          overageBehavior: "CHARGE_MEMBER",
-        },
-      },
-    },
-  });
-  const membership = await prisma.membership.create({
-    data: { userId, organizationId: org.id, role: "LEARNER" },
-  });
-  const assignment = await prisma.programAssignment.create({
-    data: {
-      programId: program.id,
-      membershipId: membership.id,
-      periodStart: new Date(Date.now() - DAY_MS),
-      periodEnd: new Date(Date.now() + 30 * DAY_MS),
-    },
-  });
-  return { orgId: org.id, assignmentId: assignment.id };
-}
 
 /** A member of a licensed org books a ₹1,000 consultation on the org's account. */
 async function bookOnLicence(cap: number) {
@@ -149,18 +109,6 @@ async function bookOnLicence(cap: number) {
   return { orgId, parent, side };
 }
 
-/** The parent's expert earnings with their active holds. */
-const earningsOf = (paymentId: string) =>
-  prisma.consultantEarnings.findMany({
-    where: { paymentId },
-    include: {
-      holds: {
-        where: { releasedAt: null },
-        select: { reason: true, sourceRef: true },
-      },
-    },
-  });
-
 /** Every column an earning's amounts are made of. */
 const amountsOf = (rows: Awaited<ReturnType<typeof earningsOf>>) =>
   rows.map((r) => ({
@@ -173,13 +121,6 @@ const amountsOf = (rows: Awaited<ReturnType<typeof earningsOf>>) =>
     cycleOrdinal: r.cycleOrdinal,
     currency: r.currency,
   }));
-
-const overageHeld = (parentId: string) => ({
-  status: "HELD",
-  preHoldStatus: "PENDING",
-  holds: [{ reason: "OVERAGE", sourceRef: parentId }],
-});
-const released = { status: "PENDING", preHoldStatus: null, holds: [] };
 
 describe("a licence-funded booking past its cap whose member pays the overage", () => {
   it("writes the parent's earnings held for the member's unpaid overage", async () => {
@@ -212,6 +153,40 @@ describe("a licence-funded booking past its cap whose member pays the overage", 
     await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
 
     expect((await earningsOf(parent.id))[0]).toMatchObject(released);
+  });
+
+  it("moves a held earning's release with its session, so paying waits for the new end", async () => {
+    const { parent, side } = await bookOnLicence(0);
+    const [earning] = await earningsOf(parent.id);
+    const session = await prisma.appointmentOccurrence.findFirstOrThrow({
+      where: { appointmentId: parent.appointmentId! },
+    });
+    // Further out than the new-expert days, so only a re-anchor can match.
+    const startsAt = new Date(session.startsAt.getTime() + 10 * DAY_MS);
+
+    await prisma.$transaction((tx) =>
+      replaceOccurrence(tx, {
+        appointmentId: parent.appointmentId!,
+        startsAt,
+        durationInHours: 1,
+        consultantProfileId: session.consultantProfileId!,
+      }),
+    );
+
+    const holdUntil = computeHoldUntil({
+      capturedAt: earning.createdAt,
+      lastOccurrenceEndsAt: new Date(startsAt.getTime() + HOUR_MS),
+      holdHours: holdHoursFor("CONSULTATION"),
+    });
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...overageHeld(parent.id),
+      holdUntil,
+    });
+    await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...released,
+      holdUntil,
+    });
   });
 
   it("keeps the hold when the overage times out, until it is settled to the org", async () => {
@@ -260,40 +235,7 @@ it("a gateway capture writes its earnings held while a member overage on the pay
     },
   );
   const parent = booking.payment!;
-  const { assignmentId } = await seedLicensedMember(buyer.userId, 0);
-  const utilization = await prisma.bookingUtilization.create({
-    data: {
-      programAssignmentId: assignmentId,
-      paymentId: parent.id,
-      priceAtBookingPaise: parent.amount,
-      wasOverage: true,
-    },
-  });
-  const side = await prisma.payment.create({
-    data: {
-      amount: BigInt(23_600),
-      originalAmount: BigInt(20_000),
-      taxAmount: BigInt(3_600),
-      paymentMethod: "CARD",
-      paymentIntent: `overage:${parent.id}`,
-      paymentGateway: "RAZORPAY",
-      paymentStatus: "PENDING",
-      userId: buyer.userId,
-      parentPaymentId: parent.id,
-      legs: { create: { source: "CARD", amountPaise: BigInt(23_600) } },
-    },
-  });
-  await prisma.overageEvent.create({
-    data: {
-      programAssignmentId: assignmentId,
-      bookingUtilizationId: utilization.id,
-      overageBehavior: "CHARGE_MEMBER",
-      surchargePaise: BigInt(20_000),
-      marginalPaise: BigInt(23_600),
-      chargeStatus: "PENDING",
-      paymentId: side.id,
-    },
-  });
+  await seedUnpaidMemberOverage(parent, buyer.userId);
 
   await handlePaymentSuccess(
     parent.paymentIntent,
@@ -304,4 +246,67 @@ it("a gateway capture writes its earnings held while a member overage on the pay
   const earnings = await earningsOf(parent.id);
   expect(earnings).toHaveLength(1);
   expect(earnings[0]).toMatchObject(overageHeld(parent.id));
+});
+
+it("stamps a delivered subscription tranche while it is held, so paying the overage lets it release", async () => {
+  const host = await seedHost();
+  const buyer = await seedConsultee();
+  const periodStart = new Date(Date.now() - 20 * DAY_MS);
+  const { subscriptionId, appointmentId } = await seedPaidSubscription(
+    host,
+    buyer,
+    periodStart,
+    { sessionsPerWeek: 1, totalSessions: 2 },
+  );
+  await prisma.subscription.update({
+    where: { id: subscriptionId },
+    data: { status: "APPROVED" },
+  });
+  const parent = await prisma.payment.findFirstOrThrow({
+    where: { appointmentId },
+  });
+  const side = await seedUnpaidMemberOverage(parent, buyer.userId);
+  // The deferred writer (the capture's post-commit retry, the heal sweep).
+  const resolved = await resolvePaymentForEarnings(
+    { id: parent.id },
+    "SUBSCRIPTION",
+  );
+  await createEarningsFromPayment({
+    payment: resolved!.paymentForEarnings,
+    appointmentType: resolved!.earningsAppointmentType,
+    teamAt: parent.createdAt,
+  });
+  const minted = await earningsOf(parent.id);
+  expect(minted.length).toBeGreaterThan(0);
+  for (const tranche of minted) {
+    expect(tranche).toMatchObject({
+      ...overageHeld(parent.id),
+      holdUntil: null,
+    });
+  }
+
+  // Both sessions are delivered while the overage is unpaid.
+  for (const ordinal of [1, 2]) {
+    const startsAt = new Date(periodStart.getTime() + ordinal * 7 * DAY_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId,
+        ordinal,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+        completionStatus: "COMPLETED",
+      },
+    });
+  }
+  await prisma.$transaction((tx) =>
+    settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+  );
+  await handleOverageMemberSuccess(side.paymentIntent, Number(side.amount));
+
+  for (const tranche of await earningsOf(parent.id)) {
+    expect(tranche).toMatchObject(released);
+    expect(tranche.holdUntil).not.toBeNull();
+  }
 });
