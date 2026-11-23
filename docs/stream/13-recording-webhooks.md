@@ -354,7 +354,7 @@ Synchronous route execution (`POST /api/meetings/[meetingId]/end`) and asynchron
 
 ### Attendance Is Not a Webhook
 
-No webhook writes `MeetingPresence`. The outcome sweep, the consultant no-show detector and the rating gate call `settleOccurrenceAttendance` (`lib/meetings/settle-attendance.ts`), which reads Stream's settled participant record for every call id and session of the occurrence once the room can no longer be rejoined, and stores it with `Meeting.attendanceSettledAt` in one compare-and-set transaction. See [ADR-06](./18-architecture-decision-records.md#adr-06-stream-participant-sessions-are-the-attendance-witness).
+No webhook writes `MeetingPresence`. The outcome sweep, the consultant no-show detector and the rating gate call `settleOccurrenceAttendance` (`lib/meetings/settle-attendance.ts`), which reads Stream's settled participant record for every call id and session of the occurrence once the room can no longer be rejoined, and stores it with `Meeting.attendanceSettledAt` and `Meeting.attendanceCorroboratedSessionIds` in one compare-and-set transaction. See [ADR-06](./18-architecture-decision-records.md#adr-06-stream-participant-sessions-are-the-attendance-witness).
 
 ### Event Payload Structures
 
