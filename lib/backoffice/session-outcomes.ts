@@ -306,11 +306,15 @@ export async function overturnSessionOutcome(args: {
  * Confirms a negative verdict as it stands, under the appointment lock the
  * overturn takes. Sets only the stamp, by CAS from null, so `outcomeAt` keeps its time.
  */
-export async function confirmSessionOutcome(args: {
-  occurrenceId: string;
-  outcome: OccurrenceOutcome;
-  now?: Date;
-}) {
+/** Runs in the door's transaction, so the stamp commits only with its audit row; the CAS needs no lock. */
+export async function confirmSessionOutcome(
+  tx: Tx,
+  args: {
+    occurrenceId: string;
+    outcome: OccurrenceOutcome;
+    now?: Date;
+  },
+) {
   const now = args.now ?? new Date();
   const { outcome } = args;
   if (!isNegativeMoneyOutcome(outcome)) {
@@ -319,31 +323,31 @@ export async function confirmSessionOutcome(args: {
       "Only a host-absent, cut-short or learner-absent verdict needs a confirmation.",
     );
   }
-  const occ = await prisma.appointmentOccurrence.findUnique({
-    where: { id: args.occurrenceId },
-    select: { appointmentId: true },
+  const { count } = await tx.appointmentOccurrence.updateMany({
+    where: {
+      id: args.occurrenceId,
+      outcome,
+      outcomeConfirmedAt: null,
+      deletedAt: null,
+      // A parked UNVERIFIED verdict is decided through set-outcome, not confirmed as it stands.
+      completionStatus: { in: ["COMPLETED", "VOIDED"] },
+    },
+    data: { outcomeConfirmedAt: now },
   });
-  if (!occ) {
-    throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
-  }
-  return withAppointmentLock(occ.appointmentId, async () => {
-    const { count } = await prisma.appointmentOccurrence.updateMany({
-      where: {
-        id: args.occurrenceId,
-        outcome,
-        outcomeConfirmedAt: null,
-        deletedAt: null,
-      },
-      data: { outcomeConfirmedAt: now },
+  if (count === 0) {
+    const exists = await tx.appointmentOccurrence.findUnique({
+      where: { id: args.occurrenceId },
+      select: { id: true },
     });
-    if (count === 0) {
-      throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+    if (!exists) {
+      throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
     }
-    return {
-      before: { outcome, outcomeConfirmedAt: null },
-      after: { outcome, outcomeConfirmedAt: now.toISOString() },
-    };
-  });
+    throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+  }
+  return {
+    before: { outcome, outcomeConfirmedAt: null },
+    after: { outcome, outcomeConfirmedAt: now.toISOString() },
+  };
 }
 
 /** Ops may ask Stream again until this many days after the session; Stream drops the detail after 90. */

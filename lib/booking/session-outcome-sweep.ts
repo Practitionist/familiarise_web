@@ -773,15 +773,15 @@ export async function alertStaleNeedsHuman(
   return stale;
 }
 
-/** Closed unconfirmed verdicts judged per page by the window-close pass, and its pages per run. */
+/** Closed unconfirmed verdicts judged per page; the pass pages by keyset until its deadline, so weak rows cannot hide older ones. */
 const OUTCOME_CONFIRM_PAGE = 100;
-const OUTCOME_CONFIRM_MAX_PAGES = 3;
 
 const CONFIRM_SELECT = {
   id: true,
   startsAt: true,
   endsAt: true,
   outcome: true,
+  outcomeAt: true,
   meeting: {
     select: {
       endedAt: true,
@@ -831,6 +831,68 @@ export interface OutcomeConfirmRun {
   errors: string[];
 }
 
+type Keyset = { outcomeAt: Date; id: string };
+
+/** The pass's filter past the last row of the previous page, in its (outcomeAt desc, id asc) order. */
+function afterKeyset(
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  after: Keyset | null,
+): Prisma.AppointmentOccurrenceWhereInput {
+  if (!after) return where;
+  return {
+    AND: [
+      where,
+      {
+        OR: [
+          { outcomeAt: { lt: after.outcomeAt } },
+          { outcomeAt: after.outcomeAt, id: { gt: after.id } },
+        ],
+      },
+    ],
+  };
+}
+
+/** Judges one page and stamps its strong verdicts; false when the page's outage read was capped. */
+async function confirmPage(
+  rows: ConfirmRow[],
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  now: Date,
+  run: OutcomeConfirmRun,
+): Promise<boolean> {
+  const outages = await readOutageWindows(
+    prisma,
+    new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
+  );
+  // A capped outage read may have dropped an overlapping window, so nothing is confirmed on it.
+  if (outageReadCapped(outages)) {
+    run.weak += rows.length;
+    run.errors.push(
+      `Outage read hit its ${OUTAGE_READ_CAP}-row cap; closed verdicts left unconfirmed`,
+    );
+    return false;
+  }
+  const strong = new Map<NegativeMoneyOutcome, string[]>();
+  for (const row of rows) {
+    if (!isNegativeMoneyOutcome(row.outcome)) continue;
+    if (isStrongVerdict(row, row.outcome, outages)) {
+      strong.set(row.outcome, [...(strong.get(row.outcome) ?? []), row.id]);
+    } else {
+      run.weak++;
+    }
+  }
+  // A relabel or confirm since the read changes the outcome or the stamp, so the CAS skips it.
+  const counts = await Promise.all(
+    [...strong].map(([outcome, ids]) =>
+      prisma.appointmentOccurrence.updateMany({
+        where: { AND: [where, { id: { in: ids }, outcome }] },
+        data: { outcomeConfirmedAt: now },
+      }),
+    ),
+  );
+  run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
+  return true;
+}
+
 /**
  * Confirms each negative verdict whose report window closed on strong evidence,
  * newest first, by CAS from an unconfirmed stamp; a weak one stays for ops.
@@ -841,56 +903,26 @@ export async function confirmClosedOutcomes(
 ): Promise<OutcomeConfirmRun> {
   const run: OutcomeConfirmRun = { confirmed: 0, weak: 0, errors: [] };
   const where = unconfirmedClosedVerdictWhere(now);
-  const seen: string[] = [];
-  for (let page = 0; page < OUTCOME_CONFIRM_MAX_PAGES; page++) {
-    if (pastDeadline()) break;
-    try {
-      const rows = await prisma.appointmentOccurrence.findMany({
+  let after: Keyset | null = null;
+  try {
+    while (!pastDeadline()) {
+      const rows: ConfirmRow[] = await prisma.appointmentOccurrence.findMany({
         relationLoadStrategy: "join",
-        where:
-          seen.length > 0 ? { AND: [where, { id: { notIn: seen } }] } : where,
+        where: afterKeyset(where, after),
         select: CONFIRM_SELECT,
         orderBy: [{ outcomeAt: "desc" }, { id: "asc" }],
         take: OUTCOME_CONFIRM_PAGE,
       });
-      if (rows.length === 0) break;
-      seen.push(...rows.map((r) => r.id));
-      const outages = await readOutageWindows(
-        prisma,
-        new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
-      );
-      // A capped outage read may have dropped an overlapping window, so nothing is confirmed on it.
-      if (outageReadCapped(outages)) {
-        run.weak += rows.length;
-        run.errors.push(
-          `Outage read hit its ${OUTAGE_READ_CAP}-row cap; closed verdicts left unconfirmed`,
-        );
-        break;
-      }
-      const strong = new Map<NegativeMoneyOutcome, string[]>();
-      for (const row of rows) {
-        if (!isNegativeMoneyOutcome(row.outcome)) continue;
-        if (!isStrongVerdict(row, row.outcome, outages)) {
-          run.weak++;
-          continue;
-        }
-        strong.set(row.outcome, [...(strong.get(row.outcome) ?? []), row.id]);
-      }
-      for (const [outcome, ids] of strong) {
-        // A relabel or confirm since the read changes the outcome or the stamp, so the CAS skips it.
-        const { count } = await prisma.appointmentOccurrence.updateMany({
-          where: { AND: [where, { id: { in: ids }, outcome }] },
-          data: { outcomeConfirmedAt: now },
-        });
-        run.confirmed += count;
-      }
-      if (rows.length < OUTCOME_CONFIRM_PAGE) break;
-    } catch (error) {
-      run.errors.push(
-        `Failed to confirm closed session outcomes: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      break;
+      const last = rows.at(-1);
+      if (!last?.outcomeAt) break;
+      after = { outcomeAt: last.outcomeAt, id: last.id };
+      const complete = await confirmPage(rows, where, now, run);
+      if (!complete || rows.length < OUTCOME_CONFIRM_PAGE) break;
     }
+  } catch (error) {
+    run.errors.push(
+      `Failed to confirm closed session outcomes: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   return run;
 }

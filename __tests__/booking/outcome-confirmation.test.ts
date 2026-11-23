@@ -91,6 +91,7 @@ function verdict(id: string, overrides: Row = {}, meeting: Row = {}): Row {
 }
 
 const row = (id: string) => occurrences.rows.find((r) => r.id === id)!;
+const tx = prisma as unknown as Tx;
 
 beforeEach(() => {
   occurrences.rows.splice(0, occurrences.rows.length);
@@ -184,6 +185,22 @@ describe("the window-close pass", () => {
     }
   });
 
+  it("reaches an older strong verdict behind more than three pages of newer weak ones", async () => {
+    for (let i = 0; i < 350; i++) {
+      occurrences.rows.push(
+        verdict(
+          `weak-${String(i).padStart(3, "0")}`,
+          { outcomeAt: hoursAgo(49) },
+          { attendanceCorroboratedSessionIds: ["s-2"] },
+        ),
+      );
+    }
+    occurrences.rows.push(verdict("old-strong", { outcomeAt: hoursAgo(52) }));
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 1, weak: 350 });
+    expect(row("old-strong").outcomeConfirmedAt).toEqual(NOW);
+  });
+
   it("starts nothing past its deadline", async () => {
     occurrences.rows.push(verdict("strong"));
     const run = await confirmClosedOutcomes(NOW, () => true);
@@ -195,7 +212,7 @@ describe("the window-close pass", () => {
 describe("the ops confirm door", () => {
   it("stamps only outcomeConfirmedAt, by CAS on the outcome the operator saw", async () => {
     occurrences.rows.push(verdict("a", { outcomeAt: hoursAgo(10) }));
-    await confirmSessionOutcome({
+    await confirmSessionOutcome(tx, {
       occurrenceId: "a",
       outcome: "LEARNER_ABSENT",
       now: NOW,
@@ -207,22 +224,47 @@ describe("the ops confirm door", () => {
     });
     // A second confirm, or one naming an outcome the row no longer has, is refused.
     await expect(
-      confirmSessionOutcome({ occurrenceId: "a", outcome: "LEARNER_ABSENT" }),
+      confirmSessionOutcome(tx, {
+        occurrenceId: "a",
+        outcome: "LEARNER_ABSENT",
+      }),
     ).rejects.toMatchObject({ code: "SESSION_MOVED" });
   });
 
   it("refuses a verdict that changed since the operator read it", async () => {
     occurrences.rows.push(verdict("a", { outcome: "HELD" }));
     await expect(
-      confirmSessionOutcome({ occurrenceId: "a", outcome: "LEARNER_ABSENT" }),
+      confirmSessionOutcome(tx, {
+        occurrenceId: "a",
+        outcome: "LEARNER_ABSENT",
+      }),
     ).rejects.toMatchObject({ code: "SESSION_MOVED", httpStatus: 409 });
     expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("refuses a parked UNVERIFIED verdict, which ops decide through set-outcome", async () => {
+    occurrences.rows.push(
+      verdict("a", { completionStatus: "UNVERIFIED", outcome: "HOST_ABSENT" }),
+    );
+    await expect(
+      confirmSessionOutcome(tx, { occurrenceId: "a", outcome: "HOST_ABSENT" }),
+    ).rejects.toMatchObject({ code: "SESSION_MOVED" });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("answers 404 for a session that does not exist", async () => {
+    await expect(
+      confirmSessionOutcome(tx, {
+        occurrenceId: "missing",
+        outcome: "LEARNER_ABSENT",
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_FOUND", httpStatus: 404 });
   });
 
   it("refuses to confirm an outcome that is not negative, writing nothing", async () => {
     occurrences.rows.push(verdict("a", { outcome: "HELD" }));
     await expect(
-      confirmSessionOutcome({ occurrenceId: "a", outcome: "HELD" }),
+      confirmSessionOutcome(tx, { occurrenceId: "a", outcome: "HELD" }),
     ).rejects.toMatchObject({ code: "OUTCOME_NOT_CONFIRMABLE" });
     expect(occurrences.updateMany).not.toHaveBeenCalled();
   });

@@ -13,14 +13,10 @@ export const POST = withOpsAction(
   "session.confirm-outcome",
   { outcome: z.enum(NEGATIVE_MONEY_OUTCOMES) },
   {
-    mode: "gateway",
-    target: ({ params }) => ({
-      kind: "AppointmentOccurrence",
-      id: params.occurrenceId,
-    }),
-    run: async ({ params, body }) => {
+    mode: "tx",
+    run: async (tx, { params, body }) => {
       const occurrenceId = params.occurrenceId;
-      const result = await confirmSessionOutcome({
+      const result = await confirmSessionOutcome(tx, {
         occurrenceId,
         outcome: body.outcome,
       });

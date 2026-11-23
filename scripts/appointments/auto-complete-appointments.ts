@@ -1356,6 +1356,9 @@ export async function autoCompleteAppointments(opts?: {
   );
 }
 
+/** The window-close pass's share of the start budget, so a weak backlog never starves the drain. */
+const OUTCOME_CONFIRM_BUDGET_SHARE = 0.25;
+
 async function autoCompleteAppointmentsUnlocked(
   maxParents: number,
   maxSlotOutcomes: number,
@@ -1395,7 +1398,10 @@ async function autoCompleteAppointmentsUnlocked(
   let rounds = 0;
   try {
     // Before the drain, which can spend the whole budget, and before the alerts, so a confirmed verdict is not counted as waiting.
-    const confirms = await confirmClosedOutcomes(new Date(), pastDeadline);
+    const confirms = await confirmClosedOutcomes(
+      new Date(),
+      startDeadlineShare(OUTCOME_CONFIRM_BUDGET_SHARE),
+    );
     allErrors.push(...confirms.errors);
     console.log(
       `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
