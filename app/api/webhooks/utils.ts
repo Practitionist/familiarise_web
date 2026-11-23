@@ -10,6 +10,7 @@ import { bookTopUpRefund } from "@/lib/payments/operations/wallet-refund";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   isLegalDisputeTransition,
+  isTerminalDisputeChange,
   mapDisputeStatus,
 } from "@/lib/payments/dispute-status";
 import {
@@ -81,7 +82,10 @@ import {
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import {
@@ -1134,6 +1138,40 @@ async function placeDisputeHolds(
   return { consultant: consultant.length, org: org.length };
 }
 
+/** A dispute event the handlers do not adopt: one event with what is stored and what arrived; nothing else changes. */
+async function recordUnadoptedDisputeEvent(
+  tx: Tx,
+  params: {
+    severity: "ERROR" | "WARN";
+    dispute: {
+      id: string;
+      disputeId: string;
+      paymentId: string;
+      status: DisputeStatus;
+    };
+    incomingStatus: string;
+    phase: string | null;
+  },
+): Promise<void> {
+  const { dispute, incomingStatus, phase } = params;
+  await recordSystemEvent({
+    db: tx,
+    strict: true,
+    category: "razorpay_webhook",
+    severity: params.severity,
+    message: `Dispute ${dispute.disputeId} is ${dispute.status} but the gateway sent "${incomingStatus}"${phase ? ` in phase ${phase}` : ""}; its status and money were left unchanged`,
+    context: {
+      disputeId: dispute.disputeId,
+      paymentId: dispute.paymentId,
+      disputeRowId: dispute.id,
+      storedStatus: dispute.status,
+      incomingStatus,
+      phase,
+    },
+    correlationId: `dispute:${dispute.disputeId}`,
+  });
+}
+
 /**
  * Handle dispute created event
  */
@@ -1146,7 +1184,7 @@ export async function handleDisputeCreated(
   status: string,
   dueBy: number | null,
   isChargeRefundable: boolean,
-  options?: { isRedrive?: boolean },
+  options?: { isRedrive?: boolean; phase?: string | null },
 ) {
   const gateway = PaymentGateway.RAZORPAY;
   const razorpayClient = getRazorpayClient();
@@ -1215,7 +1253,23 @@ export async function handleDisputeCreated(
         });
 
         if (existingDispute) {
-          console.log(`Dispute ${disputeId} already exists`);
+          const phase = options?.phase ?? null;
+          if (
+            isTerminalDisputeChange(
+              existingDispute.status,
+              mapDisputeStatus(status),
+              phase,
+            )
+          ) {
+            await recordUnadoptedDisputeEvent(tx, {
+              severity: "ERROR",
+              dispute: existingDispute,
+              incomingStatus: status,
+              phase,
+            });
+          } else {
+            console.log(`Dispute ${disputeId} already exists`);
+          }
           return;
         }
 
@@ -1682,10 +1736,46 @@ export async function settleClosedDispute(
 }
 
 /**
+ * A lost verdict settles on the reported deduction when it is above 0; a 0 or
+ * missing figure is unknown, so the disputed amount is used. A reported figure
+ * that differs from the disputed amount is recorded once, with the settlement.
+ */
+async function lostDisputeAmountPaise(
+  tx: Tx,
+  dispute: DisputeSettlementInput,
+  verdict: DisputeStatus,
+  reportedPaise: number | null,
+): Promise<number> {
+  const settledPaise =
+    reportedPaise !== null && reportedPaise > 0
+      ? reportedPaise
+      : dispute.amountPaise;
+  if (reportedPaise !== null && reportedPaise !== dispute.amountPaise) {
+    await recordSystemEvent({
+      db: tx,
+      strict: true,
+      category: "razorpay_webhook",
+      severity: "INFO",
+      message: `Dispute ${dispute.disputeId} ${verdict}: the gateway reported ${reportedPaise} paise deducted against ${dispute.amountPaise} paise disputed; settled on ${settledPaise} paise`,
+      context: {
+        disputeId: dispute.disputeId,
+        paymentId: dispute.paymentId,
+        disputeRowId: dispute.id,
+        verdict,
+        reportedDeductedPaise: reportedPaise,
+        disputedPaise: dispute.amountPaise,
+        settledPaise,
+      },
+      correlationId: `dispute:${dispute.disputeId}`,
+    });
+  }
+  return settledPaise;
+}
+
+/**
  * The money half of a dispute verdict, shared by the webhook and the
  * reconcile-disputes poll so both write the same rows. `amountDeductedPaise`
- * is Razorpay's `amount_deducted`; a LOST without it falls back to the
- * disputed amount.
+ * is Razorpay's `amount_deducted`, or null when the gateway sent none.
  */
 export async function settleDisputeVerdict(
   tx: Tx,
@@ -1702,7 +1792,7 @@ export async function settleDisputeVerdict(
       return settleLostDispute(
         tx,
         dispute,
-        amountDeductedPaise ?? dispute.amountPaise,
+        await lostDisputeAmountPaise(tx, dispute, verdict, amountDeductedPaise),
       );
     case "CLOSED":
       return settleClosedDispute(tx, dispute, amountDeductedPaise);
@@ -1818,6 +1908,7 @@ export async function handleDisputeUpdated(
   evidence: Prisma.InputJsonValue | null,
   respondBy?: number | null,
   amountDeductedPaise: number | null = null,
+  phase: string | null = null,
 ) {
   const txOutcome = await withSerializableRetry(() =>
     prisma.$transaction(
@@ -1838,10 +1929,19 @@ export async function handleDisputeUpdated(
         }
 
         const mappedStatus = mapDisputeStatus(status);
+        const priorStatus = dispute.status;
+        const terminalChange = isTerminalDisputeChange(
+          priorStatus,
+          mappedStatus,
+          phase,
+        );
         if (mappedStatus === null) {
-          console.warn(
-            `Unknown dispute status "${status}" for ${disputeId} — skipping update`,
-          );
+          await recordUnadoptedDisputeEvent(tx, {
+            severity: terminalChange ? "ERROR" : "WARN",
+            dispute,
+            incomingStatus: status,
+            phase,
+          });
           return {
             notification: null,
             emails: [] as StagedRecipientEmail[],
@@ -1849,11 +1949,18 @@ export async function handleDisputeUpdated(
           };
         }
 
-        const priorStatus = dispute.status;
         if (
           priorStatus === mappedStatus ||
           !isLegalDisputeTransition(priorStatus, mappedStatus)
         ) {
+          if (terminalChange) {
+            await recordUnadoptedDisputeEvent(tx, {
+              severity: "ERROR",
+              dispute,
+              incomingStatus: status,
+              phase,
+            });
+          }
           return {
             notification: null,
             emails: [] as StagedRecipientEmail[],

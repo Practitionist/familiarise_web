@@ -88,6 +88,7 @@ const disputeEntitySchema = z.object({
   reason_description: z.string().nullable().optional(),
   status: z.string(),
   respond_by: z.number().nullable().optional(),
+  phase: z.string().nullable().optional(),
   deduct_at_onset: z.boolean().optional(),
 });
 
@@ -483,7 +484,7 @@ export async function processRazorpayWebhookEvent(
           disputeCreatedEvent.status,
           disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
-          { isRedrive: !claim },
+          { isRedrive: !claim, phase: disputeCreatedEvent.phase ?? null },
         );
         if (createdResult instanceof DeferSignal) {
           deferred = true;
@@ -496,20 +497,14 @@ export async function processRazorpayWebhookEvent(
         const disputeProgressEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        const disputeProgressResult =
-          disputeProgressEvent.respond_by !== undefined &&
-          disputeProgressEvent.respond_by !== null
-            ? await handleDisputeUpdated(
-                disputeProgressEvent.id,
-                disputeProgressEvent.status,
-                null,
-                disputeProgressEvent.respond_by,
-              )
-            : await handleDisputeUpdated(
-                disputeProgressEvent.id,
-                disputeProgressEvent.status,
-                null,
-              );
+        const disputeProgressResult = await handleDisputeUpdated(
+          disputeProgressEvent.id,
+          disputeProgressEvent.status,
+          null,
+          disputeProgressEvent.respond_by ?? null,
+          null,
+          disputeProgressEvent.phase ?? null,
+        );
         if (disputeProgressResult instanceof DeferSignal) {
           deferred = true;
         }
@@ -531,6 +526,7 @@ export async function processRazorpayWebhookEvent(
           null,
           verdictEvent.respond_by ?? null,
           verdictEvent.amount_deducted ?? null,
+          verdictEvent.phase ?? null,
         );
         if (verdictResult instanceof DeferSignal) {
           deferred = true;

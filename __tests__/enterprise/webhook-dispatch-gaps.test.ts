@@ -166,6 +166,9 @@ describe("dispute lifecycle event routing", () => {
       "disp_test_1",
       "under_review",
       null,
+      null,
+      null,
+      null,
     );
   });
 
@@ -178,6 +181,9 @@ describe("dispute lifecycle event routing", () => {
     expect(handleDisputeUpdated).toHaveBeenCalledWith(
       "disp_test_1",
       "action_required",
+      null,
+      null,
+      null,
       null,
     );
   });
