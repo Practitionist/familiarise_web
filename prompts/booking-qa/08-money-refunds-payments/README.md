@@ -10,9 +10,9 @@ Journeys that create the money are owned by 03–07 (for example CO-01 books, CO
 | [02-cancel-quotes-and-rails.md](02-cancel-quotes-and-rails.md) | MO-15 – MO-28 | Preview contract and authz, exact 24 h / 2 h edges, unbound and credit-bound quotes, capture after an unpaid quote, prorated maths, seat and class-seat leave quotes, whole-event quote, rails (GATEWAY / INTERNAL / CREDITS), Wipro ledger reversal, IIT wallet and credit pool, frozen org ladder, expert full refund of a partly refunded booking, the refund across surfaces |
 | [03-refund-rows-and-reconciliation.md](03-refund-rows-and-reconciliation.md) | MO-29 – MO-42 | Key per door, money invariants, cascade to earnings, admin refund door (partial, replay, over-refund), clamp after partial, no rows for free/credits, consumer credit notes, Wipro invoice rail, consultee Payments vs DB, failed-refund surfaces, Earnings vs DB, back-office views, class seat multi-door, overseas currency |
 | [04-earnings-holds-org-split.md](04-earnings-holds-org-split.md) | MO-43 – MO-54 | LearnPro 10/10/80 split and its refund, Wipro booking earnings, release follows a reschedule, new-expert hold, trial earnings hold, holds while money moves, operator hold, co-host split, both sides' refund wording, free and credits earnings, totals after refunds |
-| [05-refund-owed-gateway-webhooks.md](05-refund-owed-gateway-webhooks.md) | MO-55 – MO-70 | Marker lifecycle, dropped drive re-driven once, grace and backoff, definitive refusal ×3 and escalation, ambiguous PENDING owned by reconcile, ops visibility, gateway refusal on cancel, dispute block, duplicate and reordered webhooks, unknown-order adoption, capture after lapse, orphan healing, stuck auto-refund, checkout gateway failure, ledger and cleanup |
+| [05-refund-owed-gateway-webhooks.md](05-refund-owed-gateway-webhooks.md) | MO-55 – MO-73 | Marker lifecycle, dropped drive re-driven once, grace and backoff, definitive refusal ×3 and escalation, ambiguous PENDING owned by reconcile, ops visibility, gateway refusal on cancel, dispute block, duplicate and reordered webhooks, unknown-order adoption, capture after lapse, orphan healing, stuck auto-refund, checkout gateway failure, gateway-captured subscription and paid trial, a real test-mode purchase through the browser, ledger and cleanup |
 
-**Count:** 70 cases.
+**Count:** 73 cases.
 
 ## Fixtures and personas
 
@@ -72,9 +72,9 @@ For every case that moves money, check and record each surface:
 
 - After 03–07 have produced their bookings. 01 → 02 → 03 → 04 → 05. Within a file, cases are ordered to share bookings.
 - **Local only (`[local]`):** Mock Pay exists only in `next dev` (`isMockPayment` is honoured only when `NODE_ENV=development`). Approval pay links and trial pay links have **no** mock path; paying them needs Razorpay test mode or an owner-run webhook replay.
-- **Webhook cases (MO-63…MO-68):** BLOCKED (no gateway) on a preview; locally they need test keys, the webhook secret and the owner to sign and post deliveries.
+- **Webhook cases (MO-63…MO-68, MO-70, MO-71):** BLOCKED (no gateway) on a preview; locally they need test keys, the webhook secret and the owner to sign and post deliveries. MO-72 is an owner-run test-mode purchase through the browser (local, test keys); its webhook door needs a tunnel.
 - **Sweeps:** NEEDS-OWNER-RUN off production. Owner command shape: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cleanup/<slug>?limit=50`. See [12's README](../12-sweeps-background-jobs/README.md) for slugs and the shared-database caveat.
-- **QA-ONLY emulations** (MO-38, MO-49, MO-56–MO-59, MO-65, MO-66) write money columns on QA mock rows only, with owner approval, and are reverted at MO-70.
+- **QA-ONLY emulations** (MO-38, MO-49, MO-56–MO-59, MO-65, MO-66) write money columns on QA mock rows only, with owner approval, and are reverted at MO-73.
 
 ## Salvaged from `prompts/booking-algorithm-tests/`
 

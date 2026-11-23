@@ -39,7 +39,7 @@ After every case: R-03, R-04 (refund rows, `refundOwedKey` set then cleared), R-
 
 **Cross-check:** B1 payments shows the refund; H1 earnings shows the reversal; staff payment page lists the refund; bell + outbox `APPOINTMENT_CANCELLED` to both.
 
-**Probe further:** the dialog never names the policy's tiers: is there a link to them? (MISSED-OPPORTUNITY.) Cancel again via API → 409 `NOT_CANCELLABLE`.
+**Probe further:** the dialog never names the policy's tiers: is there a link to them? (MISSED-OPPORTUNITY.) Cancel again via API → `200` with `replayed: true` and the same refund figure, no second `Refund`.
 
 ## CO-72 — Cancel between 2 h and 24 h: half refund `[local]`
 
