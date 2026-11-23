@@ -113,7 +113,7 @@ node-payment-main/
 # holds agents' audit drafts; the published issue is the record (#1580 was swept once).
 .claude/worktrees/
 .claude/audits/
-screens/
+/screens/
 prompts/
 
 # Pre-images written by scripts/stream/*.ts before they mutate the live Stream

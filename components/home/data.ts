@@ -42,7 +42,7 @@ export const FEATURES = [
   },
   {
     icon: Video,
-    title: "Tutoring & 1-on-1 Sessions",
+    title: "Tutoring & Private Sessions",
     description:
       "Personal video sessions with an expert, tailored to your subject and goals.",
     gradient: "from-stone-600 to-stone-800",
@@ -102,13 +102,13 @@ export const BENEFITS = [
   {
     title: "Learn Live",
     description:
-      "Join live classes, webinars and one-on-one sessions where you can ask questions and get answers in real time.",
+      "Join live classes, webinars and private sessions where you can ask questions and get answers in real time.",
     icon: Zap,
   },
   {
-    title: "Interviewed Experts",
+    title: "Vetted Experts",
     description:
-      "Every expert is personally interviewed by our founder before taking bookings, and reviews come only from people who attended a completed session.",
+      "Every expert is vetted before taking bookings, and reviews come only from people who booked a session that took place.",
     icon: BadgeCheck,
   },
   {
@@ -142,13 +142,13 @@ export const HOW_IT_WORKS = [
     step: 3,
     title: "Connect & Learn",
     description:
-      "Join your session on our platform over built-in video, with chat and course materials alongside.",
+      "Join your session on our own video platform, with chat and course materials alongside.",
   },
   {
     step: 4,
     title: "Grow Together",
     description:
-      "Keep learning with session follow-ups, course materials and your next booking.",
+      "Keep learning with session notes, course materials and your next booking.",
   },
 ];
 
@@ -191,13 +191,13 @@ export const PLATFORM_FEATURES = [
   },
   {
     icon: BadgeCheck,
-    title: "Interviewed Experts",
+    title: "Verified Experts",
     description:
-      "Our founder personally interviews every expert, and their employer is confirmed by work email or LinkedIn.",
+      "Every expert is vetted before listing, and their employer is confirmed by work email or LinkedIn.",
   },
   {
     icon: MessageSquare,
-    title: "In-app Messaging",
+    title: "Messaging",
     description:
       "Direct communication with experts. Open support cases and track issue resolution.",
   },
@@ -205,7 +205,7 @@ export const PLATFORM_FEATURES = [
     icon: HeadphonesIcon,
     title: "Support System",
     description:
-      "Priority-based support cases with issue tracking for sessions, payments, and more.",
+      "Support cases ranked by priority, with issue tracking for sessions, payments and more.",
   },
   {
     icon: FileCheck,
@@ -230,9 +230,8 @@ export const PLATFORM_FEATURES = [
 export const TRUST_BADGES = [
   {
     icon: Shield,
-    label: "Interviewed Experts",
-    description:
-      "Every expert is personally interviewed by our founder before taking bookings",
+    label: "Vetted Experts",
+    description: "Every expert is vetted before taking bookings",
   },
   {
     icon: Lock,
@@ -249,7 +248,7 @@ export const TRUST_BADGES = [
     icon: Award,
     label: "Honest Reviews",
     description:
-      "Reviews come only from people who attended a completed session",
+      "Reviews come only from people who booked a session that took place",
   },
 ];
 
@@ -262,14 +261,14 @@ export const FAQ_ITEMS = [
   {
     question: "What types of sessions are available?",
     answer:
-      "We offer four main formats: live classes for structured, in-depth learning, live webinars for group learning, tutoring and 1-on-1 video sessions for personalized guidance, and subscription plans for ongoing sessions with the same expert.",
+      "We offer four main formats: live classes for structured, deep learning, live webinars for group learning, tutoring and private video sessions for personalized guidance, and subscription plans for ongoing sessions with the same expert.",
   },
   {
     question: "How does the payment and refund process work?",
     // A missed consultation is refunded automatically; a missed class or
     // webinar gets a free make-up first.
     answer:
-      "Payments are processed securely by Razorpay in INR, and GST is shown at checkout before you pay. The expert is paid only after your session has been delivered. Cancellation refunds follow the terms shown on your booking and our Cancellation & Refund Policy. If your expert isn't there for enough of a consultation, it's voided and refunded automatically — no request needed. Missed classes and webinars are offered a free make-up first, with an automatic refund if it goes unused.",
+      "Payments are processed securely by Razorpay in INR, and GST is shown at checkout before you pay. The expert is paid only after your session has been delivered. Cancellation refunds follow the terms shown on your booking and our Cancellation & Refund Policy. If your expert isn't there for enough of a consultation, it's voided and refunded automatically — no request needed. Missed classes and webinars are offered a free replacement session first, with an automatic refund if it goes unused.",
   },
   {
     question: "Can I become an expert on the platform?",
@@ -294,13 +293,13 @@ export const ENTERPRISE_FEATURES = [
     icon: Briefcase,
     title: "Sponsored sessions",
     description:
-      "Your organisation pays; your people book. Set a budget or a per-seat allowance and let them choose their own experts.",
+      "Your organisation pays; your people book. Set a budget or an allowance for each seat and let them choose their own experts.",
   },
   {
     icon: FileCheck,
     title: "Invoicing built for procurement",
     description:
-      "Purchase orders, GST-compliant invoices, and Net-60 terms — not a corporate card and a pile of receipts.",
+      "Purchase orders, GST invoices and 60 day payment terms, not a corporate card and a pile of receipts.",
   },
   {
     icon: Shield,

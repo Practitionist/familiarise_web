@@ -29,6 +29,7 @@ import {
   type CaseResolution,
   type DecisionOutcome,
 } from "./resolution-data";
+import type { FundingRail } from "@/lib/payments/funding-rail";
 
 type Run = RunCaseAction;
 const when = (iso: string) => <OperatorTime value={iso} />;
@@ -312,8 +313,14 @@ function EvidenceRequestsPanel({
 export function StaffCaseResolution({
   caseId,
   paymentId,
+  paymentRail,
   basePath,
-}: Readonly<{ caseId: string; paymentId?: string; basePath: string }>) {
+}: Readonly<{
+  caseId: string;
+  paymentId?: string;
+  paymentRail?: FundingRail;
+  basePath: string;
+}>) {
   const query = useCaseResolution(caseId);
   const action = useCaseAction(caseId);
   if (query.isPending)
@@ -385,6 +392,7 @@ export function StaffCaseResolution({
       <FinancialPanel
         caseId={caseId}
         paymentId={paymentId}
+        paymentRail={paymentRail}
         basePath={basePath}
         data={data}
         busy={busy}

@@ -26,7 +26,7 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
   // Same radius, border and padding as the composer above it: a flat list of
   // siblings, with nothing that reads as nested under anything else.
   return (
-    <div className="flex items-start gap-4 rounded-xl border border-border bg-card p-4">
+    <div className="flex items-start gap-4 py-4">
       <Avatar className="w-10 h-10">
         {reviewerImage && (
           <AvatarImage src={reviewerImage} alt={reviewerName} />

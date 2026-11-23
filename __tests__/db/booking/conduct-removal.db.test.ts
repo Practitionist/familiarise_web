@@ -504,7 +504,7 @@ describe("overturn: refund first, through the bounded door", () => {
 
     await expect(
       review(caseId, admin, recommendationId, true, 0),
-    ).rejects.toMatchObject({ code: "AMOUNT_EXCEEDS_REFUNDABLE" });
+    ).rejects.toMatchObject({ code: "ALREADY_FULLY_REFUNDED" });
     expect(await refundedPaise(payment.id)).toBe(600_000);
     await review(caseId, staff, recommendationId, false);
     await expect(decide(caseId, staff, "OVERTURNED")).resolves.toMatchObject({

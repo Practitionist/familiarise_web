@@ -91,6 +91,13 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn().mockResolvedValue(0),
 }));
+const mockSettleSeat = jest.fn(async (..._a: unknown[]) => ({
+  endsSeat: false,
+  revocationGeneration: null,
+}));
+jest.mock("../../lib/payments/operations/refund-seat", () => ({
+  settleRefundSeatTx: (...a: unknown[]) => mockSettleSeat(...a),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
   // matcher semantics.
@@ -207,6 +214,11 @@ describe("reconcilePendingRefunds placeholder matching", () => {
     );
     // Never failed while a match existed.
     expect(result.failedCount).toBe(0);
+    // The bind settles the row, so it decides the seat in the same transaction.
+    expect(mockSettleSeat).toHaveBeenCalledWith(
+      expect.objectContaining({ refund: refundTable }),
+      "res_1",
+    );
   });
 
   test("FAILs a >24h placeholder only when the listing succeeded and no reservation match exists", async () => {
@@ -387,6 +399,11 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
       expect.objectContaining({ amount: 10_000, currency: "INR" }),
       expect.objectContaining({ entityRef: "payment:pay-9" }),
     );
+    // The poll settles the row, so it decides the seat in the same transaction.
+    expect(mockSettleSeat).toHaveBeenCalledWith(
+      expect.objectContaining({ refund: refundTable }),
+      "row_9",
+    );
   });
 
   test("a row another writer already settled is neither re-marked nor re-notified", async () => {
@@ -420,6 +437,7 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
     expect(result.reconciledCount).toBe(0);
     expect(result.skippedCount).toBe(1);
     expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
+    expect(mockSettleSeat).not.toHaveBeenCalled();
   });
 
   test("a still-settling real-id refund is never aged out locally", async () => {

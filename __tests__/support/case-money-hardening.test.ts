@@ -157,6 +157,7 @@ import {
   CaseActionRequestSchema,
   performCaseAction,
   priceCaseRefundReview,
+  quoteCaseRefund,
 } from "../../lib/support/case-actions";
 
 const db = jest.mocked(prisma, { shallow: false });
@@ -223,10 +224,12 @@ beforeEach(() => {
   mockStore.payment = {
     id: "pay-1",
     amount: 1_000_000,
+    originalAmount: 1_000_000,
     paymentIntent: "pi_1",
     paymentStatus: "SUCCEEDED",
     refunds: [],
     disputes: [],
+    creditUsages: [],
   };
   db.supportCase.findFirst.mockResolvedValue(supportCase as never);
   db.supportCase.findUniqueOrThrow.mockResolvedValue(supportCase as never);
@@ -321,7 +324,9 @@ describe("bounded staff refunds", () => {
     mockStore.payment = {
       ...mockStore.payment,
       amount: 0,
+      originalAmount: 600_000,
       paymentIntent: "free_1",
+      creditUsages: [{ amount: 600_000 }],
     };
     mockStore.recommendations = [
       recommendation({ amountPaise: 0, payment: { paymentIntent: "free_1" } }),
@@ -734,6 +739,208 @@ describe("refund execution correctness", () => {
     expect(mockStore.events).toContainEqual(
       expect.objectContaining({ kind: "RECOMMENDATION_PROPOSED" }),
     );
+  });
+
+  it("ends a 100% discount booking at ₹0: recommend, preview and approval accept it", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [];
+    await performCaseAction("case-1", staff, {
+      action: "RECOMMEND_REFUND" as const,
+      clientActionId: "rec-discount",
+      expectedUpdatedAt: caseUpdatedAt.toISOString(),
+      paymentId: "pay-1",
+      amountPaise: 0,
+      reason: "Session not delivered",
+      releaseSeat: true,
+    });
+    expect(db.supportFinancialRecommendation.create).toHaveBeenCalled();
+
+    mockStore.recommendations = [
+      recommendation({
+        amountPaise: 0,
+        releaseSeat: true,
+        payment: { paymentIntent: "free_discount" },
+      }),
+    ];
+    expect(
+      await quoteCaseRefund(db as never, "case-1", {
+        id: "rec-1",
+        paymentId: "pay-1",
+      }),
+    ).toMatchObject({
+      refundablePaise: 0,
+      rail: "CREDITS",
+      blocked: null,
+      note: expect.stringContaining("free with a discount code"),
+    });
+    await performCaseAction(
+      "case-1",
+      admin,
+      review(true, { expectedRefundablePaise: 0 }),
+    );
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.not.objectContaining({ amountPaise: expect.anything() }),
+    );
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ keepSeat: false }),
+    );
+  });
+
+  it("executes a credit recommendation approved without releaseSeat as a seat-ending refund", async () => {
+    // Approved before recommendations had to release the seat on the credits rail.
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [
+      recommendation({
+        amountPaise: 0,
+        releaseSeat: false,
+        payment: { paymentIntent: "free_discount" },
+      }),
+    ];
+
+    await performCaseAction(
+      "case-1",
+      admin,
+      review(true, { expectedRefundablePaise: 0 }),
+    );
+
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ keepSeat: false }),
+    );
+  });
+
+  it("refuses a credit-funded recommendation that would keep the seat, since the credits rail ends it", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [];
+
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-keep",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 0,
+        reason: "Session not delivered",
+        releaseSeat: false,
+      }),
+    ).rejects.toMatchObject({ code: "SEAT_RELEASE_REQUIRED", status: 400 });
+    expect(db.supportFinancialRecommendation.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to recommend an org-funded refund while a chargeback is live, as the preview blocks it", async () => {
+    // The refund door gates disputes on the gateway rail only; Support waits them out on every rail.
+    mockStore.payment = {
+      ...mockStore.payment,
+      paymentIntent: "org_wallet_1_a",
+      disputes: [{ amountPaise: 1_000_000, status: "OPEN" }],
+    };
+    mockStore.recommendations = [];
+
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-disputed",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 100_000,
+        reason: "Late start",
+        releaseSeat: false,
+      }),
+    ).rejects.toMatchObject({ code: "REFUND_BLOCKED_BY_DISPUTE" });
+    expect(db.supportFinancialRecommendation.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to recommend ending a 100% discount booking Ops already ended at ₹0", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+      refunds: [{ amountPaise: 0, status: "SUCCEEDED" }],
+    };
+    mockStore.recommendations = [];
+
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-ended",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 0,
+        reason: "Session not delivered",
+        releaseSeat: true,
+      }),
+    ).rejects.toMatchObject({ code: "ALREADY_FULLY_REFUNDED" });
+    expect(db.supportFinancialRecommendation.create).not.toHaveBeenCalled();
+  });
+
+  it("gives a price-free seat no remedy: recommend, preview, pricing and approval all refuse", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 0,
+      paymentIntent: "free_seat",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [];
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-free",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 0,
+        reason: "Wants the seat refunded",
+        releaseSeat: true,
+      }),
+    ).rejects.toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+
+    mockStore.recommendations = [
+      recommendation({
+        amountPaise: 0,
+        payment: { paymentIntent: "free_seat" },
+      }),
+    ];
+    expect(
+      (
+        await quoteCaseRefund(db as never, "case-1", {
+          id: "rec-1",
+          paymentId: "pay-1",
+        })
+      ).blocked,
+    ).toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+    await expect(
+      priceCaseRefundReview(db as never, "case-1", admin, {
+        recommendationId: "rec-1",
+        approve: true,
+      }),
+    ).rejects.toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+    await expect(
+      performCaseAction(
+        "case-1",
+        admin,
+        review(true, { expectedRefundablePaise: 0 }),
+      ),
+    ).rejects.toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 });
 

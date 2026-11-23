@@ -8,7 +8,6 @@ const mockReport = jest.fn();
 const mockIsDmContextEligible = jest.fn();
 const mockRevocationUpdateCallMembers = jest.fn();
 const mockRevocationGetCall = jest.fn();
-const mockRestampRefundedSeats = jest.fn();
 let mockStreamConfigured = true;
 
 type RetryRow = {
@@ -164,10 +163,6 @@ const mockRecordSystemEvent = jest.fn();
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEvent: (...args: unknown[]) => mockRecordSystemEvent(...args),
 }));
-jest.mock("../../lib/payments/operations/booking-refund", () => ({
-  restampRefundedSeats: (...args: unknown[]) =>
-    mockRestampRefundedSeats(...args),
-}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
   readJobCheckpoint: jest.fn(async () => null),
@@ -260,7 +255,6 @@ beforeEach(() => {
   seats.admitted = [];
   seats.holders = [];
   retryRows = [];
-  mockRestampRefundedSeats.mockResolvedValue("stamped");
   mockRevocationPrisma.refund.findUnique.mockResolvedValue({
     paymentId: "pay-1",
   });
@@ -1029,7 +1023,7 @@ describe("room progress across sweep attempts", () => {
 
   it("re-arming an open intent restarts its room scan", async () => {
     const { enqueueStreamRevocationRetries } =
-      await import("../../lib/stream/access-revocation");
+      await import("../../lib/stream/revocation-intents");
 
     await enqueueStreamRevocationRetries(
       [{ kind: "SEAT_ACCESS_REVOKE", userId: "attendee-1", planId: "appt-1" }],
@@ -1054,7 +1048,9 @@ describe("refund intent written inside the refund's transaction", () => {
         createMany: jest.fn(async () => ({ count: 1 })),
       },
     };
-    const { persistRefundRevocationInTx, revokeRefundedSeatAccess } =
+    const { persistRefundRevocationInTx } =
+      await import("../../lib/stream/revocation-intents");
+    const { revokeRefundedSeatAccess } =
       await import("../../lib/stream/access-revocation");
 
     const generation = await persistRefundRevocationInTx(
@@ -1127,7 +1123,7 @@ describe("refund intent keyed by the Refund row", () => {
     expect(settledCalls()).toHaveLength(0);
   });
 
-  it("re-stamps the refund's seats before the sweep discovers and revokes them", async () => {
+  it("discovers the refund's REFUNDED seats and revokes them", async () => {
     seats.refunded = [
       {
         userId: "client-1",
@@ -1158,13 +1154,6 @@ describe("refund intent keyed by the Refund row", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(mockRestampRefundedSeats).toHaveBeenCalledWith("refund-1");
-    const discovery =
-      mockRevocationPrisma.appointmentParticipant.findMany.mock
-        .invocationCallOrder[0];
-    expect(mockRestampRefundedSeats.mock.invocationCallOrder[0]).toBeLessThan(
-      discovery,
-    );
     expect(
       mockRevocationPrisma.appointmentParticipant.findMany,
     ).toHaveBeenCalledWith(
@@ -1179,8 +1168,7 @@ describe("refund intent keyed by the Refund row", () => {
     );
   });
 
-  it("settles a failed refund's intent with no seat to revoke", async () => {
-    mockRestampRefundedSeats.mockResolvedValue("skipped");
+  it("settles a refund intent with no REFUNDED seat to revoke", async () => {
     const { revokeRefundedSeatAccess } =
       await import("../../lib/stream/access-revocation");
 
@@ -1212,7 +1200,9 @@ describe("refund intent keyed by the Refund row", () => {
         createdAt: new Date(),
       }),
     ).resolves.toBe("Refund row not found");
-    expect(mockRestampRefundedSeats).not.toHaveBeenCalled();
+    expect(
+      mockRevocationPrisma.appointmentParticipant.findMany,
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -1561,7 +1551,6 @@ describe("Stream keys missing or refused", () => {
       }),
     ).resolves.toBe(STREAM_UNCONFIGURED);
     expect(mockRevocationPrisma.appointment.findUnique).not.toHaveBeenCalled();
-    expect(mockRestampRefundedSeats).not.toHaveBeenCalled();
     expect(mockRevocationUpdateCallMembers).not.toHaveBeenCalled();
 
     mockStreamConfigured = true;

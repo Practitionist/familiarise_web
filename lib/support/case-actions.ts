@@ -29,14 +29,18 @@ import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { proposalStatusWhere } from "@/lib/backoffice/ops-proposals";
 import { refundInFlightOr } from "@/lib/backoffice/refund-doors";
 import {
+  isDiscountFreeBooking,
+  REFUND_DOOR_SELECT,
+  refundDoorRefusal,
+  type RefundDoorPayment,
+  type RefundDoorRefusal,
+} from "@/lib/backoffice/refund-eligibility";
+import {
   CaseRefundReviewSchema,
   hasRefundablePreview,
   REFUNDABLE_PREVIEW_REQUIRED,
 } from "@/schemas/support-refund-review";
-import {
-  REFUNDABLE_BALANCE_SELECT,
-  refundableBalancePaise,
-} from "@/lib/payments/refundable-balance";
+import { refundableBalancePaise } from "@/lib/payments/refundable-balance";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import {
   fundingRailForIntent,
@@ -259,13 +263,7 @@ async function linkedPayment(tx: Tx, caseId: string, paymentId: string) {
       deletedAt: null,
       ...(!subject ? { appointmentId: supportCase.appointmentId ?? "" } : {}),
     },
-    select: {
-      id: true,
-      amount: true,
-      paymentIntent: true,
-      paymentStatus: true,
-      ...REFUNDABLE_BALANCE_SELECT,
-    },
+    select: { id: true, ...REFUND_DOOR_SELECT },
   });
   if (!payment)
     throw new CaseActionError(
@@ -540,6 +538,43 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
   };
 }
 
+/** The refund door's refusals in the preview's words, completed by "This refund can't be sent. …". */
+const DOOR_BLOCK_REASON: Record<RefundDoorRefusal["code"], string> = {
+  PAYMENT_NOT_SUCCEEDED: "Payment is not captured",
+  PRICE_FREE_PAYMENT:
+    "This seat was free, so nothing was paid and there is nothing to refund",
+  ALREADY_FULLY_REFUNDED: "Nothing is left to refund on this payment",
+  REFUND_BLOCKED_BY_DISPUTE: "A gateway chargeback is active",
+};
+
+const INACTIVE_DISPUTE_STATUSES: ReadonlySet<string> = new Set(
+  DISPUTE_INACTIVE_FOR_GATING,
+);
+
+/** What stops Support refunding a payment: the refund door's refusal, then a live chargeback, which Support waits out on every rail. */
+function supportRefundBlocker(
+  payment: RefundDoorPayment,
+): { code: string; message: string; reason: string } | null {
+  const refusal = refundDoorRefusal(payment);
+  if (refusal) return { ...refusal, reason: DOOR_BLOCK_REASON[refusal.code] };
+  if (
+    payment.disputes.some(
+      (dispute) => !INACTIVE_DISPUTE_STATUSES.has(dispute.status),
+    )
+  )
+    return {
+      code: "REFUND_BLOCKED_BY_DISPUTE",
+      message:
+        "This payment has an active chargeback. Wait for its outcome before recommending a refund.",
+      reason: DOOR_BLOCK_REASON.REFUND_BLOCKED_BY_DISPUTE,
+    };
+  return null;
+}
+
+/** The preview's line for a 100% discount booking, which an approval ends at ₹0. */
+const DISCOUNT_FREE_NOTE =
+  "This booking was free with a discount code; ending it returns no money but reverses the expert's earnings.";
+
 /** A removal case never refunds the order of a sale made after its removal. */
 const AFTER_REMOVAL_BLOCK = {
   code: "PAYMENT_AFTER_REMOVAL",
@@ -602,6 +637,7 @@ export async function quoteCaseRefund(
     .filter((other) => !isLiveRefund(other.refund))
     .reduce((sum, other) => sum + Number(other.amountPaise), 0);
   let blocked: { code: string; reason: string } | null = null;
+  const blocker = supportRefundBlocker(payment);
   if (
     !(await removalCaseRefundsPaymentTx(
       tx,
@@ -610,20 +646,7 @@ export async function quoteCaseRefund(
     ))
   )
     blocked = AFTER_REMOVAL_BLOCK;
-  else if (payment.paymentStatus !== "SUCCEEDED")
-    blocked = {
-      code: "PAYMENT_NOT_SUCCEEDED",
-      reason: "Payment is not captured",
-    };
-  else if (
-    payment.disputes.some(
-      (dispute) => !DISPUTE_INACTIVE_FOR_GATING.includes(dispute.status),
-    )
-  )
-    blocked = {
-      code: "REFUND_BLOCKED_BY_DISPUTE",
-      reason: "A gateway chargeback is active",
-    };
+  else if (blocker) blocked = { code: blocker.code, reason: blocker.reason };
   return {
     refundablePaise: Math.max(
       0,
@@ -632,6 +655,8 @@ export async function quoteCaseRefund(
     committedPaise,
     rail: fundingRailForIntent(payment.paymentIntent),
     blocked,
+    note:
+      !blocked && isDiscountFreeBooking(payment) ? DISCOUNT_FREE_NOTE : null,
   };
 }
 
@@ -1283,7 +1308,17 @@ async function recommendRefundTx(
 ) {
   const linked = await linkedPayment(tx, caseId, input.paymentId);
   await assertRemovalOrder(tx, caseId, input.paymentId);
+  // The quote's own blockers, so a recommendation is never opened that approval must refuse.
+  const blocker = supportRefundBlocker(linked);
+  if (blocker) throw new CaseActionError(blocker.code, blocker.message);
   const creditFunded = linked.paymentIntent.startsWith("free_");
+  // The credits rail returns a booking whole, so approving it always ends the seat.
+  if (creditFunded && !input.releaseSeat)
+    throw new CaseActionError(
+      "SEAT_RELEASE_REQUIRED",
+      "A booking paid with credits is returned whole, so approving this refund ends the booking. Tick release seat to continue.",
+      400,
+    );
   if (
     (creditFunded && input.amountPaise !== 0) ||
     (!creditFunded && input.amountPaise <= 0)
@@ -1874,17 +1909,23 @@ async function executeApprovedRefund(
     ? 0
     : await remedyValuePaise(prisma, rail, recommendation);
   const dedupeKey = `case-recommendation:${recommendation.id}`;
+  const amountPaise =
+    rail === "CREDITS" ? undefined : Number(recommendation.amountPaise);
   const refund = await refundBookingPayment({
     paymentId: recommendation.paymentId,
-    ...(rail === "CREDITS"
-      ? {}
-      : { amountPaise: Number(recommendation.amountPaise) }),
+    ...(amountPaise === undefined ? {} : { amountPaise }),
     reason: `Support remedy ${recommendation.supportCase.referenceNumber}`,
     initiatedByUserId: actor.userId,
     dedupeKey,
     supportRecommendationId: recommendation.id,
-    keepSeat: !recommendation.releaseSeat,
+    // The credits rail returns the whole booking, so it ends the seat whatever an older approval recorded.
+    keepSeat: rail !== "CREDITS" && !recommendation.releaseSeat,
     settlesOwedByHand: true,
-  }).catch((error: unknown) => refundInFlightOr(error, dedupeKey));
+  }).catch((error: unknown) =>
+    refundInFlightOr(error, dedupeKey, {
+      paymentId: recommendation.paymentId,
+      amountPaise,
+    }),
+  );
   return { refund, movedPaise };
 }
