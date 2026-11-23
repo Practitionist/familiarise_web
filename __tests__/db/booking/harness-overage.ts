@@ -5,20 +5,35 @@ import { HOUR_MS } from "./harness";
 
 const DAY_MS = 24 * HOUR_MS;
 
-/** An ACTIVE licence-funded organisation whose member's seat covers `cap` sessions and charges the member past it. */
-export async function seedLicensedMember(userId: string, cap: number) {
+/** How the sponsoring organisation pays, and whether it is verified yet. */
+export interface Sponsor {
+  fundingSource: "LICENSE" | "INVOICE";
+  status: "ACTIVE" | "PENDING_VERIFICATION";
+}
+const LICENCE: Sponsor = { fundingSource: "LICENSE", status: "ACTIVE" };
+
+/** A sponsoring organisation whose member's seat covers `cap` sessions and charges the member past it. */
+export async function seedSponsoredMember(
+  userId: string,
+  cap: number,
+  sponsor: Sponsor = LICENCE,
+) {
   const org = await prisma.organization.create({
     data: {
-      name: "Licensed org",
-      slug: `licensed-${randomUUID()}`,
-      status: "ACTIVE",
+      name: "Sponsor org",
+      slug: `sponsor-${randomUUID()}`,
+      status: sponsor.status,
+      // Invoice funding needs a verified domain.
+      domainClaims: {
+        create: { domain: `${randomUUID()}.example`, verifiedAt: new Date() },
+      },
     },
   });
   const account = await prisma.billingAccount.create({
     data: {
       ownerOrgId: org.id,
       billingEmail: `${randomUUID()}@db-tier.example.invalid`,
-      fundingSource: "LICENSE",
+      fundingSource: sponsor.fundingSource,
     },
   });
   await prisma.organization.update({
@@ -60,15 +75,38 @@ export async function seedLicensedMember(userId: string, cap: number) {
       periodEnd: new Date(Date.now() + 30 * DAY_MS),
     },
   });
-  return { orgId: org.id, assignmentId: assignment.id };
+  return {
+    orgId: org.id,
+    billingAccountId: account.id,
+    assignmentId: assignment.id,
+  };
 }
+
+/** The sponsor's ₹1,000 invoice, issued and due in a month. */
+export const seedIssuedInvoice = (
+  organizationId: string,
+  billingAccountId: string,
+) =>
+  prisma.organizationInvoice.create({
+    data: {
+      organizationId,
+      billingAccountId,
+      invoiceNumber: `DBT-${randomUUID().slice(0, 8)}`,
+      status: "ISSUED",
+      displayCurrency: "INR",
+      inrEquivalentPaise: BigInt(100_000),
+      subtotalPaise: BigInt(100_000),
+      totalPaise: BigInt(100_000),
+      dueDate: new Date(Date.now() + 30 * DAY_MS),
+    },
+  });
 
 /** A card-paid parent's unpaid ₹236 member overage (₹200 surcharge and its GST), as allocation records one. */
 export async function seedUnpaidMemberOverage(
   parent: { id: string; amount: number },
   userId: string,
 ) {
-  const { assignmentId } = await seedLicensedMember(userId, 0);
+  const { assignmentId } = await seedSponsoredMember(userId, 0);
   const utilization = await prisma.bookingUtilization.create({
     data: {
       programAssignmentId: assignmentId,
