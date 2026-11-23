@@ -307,6 +307,7 @@ const QUEUES: readonly { key: keyof PendingAges; label: string }[] = [
   { key: "webhookEvents", label: "Webhook events" },
   { key: "emailRetries", label: "Email retries" },
   { key: "notificationRetries", label: "Notification retries" },
+  { key: "parkedCaptures", label: "Captures parked for manual recovery" },
 ];
 
 async function queueSection(db: Db, now: Date): Promise<SectionBody> {

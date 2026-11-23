@@ -3,6 +3,7 @@
  */
 
 // The success page's calendar links follow the buyer's own paid seat, not the shared event's sessions.
+// Every order the pay page opens is named only once its capture booked it.
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: jest.fn(async () => ({
@@ -114,3 +115,97 @@ it("sends none while the buyer's money is coming back", async () => {
   expect(body.moneyState).toBe("REFUND_PENDING");
   expect(body.calendar).toBeUndefined();
 });
+
+const requestedAt = new Date(Date.now() - 24 * 3600_000);
+
+type Kind = "TRIAL" | "CONSULTATION" | "SUBSCRIPTION";
+
+/** The verify read's shape for each booking the pay page serves; a trial has no request row. */
+function payPageOrder(kind: Kind, paymentStatus: string, captured: boolean) {
+  const request = {
+    status: captured ? "APPROVED" : "APPROVED_PENDING_PAYMENT",
+    requestedAt,
+  };
+  return {
+    id: "pay-1",
+    userId: "buyer",
+    paymentIntent: "order_1",
+    paymentStatus,
+    paymentMethod: "netbanking",
+    paymentGateway: "RAZORPAY",
+    receiptUrl: null,
+    amount: 11_300,
+    taxAmount: 1_724,
+    currency: "INR",
+    createdAt: new Date(Date.now() - 600_000),
+    expiresAt: new Date(Date.now() + 23 * 3600_000),
+    appointment: {
+      id: "appt-1",
+      appointmentType: kind,
+      consultation:
+        kind === "CONSULTATION"
+          ? { ...request, consultationPlan: { title: "Career call" } }
+          : null,
+      subscription:
+        kind === "SUBSCRIPTION"
+          ? { ...request, subscriptionPlan: { title: "Six weeks" } }
+          : null,
+      webinar: null,
+      class: null,
+      occurrences: [
+        {
+          id: "occ-1",
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + 1800_000),
+          isTentative: !captured,
+          deletedAt: null,
+          completionStatus: "SCHEDULED",
+        },
+      ],
+    },
+  };
+}
+
+const verifyWithStatus = async () => {
+  const res = await GET(
+    new NextRequest(
+      "https://x.test/api/checkout/verify?payment_intent=order_1",
+    ),
+  );
+  return { status: res.status, body: await res.json() };
+};
+
+const KINDS: Kind[] = ["TRIAL", "CONSULTATION", "SUBSCRIPTION"];
+
+it.each(KINDS)(
+  "%s: keeps the poll waiting while the capture has not landed",
+  async (kind) => {
+    paymentFindUnique.mockResolvedValue(payPageOrder(kind, "PENDING", false));
+    expect(await verifyWithStatus()).toMatchObject({
+      status: 400,
+      body: { status: "PENDING" },
+    });
+  },
+);
+
+it("TRIAL: names no state while the paid time is still a hold", async () => {
+  paymentFindUnique.mockResolvedValue(
+    payPageOrder("TRIAL", "SUCCEEDED", false),
+  );
+  const { body } = await verifyWithStatus();
+  expect(body.status).toBe("SUCCEEDED");
+  expect(body.bookingState).toBeUndefined();
+});
+
+it.each(KINDS)(
+  "%s: answers CONFIRMED and PAID once the capture booked it",
+  async (kind) => {
+    paymentFindUnique.mockResolvedValue(payPageOrder(kind, "SUCCEEDED", true));
+    const { body } = await verifyWithStatus();
+    expect(body).toMatchObject({
+      appointmentType: kind,
+      bookingState: "CONFIRMED",
+      moneyState: "PAID",
+    });
+  },
+);

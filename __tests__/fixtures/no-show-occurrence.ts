@@ -9,10 +9,14 @@ export const CONSULTEE_USER = "user-consultee";
 type Presence = { userId: string; joinedAt: Date; leftAt: Date };
 
 type Meeting = {
+  id: string;
   endedAt: Date;
   endedReason: string;
   streamCallId: string;
-  attendances: { userId: string }[];
+  extendedSeconds: number;
+  attendanceSettledAt: Date | null;
+  /** What Stream's settled record of the call holds; the test's settle mock answers it. */
+  stays: Presence[];
 };
 
 export type NoShowOccurrence = {
@@ -24,7 +28,6 @@ export type NoShowOccurrence = {
   deletedAt: Date | null;
   isTentative: boolean;
   seatsSettledAt: Date | null;
-  presences: Presence[];
   meeting: Meeting;
 };
 
@@ -34,10 +37,19 @@ type OccurrenceOverrides = Partial<Omit<NoShowOccurrence, "meeting">> & {
 
 function baseMeeting(): Meeting {
   return {
+    id: "meeting-1",
     endedAt: new Date("2026-09-01T11:00:00Z"),
     endedReason: "call_ended",
     streamCallId: "slot-cons-1",
-    attendances: [{ userId: CONSULTEE_USER }],
+    extendedSeconds: 0,
+    attendanceSettledAt: null,
+    stays: [
+      {
+        userId: CONSULTEE_USER,
+        joinedAt: new Date("2026-09-01T10:00:00Z"),
+        leftAt: new Date("2026-09-01T11:00:00Z"),
+      },
+    ],
   };
 }
 
@@ -54,13 +66,6 @@ export function noShowOccurrence(
     deletedAt: null,
     isTentative: false,
     seatsSettledAt: null,
-    presences: [
-      {
-        userId: CONSULTEE_USER,
-        joinedAt: new Date("2026-09-01T10:00:00Z"),
-        leftAt: new Date("2026-09-01T11:00:00Z"),
-      },
-    ],
     ...rest,
     meeting: { ...baseMeeting(), ...meeting },
   };
@@ -80,16 +85,16 @@ export function rebookedOccurrences(): NoShowOccurrence[] {
       id: "occ-new",
       startsAt: new Date("2026-09-08T10:00:00Z"),
       endsAt: new Date("2026-09-08T11:00:00Z"),
-      presences: [
-        {
-          userId: CONSULTEE_USER,
-          joinedAt: new Date("2026-09-08T10:00:00Z"),
-          leftAt: new Date("2026-09-08T11:00:00Z"),
-        },
-      ],
       meeting: {
         endedAt: new Date("2026-09-08T11:00:00Z"),
         streamCallId: "slot-new",
+        stays: [
+          {
+            userId: CONSULTEE_USER,
+            joinedAt: new Date("2026-09-08T10:00:00Z"),
+            leftAt: new Date("2026-09-08T11:00:00Z"),
+          },
+        ],
       },
     }),
   ];

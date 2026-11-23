@@ -13,7 +13,12 @@ import { SupportSpendTab } from "./SupportSpendTab";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
 import { readSupportSpend } from "@/lib/backoffice/support-spend";
 import { can, type BackofficeCapability } from "@/lib/backoffice/capability";
-import { earningsExpertParam } from "@/lib/backoffice/money-list-schemas";
+import {
+  disputeStatusParam,
+  earningsExpertParam,
+  paymentStatusParam,
+  refundStatusParam,
+} from "@/lib/backoffice/money-list-schemas";
 import { opsLogFiltersFromSearchParams } from "@/schemas/ops-log";
 
 /**
@@ -33,11 +38,17 @@ export async function MoneyTabBody({
   searchParams: Record<string, string | string[] | undefined>;
 }>) {
   switch (tabKey) {
-    case "payments":
-      return <PaymentsPage />;
-    case "refunds":
+    // Each list opens on the status its link names; a new status remounts it.
+    case "payments": {
+      const status = paymentStatusParam.parse(searchParams.status);
+      return <PaymentsPage key={status ?? "all"} initialStatus={status} />;
+    }
+    case "refunds": {
+      const status = refundStatusParam.parse(searchParams.status);
       return (
         <RefundsPage
+          key={status ?? "all"}
+          initialStatus={status}
           apiEndpoint="/api/admin/refunds"
           title="Refunds"
           description={
@@ -51,6 +62,7 @@ export async function MoneyTabBody({
           }
         />
       );
+    }
     case "payouts":
       return <PayoutsBoard />;
     case "org-payouts":
@@ -63,9 +75,12 @@ export async function MoneyTabBody({
           )}
         />
       );
-    case "disputes":
+    case "disputes": {
+      const status = disputeStatusParam.parse(searchParams.status);
       return (
         <DisputesPage
+          key={status ?? "all"}
+          initialStatus={status}
           apiEndpoint="/api/admin/disputes"
           title="Disputes"
           description={
@@ -75,6 +90,7 @@ export async function MoneyTabBody({
           }
         />
       );
+    }
     case "reconcile":
       return <ReconcileTab />;
     case "approvals":

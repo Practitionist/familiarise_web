@@ -209,6 +209,42 @@ describe("checkout-success terminal states", () => {
     expect(push).not.toHaveBeenCalledWith("/checkout/checkout-failure");
   });
 
+  // A trial paid from the pay page lands here while its capture is still landing.
+  it("waits through a PENDING trial and ends on its confirmed state, never a pay prompt", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        verifyAnswer(400, {
+          error: "Payment not completed",
+          status: "PENDING",
+        }),
+      )
+      .mockResolvedValue(
+        verifyAnswer(200, {
+          paymentId: "pay-1",
+          appointmentType: "TRIAL",
+          status: "SUCCEEDED",
+          bookingState: "CONFIRMED",
+          moneyState: "PAID",
+        }),
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<CheckoutSuccessPage />);
+    });
+    await step(0);
+    expect(container.querySelector('[data-testid="skeleton"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/\bpay\b/i);
+
+    await step(1500);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Trial Session Confirmed!");
+    expect(container.textContent).toContain("Confirmed");
+    expect(container.textContent).not.toContain("Confirming your booking");
+    expect(container.textContent).not.toMatch(/awaiting payment|\bpay\b/i);
+  });
+
   // #1586 P1-J32 — a typed 500 is the route failing, not the payment.
   it("keeps the confirming card on a VERIFICATION_FAILED 500", async () => {
     global.fetch = jest.fn().mockResolvedValue(

@@ -53,6 +53,7 @@ export async function GET(
       amountPaise: quote.amountPaise,
       rail: quote.rail,
       blockedReason: quote.blocked?.reason ?? null,
+      note: quote.note,
       committedPaise: quote.committedPaise,
     },
   });

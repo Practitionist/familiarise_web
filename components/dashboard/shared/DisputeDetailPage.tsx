@@ -23,6 +23,7 @@ import {
   Lock,
 } from "lucide-react";
 import { RazorpayEvidenceForm } from "./RazorpayEvidenceForm";
+import { evidenceRefusal } from "@/lib/payments/dispute-status";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
 import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
@@ -129,11 +130,17 @@ export function DisputeDetailPage({
   const needsResponse =
     dispute.status === "NEEDS_RESPONSE" ||
     dispute.status === "WARNING_NEEDS_RESPONSE";
-  // Only Razorpay disputes awaiting response accept evidence submissions.
+  // The evidence door's own predicate: Razorpay, open, and before its deadline.
   const canSubmitEvidence =
     allowEvidenceSubmission &&
-    dispute.paymentGateway === "RAZORPAY" &&
-    dispute.status === "NEEDS_RESPONSE";
+    evidenceRefusal(
+      {
+        status: dispute.status,
+        paymentGateway: dispute.paymentGateway,
+        dueBy: dispute.dueBy ? new Date(dispute.dueBy) : null,
+      },
+      Date.now(),
+    ) === null;
 
   async function assign(assignedToUserId: string | null) {
     if (!dispute) return;
@@ -459,6 +466,8 @@ export function DisputeDetailPage({
                 <p className="text-zinc-500">Attendance Telemetry</p>
                 <p className="font-medium">
                   {dispute.evidencePack.attendance.presentCount} record(s)
+                  {dispute.evidencePack.attendance.pendingSessions > 0 &&
+                    ` · ${dispute.evidencePack.attendance.pendingSessions} pending`}
                 </p>
               </div>
               <div>

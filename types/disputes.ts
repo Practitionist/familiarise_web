@@ -71,6 +71,8 @@ export interface DisputeEvidencePack {
   attendance: {
     presentCount: number;
     recordsFound: boolean;
+    /** Sessions whose Stream attendance record is not stored yet. */
+    pendingSessions: number;
     summary: string;
   };
   supportHistory: {

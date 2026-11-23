@@ -37,6 +37,9 @@ jest.mock("next/cache", () => ({
 import { GET as listConsultationPlans } from "../../../app/api/plans/consultations/route";
 import { GET as listSubscriptionPlans } from "../../../app/api/plans/subscriptions/route";
 import { GET as listWebinarPlans } from "../../../app/api/plans/webinars/route";
+import { GET as listClassPlans } from "../../../app/api/plans/classes/route";
+import { GET as getWebinarPlan } from "../../../app/api/plans/webinars/[webinarPlanId]/route";
+import { GET as getClassPlan } from "../../../app/api/plans/classes/[classPlanId]/route";
 import {
   fetchConsultationPlanDetail,
   fetchSubscriptionPlanDetail,
@@ -65,6 +68,13 @@ const EligibilitySchema = z.object({
 
 /** The ids a plan list answers with; parsed, so a contract change fails loudly. */
 const ListIdsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
+
+/** A plan's team as a plan payload carries it. */
+const TeamSchema = z.object({
+  collaborators: z.array(
+    z.object({ consultantProfile: z.object({ id: z.string() }) }),
+  ),
+});
 
 async function seedExpert(status: ConsultantVerificationStatus) {
   const host = await seedHost();
@@ -497,5 +507,108 @@ describe("an unverified expert's plans", () => {
 
     expect(await waitingOn(false)).toBe("NOTIFIED");
     expect(await waitingOn(true)).toBe("WAITING");
+  }, 30_000);
+
+  it("leave the team of another expert's plan for everyone but that plan's people", async () => {
+    const owner = await seedExpert("VERIFIED");
+    const [shown, hidden] = await Promise.all([
+      seedExpert("VERIFIED"),
+      seedExpert("PENDING_VERIFICATION"),
+    ]);
+    const plans = await seedPlans(owner, null);
+    const classPlan = await prisma.classPlan.create({
+      data: {
+        title: `Class ${randomUUID().slice(0, 8)}`,
+        price: BigInt(90_000),
+        consultantProfileId: owner.consultantProfileId,
+      },
+    });
+    const kinds = [
+      {
+        planId: plans.webinar.id,
+        list: listWebinarPlans,
+        path: "/api/plans/webinars",
+        byId: (id: string) =>
+          getWebinarPlan(new NextRequest(`https://x.test/w/${id}`), {
+            params: Promise.resolve({ webinarPlanId: id }),
+          }),
+        collaboratorType: "WEBINAR" as const,
+        role: "GUEST_SPEAKER" as const,
+        key: "webinarPlanId" as const,
+      },
+      {
+        planId: classPlan.id,
+        list: listClassPlans,
+        path: "/api/plans/classes",
+        byId: (id: string) =>
+          getClassPlan(new NextRequest(`https://x.test/c/${id}`), {
+            params: Promise.resolve({ classPlanId: id }),
+          }),
+        collaboratorType: "CLASS" as const,
+        role: "GUEST_LECTURER" as const,
+        key: "classPlanId" as const,
+      },
+    ];
+    for (const kind of kinds) {
+      for (const member of [shown, hidden]) {
+        const row = await prisma.collaborator.create({
+          data: {
+            consultantProfileId: member.consultantProfileId,
+            collaboratorType: kind.collaboratorType,
+            [kind.key]: kind.planId,
+            role: kind.role,
+            tier: "CREW",
+            revenueShareBps: 1000,
+          },
+        });
+        await prisma.collaborator.update({
+          where: { id: row.id },
+          data: { status: "ACCEPTED" },
+        });
+      }
+    }
+    const team = (body: unknown) =>
+      TeamSchema.parse(body)
+        .collaborators.map((c) => c.consultantProfile.id)
+        .sort();
+    const both = [shown.consultantProfileId, hidden.consultantProfileId].sort();
+
+    for (const kind of kinds) {
+      viewAs(null);
+      const res = await kind.byId(kind.planId);
+      const body = (await res.json()) as { data: unknown };
+      expect(team(body.data)).toEqual([shown.consultantProfileId]);
+      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+      const text = JSON.stringify(body);
+      expect(text).not.toContain(hidden.userId);
+      expect(text).not.toContain(shown.userId);
+      const listed = await kind.list(
+        new NextRequest(
+          `https://x.test${kind.path}?consultantId=${owner.consultantProfileId}`,
+        ),
+      );
+      const [card] = z.array(TeamSchema).parse((await listed.json()).data);
+      expect(team(card)).toEqual([shown.consultantProfileId]);
+
+      for (const viewer of [owner, hidden]) {
+        viewAs(viewer);
+        const own = await kind.byId(kind.planId);
+        expect(team(((await own.json()) as { data: unknown }).data)).toEqual(
+          both,
+        );
+      }
+      const staff = await seedConsultee();
+      mockSession.current = { id: staff.userId, role: "STAFF" };
+      const asStaff = await kind.byId(kind.planId);
+      expect(team(((await asStaff.json()) as { data: unknown }).data)).toEqual(
+        both,
+      );
+    }
+
+    const curated = await getCuratedPrograms("all", "newest", 50);
+    for (const kind of kinds) {
+      const card = curated.find((p) => p.id === kind.planId);
+      expect(card?.collaborators).toHaveLength(1);
+    }
   }, 30_000);
 });

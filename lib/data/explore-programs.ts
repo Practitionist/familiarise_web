@@ -59,12 +59,12 @@ const planConsultantInclude = {
   },
 };
 
-// #1580 C-P2-2 — the ACCEPTED co-hosts a program card already knows how to
-// render (their company logos beside the host's); an erased profile stays off.
+// The ACCEPTED co-hosts a program card renders (their company logos beside the
+// host's); only a member whose expert page is public is listed.
 const planCollaboratorsInclude = {
   where: {
     status: "ACCEPTED" as const,
-    consultantProfile: { deletedAt: null },
+    consultantProfile: publicExpertProfileWhere,
   },
   select: {
     consultantProfile: {

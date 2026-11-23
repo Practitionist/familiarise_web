@@ -11,5 +11,8 @@ export function passwordTooLong(password: string): boolean {
   return passwordByteLength(password) > PASSWORD_MAX_BYTES;
 }
 
+/** The short hint shown under a new-password field; the byte limit has its own error. */
+export const PASSWORD_LENGTH_HINT = `At least ${PASSWORD_MIN_LENGTH} characters.`;
+
 export const PASSWORD_RULE_HINT =
   "At least 8 characters and at most 72 bytes (most characters are 1 byte; emoji and some scripts use up to 4).";

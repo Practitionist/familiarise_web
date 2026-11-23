@@ -764,6 +764,7 @@ A Better Stack alert must say what an absent value means. The rule: a money queu
 | Payouts in flight or approved         | `oldestPendingAgeS.payoutsStuck`               | Start an incident                         | An expert or organisation is owed money.                                                    |
 | Overdue invoice notices (dunning)     | `oldestPendingAgeS.dunningNotices`             | Start an incident                         | A missed notice delays collection and the suspension clock.                                 |
 | Disputes inside their response window | `oldestPendingAgeS.disputesDue`                | Start an incident                         | A missed evidence deadline loses the dispute by default.                                    |
+| Captures parked for manual recovery   | `oldestPendingAgeS.parkedCaptures`             | Start an incident                         | A buyer was charged and nothing confirmed or returned it.                                   |
 | Unprocessed gateway webhooks          | `oldestPendingAgeS.webhookEvents`              | Do not start an incident                  | Covered by the freshness alert; the reconcile sweeps are a second path for the money.       |
 | Email retries                         | `oldestPendingAgeS.emailRetries`               | Do not start an incident                  | Covered by the freshness alert.                                                             |
 | Notification (bell) retries           | `oldestPendingAgeS.notificationRetries`        | Do not start an incident                  | Covered by the freshness alert.                                                             |
@@ -775,20 +776,21 @@ The gauges themselves, their thresholds and the alert query for each are in the 
 
 **Status (2026-11-05): all eight alerts exist and are paused.** They were created through the Telemetry API (`POST https://telemetry.betterstack.com/api/v2/explorations`, then `POST /api/v2/explorations/<id>/alerts` with `paused: true`), each as an exploration holding this section's SQL on the `familiarise-prod` source (2816999), with the thresholds and missing-data rules in the tables above. Each runs every 300 s over a 900 s window, with a 60 s confirmation and email only.
 
-| Alert                          | Exploration | Alert id   |
-| ------------------------------ | ----------- | ---------- |
-| `Ticker telemetry stale`       | 895174      | 2988727965 |
-| `Backlog: refundsOwed`         | 895175      | 2988727966 |
-| `Backlog: payoutsStuck`        | 895176      | 2988727967 |
-| `Backlog: dunningNotices`      | 895177      | 2988727968 |
-| `Backlog: disputesDue`         | 895178      | 2988727969 |
-| `Backlog: webhookEvents`       | 895179      | 2988727970 |
-| `Backlog: emailRetries`        | 895180      | 2988727971 |
-| `Backlog: notificationRetries` | 895181      | 2988727972 |
+| Alert                          | Exploration | Alert id    |
+| ------------------------------ | ----------- | ----------- |
+| `Ticker telemetry stale`       | 895174      | 2988727965  |
+| `Backlog: refundsOwed`         | 895175      | 2988727966  |
+| `Backlog: payoutsStuck`        | 895176      | 2988727967  |
+| `Backlog: dunningNotices`      | 895177      | 2988727968  |
+| `Backlog: disputesDue`         | 895178      | 2988727969  |
+| `Backlog: webhookEvents`       | 895179      | 2988727970  |
+| `Backlog: emailRetries`        | 895180      | 2988727971  |
+| `Backlog: notificationRetries` | 895181      | 2988727972  |
+| `Backlog: parkedCaptures`      | not created | not created |
 
 Unpause an alert only after the go-live data reset, and only once every money gauge in the latest `cron-tick summary` event reads zero. To unpause it, send `PATCH https://telemetry.betterstack.com/api/v2/alerts/<alert id>` with `{"paused": false}`. Then list `GET /api/v2/alerts` and require `paused: false`. Whether the backlog gauges arrive in the summary events is not yet proven: before unpausing, open each exploration and confirm it plots values rather than nothing.
 
-Every tick's `cron-tick summary` event carries `oldestPendingAgeS`, an object of seven gauges. Each gauge is the number of seconds the oldest item in one queue has waited past its due point, and 0 means nothing is waiting. The tick's slot claim (`POST /api/health/jobs/tick`) reads all seven in one SQL statement (`readPendingAges` in `lib/cron/pending-ages.ts`) inside the transaction that already runs the idle probes, and only while the probes' 2-second budget lasts, so the claim's worst case stays 2.75 s and costs one extra round trip of about 62 ms from Netlify Singapore. A gauge fault never changes which targets run; the event then simply has no `oldestPendingAgeS`, which the missing-data policy above handles. There is no new ticker target and no new job.
+Every tick's `cron-tick summary` event carries `oldestPendingAgeS`, an object of eight gauges. Each gauge is the number of seconds the oldest item in one queue has waited past its due point, and 0 means nothing is waiting. The tick's slot claim (`POST /api/health/jobs/tick`) reads seven in one SQL statement and `parkedCaptures` in a second, through the Stuck work queue's own `where` (`readPendingAges` in `lib/cron/pending-ages.ts`), inside the transaction that already runs the idle probes, and only while the probes' 2-second budget lasts, so the claim's worst case stays 2.75 s (the transaction's own timeout) and costs two extra round trips of about 62 ms each from Netlify Singapore; each of the two statements starts only inside the budget, so a probe or a first gauge statement that spends it leaves the gauges out of that tick. A gauge fault never changes which targets run; the event then simply has no `oldestPendingAgeS`, which the missing-data policy above handles. There is no new ticker target and no new job.
 
 The thresholds live in one place in code, `PENDING_AGE_LIMITS_MS` in `lib/cron/pending-ages.ts`, which the Stuck work page also uses. Each is set from the cadence of the job that drains the queue in `lib/cron/schedule.ts`.
 
@@ -801,6 +803,7 @@ The thresholds live in one place in code, `PENDING_AGE_LIMITS_MS` in `lib/cron/p
 | `webhookEvents`               | `WebhookEvent.receivedAt` of an unprocessed event younger than the sweep's 7-day give-up                                    | 3,600 s (1 h)   | `sweep-stuck-webhook-events`, every 15 min, re-driving events stale for 6 minutes                                                                   | Four sweep slots, and the sweep's own alert age (`ALERT_AGE_HOURS = 1`).                                                                                                                                                              |
 | `emailRetries`                | `FailedEmail.nextRetryAt` (or `createdAt`) of a `PENDING` or `RETRY` row                                                    | 3,600 s (1 h)   | `retry-failed-emails`, every 15 min at :05                                                                                                          | Four relay slots past the row's own retry time.                                                                                                                                                                                       |
 | `notificationRetries`         | The later of `nextRetryAt` (or `createdAt`) and `notBefore`, for a `PENDING` or `RETRY` outbox row                          | 3,600 s (1 h)   | `drain-notification-outbox`, every 10 min at :05                                                                                                    | Six relay slots past the row's own retry time.                                                                                                                                                                                        |
+| `parkedCaptures`              | `capturedAt` (or `createdAt`) of the oldest `SUCCEEDED` payment parked as `REQUIRES_MANUAL_RECOVERY:` and not returned      | 0 s             | None: an operator confirms the booking or refunds                                                                                                   | No sweep clears a parked capture, so any one needs a person now.                                                                                                                                                                      |
 
 Create one chart and one Threshold alert per gauge on the `Jobs` dashboard. The query is the same for each; replace `refundsOwed` with the gauge name:
 
@@ -813,7 +816,7 @@ WHERE time BETWEEN {{start_time}} AND {{end_time}}
 GROUP BY time
 ```
 
-Name each alert `Backlog: <gauge>`, trigger it when `value` is above the threshold in the table, run it every 5 minutes on data from the last 15 minutes, and set **If data is missing** from the missing-data policy table above. Route every alert to email and the ops Slack channel now. At launch, once the responder seat is bought, add phone and SMS to the four money gauges (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) through an escalation policy; the other three stay on email and Slack.
+Name each alert `Backlog: <gauge>`, trigger it when `value` is above the threshold in the table, run it every 5 minutes on data from the last 15 minutes, and set **If data is missing** from the missing-data policy table above. Route every alert to email and the ops Slack channel now. At launch, once the responder seat is bought, add phone and SMS to the five money gauges (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`, `parkedCaptures`) through an escalation policy; the other three stay on email and Slack.
 
 On the shared development and production database the money gauges are not zero today: seeded and QA rows (an owed refund about 15 days old, payouts approved or in flight for days, two disputes past their deadline) would fire the money alerts as soon as they are created. The owner decided on 2026-11-01 to create the alerts muted and unmute them after the go-live data reset, rather than deleting rows on the shared database; the [money go-live checklist](../finance/70-operations/07-go-live-checklist.md) carries the unmute step. The **Stuck work** page in the console lists the same items, plus `FAILED` payouts, which need a person but are not part of `payoutsStuck` (that gauge covers only `APPROVED` and `PROCESSING` payouts). The page ages disputes from `dueBy` itself ("overdue by 42 d"), while the `disputesDue` gauge counts from 48 hours before it (44 days for the same row) so the alert fires early; the two numbers differ by design.
 

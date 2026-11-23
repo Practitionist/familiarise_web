@@ -101,17 +101,17 @@ jest.mock("../../lib/prisma", () => {
   return { __esModule: true, default: client };
 });
 
-// #1280 — the detector now corroborates against Stream before refunding,
-// because our attendance rows come from per-participant webhook deliveries that
-// can be lost independently. These cases model a no-show Stream AGREES with:
-// exactly one participant was in the call. Without this the suite exercises the
-// refusal path instead, and no refund fires at all.
-const mockEvidence = jest.fn(async (_callId?: string) => ({
-  unique: 1,
-  maxConcurrent: 1,
-}));
-jest.mock("../../lib/stream/call-presence", () => ({
-  getCallPresenceEvidence: (...a: unknown[]) => mockEvidence(...(a as [never])),
+// The detector moves money only on Stream's settled record; the fixture's
+// meeting carries what that record holds.
+const mockSettle = jest.fn(
+  async (target: {
+    occurrenceId: string;
+    meeting: { stays: { userId: string; joinedAt: Date; leftAt: Date }[] };
+  }) => ({ kind: "settled" as const, intervals: target.meeting.stays }),
+);
+jest.mock("../../lib/meetings/settle-attendance", () => ({
+  settleOccurrenceAttendance: (...a: unknown[]) =>
+    mockSettle(...(a as [never])),
 }));
 
 const mockSendCancelledEmail = jest.fn(async (..._args: unknown[]) => ({
@@ -138,6 +138,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
+import { SWEEP_START_DEADLINE_MS } from "../../lib/cron/run-deadline";
 import {
   CONSULTANT_USER,
   CONSULTEE_USER,
@@ -201,10 +202,6 @@ describe("consultant no-show refunds", () => {
     (prisma.consultation.updateMany as jest.Mock).mockResolvedValue({
       count: 1,
     });
-    mockEvidence.mockImplementation(async () => ({
-      unique: 1,
-      maxConcurrent: 1,
-    }));
     (prisma.payment.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
     recordSystemError.mockResolvedValue(undefined);
     refundBookingPayment.mockResolvedValue({
@@ -229,6 +226,20 @@ describe("consultant no-show refunds", () => {
 
     expect(result.refunded).toBe(30);
     expect(refundBookingPayment).toHaveBeenCalledTimes(30);
+  });
+
+  it("bounds each candidate's Stream reads by the run's start budget", async () => {
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+      noShowCandidate({ id: "pay-1", amount: 150000 }),
+    ]);
+    const startedAt = Date.now();
+
+    await detectConsultantNoShows({ startedAt });
+
+    expect(mockSettle).toHaveBeenCalledWith(expect.anything(), {
+      failures: expect.anything(),
+      deadlineAt: startedAt + SWEEP_START_DEADLINE_MS,
+    });
   });
 
   it("refunds through the front door, never the raw gateway path", async () => {
@@ -353,10 +364,6 @@ describe("consultant no-show refunds", () => {
     const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
     candidate.appointment.occurrences = rebookedOccurrences();
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([candidate]);
-    mockEvidence.mockImplementation(async (callId?: string) => ({
-      unique: callId === "slot-old" ? 2 : 1,
-      maxConcurrent: 1,
-    }));
     (
       prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
     ).mockResolvedValue([{ id: "occ-new", appointmentId: "apt-1" }]);
@@ -366,9 +373,9 @@ describe("consultant no-show refunds", () => {
     expect(result.detected).toBe(1);
     expect(result.refunded).toBe(1);
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
-    // The voided original's call had two participants; judging it would refuse.
-    expect(mockEvidence).toHaveBeenCalledTimes(1);
-    expect(mockEvidence).toHaveBeenCalledWith("slot-new");
+    // Only the live rebooked session is judged, so only its record is settled.
+    expect(mockSettle).toHaveBeenCalledTimes(1);
+    expect(mockSettle.mock.calls[0][0].occurrenceId).toBe("occ-new");
     const [claim] = (prisma.consultation.updateMany as jest.Mock).mock.calls[0];
     expect(claim.where.appointment.occurrences.some.id).toEqual({
       in: ["occ-new"],
@@ -471,12 +478,28 @@ describe("consultant no-show refunds", () => {
 
   it("leaves a session the consultant actually attended alone", async () => {
     const attended = noShowCandidate({ id: "pay-1", amount: 150000 });
-    attended.appointment.occurrences[0].presences.push({
+    attended.appointment.occurrences[0].meeting.stays.push({
       userId: CONSULTANT_USER,
       joinedAt: new Date("2026-09-01T10:00:00Z"),
       leftAt: new Date("2026-09-01T11:00:00Z"),
     });
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([attended]);
+
+    const result = await detectConsultantNoShows();
+
+    expect(result.detected).toBe(0);
+    expectNoShowSkipped(result);
+  });
+
+  it("is not a no-show when the consultant joined only after the booked end, during the rejoin grace", async () => {
+    // The learner waited the whole hour; the consultant arrived at 11:05, inside the rejoin grace.
+    const late = noShowCandidate({ id: "pay-1", amount: 150000 });
+    late.appointment.occurrences[0].meeting.stays.push({
+      userId: CONSULTANT_USER,
+      joinedAt: new Date("2026-09-01T11:05:00Z"),
+      leftAt: new Date("2026-09-01T11:20:00Z"),
+    });
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([late]);
 
     const result = await detectConsultantNoShows();
 

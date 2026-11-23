@@ -9,7 +9,16 @@ import {
 } from "@prisma/client";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import type { DisputeListItem } from "@/lib/backoffice/money-list-schemas";
+import {
+  disputeStatusFilterSchema,
+  OPEN_DISPUTES_FILTER,
+  type DisputeListItem,
+  type UrgentEvidence,
+} from "@/lib/backoffice/money-list-schemas";
+import {
+  evidenceRefusal,
+  type EvidenceRefusalCode,
+} from "@/lib/payments/dispute-status";
 import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import {
   OPEN_DISPUTE_STATUSES,
@@ -18,19 +27,7 @@ import {
 import { z } from "zod";
 
 const adminDisputesQuerySchema = z.object({
-  status: z
-    .enum([
-      "WARNING_NEEDS_RESPONSE",
-      "WARNING_UNDER_REVIEW",
-      "WARNING_CLOSED",
-      "NEEDS_RESPONSE",
-      "UNDER_REVIEW",
-      "CHARGE_REFUNDED",
-      "WON",
-      "LOST",
-      "CLOSED",
-    ] as const satisfies readonly DisputeStatus[])
-    .optional(),
+  status: disputeStatusFilterSchema.optional(),
   gateway: z
     .enum([
       "STRIPE",
@@ -78,6 +75,57 @@ const disputeListSelect = (withEmail: boolean) =>
     },
   }) satisfies Prisma.DisputeSelect;
 
+const EVIDENCE_BUCKET = {
+  NOT_RAZORPAY: "otherGateway",
+  EVIDENCE_DEADLINE_PASSED: "deadlinePassed",
+  DISPUTE_NOT_OPEN: "notOpen",
+} as const satisfies Record<EvidenceRefusalCode, keyof UrgentEvidence>;
+
+const URGENT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * The open disputes due within three days, overdue included, counted by status and gateway and split by the
+ * evidence door's own answer, so the banner never promises what it refuses.
+ */
+async function urgentByEvidence(): Promise<{
+  total: number;
+  evidence: UrgentEvidence;
+}> {
+  const now = new Date();
+  const groups = (dueBy: Prisma.DateTimeNullableFilter) =>
+    prisma.dispute.groupBy({
+      by: ["status", "paymentGateway"],
+      where: {
+        ...OPEN_DISPUTE_WHERE,
+        status: { in: ACTIONABLE_OPEN_STATUSES },
+        dueBy,
+      },
+      _count: { _all: true },
+    });
+  const [overdue, dueSoon] = await Promise.all([
+    groups({ lt: now }),
+    groups({ gte: now, lte: new Date(now.getTime() + URGENT_WINDOW_MS) }),
+  ]);
+  const evidence: UrgentEvidence = {
+    open: 0,
+    deadlinePassed: 0,
+    notOpen: 0,
+    otherGateway: 0,
+  };
+  let total = 0;
+  // A group's due date stands for its whole bucket: just past for the overdue ones, now for the rest.
+  const fold = (rows: typeof overdue, dueBy: Date) => {
+    for (const row of rows) {
+      const refusal = evidenceRefusal({ ...row, dueBy }, now.getTime());
+      evidence[refusal ? EVIDENCE_BUCKET[refusal] : "open"] += row._count._all;
+      total += row._count._all;
+    }
+  };
+  fold(overdue, new Date(now.getTime() - 1));
+  fold(dueSoon, now);
+  return { total, evidence };
+}
+
 async function loadDisputePage(params: {
   where: Prisma.DisputeWhereInput;
   status: DisputeStatus | null;
@@ -105,13 +153,12 @@ async function loadDisputePage(params: {
     });
   }
 
+  // AND, not spread: the caller's own status set must survive the split.
   const openWhere: Prisma.DisputeWhereInput = {
-    ...where,
-    status: { in: ACTIONABLE_OPEN_STATUSES },
+    AND: [where, { status: { in: ACTIONABLE_OPEN_STATUSES } }],
   };
   const closedWhere: Prisma.DisputeWhereInput = {
-    ...where,
-    status: { notIn: ACTIONABLE_OPEN_STATUSES },
+    AND: [where, { status: { notIn: ACTIONABLE_OPEN_STATUSES } }],
   };
   const openCount = await prisma.dispute.count({ where: openWhere });
   const openTake = Math.max(0, Math.min(limit, openCount - skip));
@@ -170,14 +217,17 @@ export async function GET(req: NextRequest) {
       );
     }
     const { page, limit } = parsedQuery.data;
-    const status = parsedQuery.data.status ?? null;
+    const filter = parsedQuery.data.status ?? null;
+    const status = filter === OPEN_DISPUTES_FILTER ? null : filter;
     const gateway = parsedQuery.data.gateway ?? null;
     const search = searchParams.get("search");
     const orgId = searchParams.get("orgId");
 
     const where: Prisma.DisputeWhereInput = {};
 
-    if (status) {
+    if (filter === OPEN_DISPUTES_FILTER) {
+      where.status = { in: OPEN_DISPUTE_STATUSES };
+    } else if (status) {
       where.status = status;
     }
 
@@ -201,18 +251,10 @@ export async function GET(req: NextRequest) {
     const withEmail =
       role.success && hasBackofficePermission(role.data, "disputes.manage");
 
-    const [total, urgentDisputes, underReviewCount, wonCount, disputes] =
+    const [total, urgent, underReviewCount, wonCount, disputes] =
       await Promise.all([
         prisma.dispute.count({ where }),
-        prisma.dispute.count({
-          where: {
-            ...OPEN_DISPUTE_WHERE,
-            status: { in: ACTIONABLE_OPEN_STATUSES },
-            dueBy: {
-              lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-            },
-          },
-        }),
+        urgentByEvidence(),
         prisma.dispute.count({ where: { status: "UNDER_REVIEW" } }),
         prisma.dispute.count({ where: { status: "WON" } }),
         loadDisputePage({ where, status, skip, limit, withEmail }),
@@ -241,7 +283,8 @@ export async function GET(req: NextRequest) {
         },
       })),
       total,
-      urgentDisputes,
+      urgentDisputes: urgent.total,
+      urgentEvidence: urgent.evidence,
       stats: { underReviewCount, wonCount },
       page,
       limit,

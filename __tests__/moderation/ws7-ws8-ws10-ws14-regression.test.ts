@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 import { NextRequest } from "next/server";
+import { disputeGroupBy } from "../fixtures/dispute-groupby";
 
 const mockModerationReport = {
   findFirst: jest.fn(),
@@ -30,6 +31,7 @@ const mockDispute = {
   findUnique: jest.fn(),
   findMany: jest.fn(),
   count: jest.fn(),
+  groupBy: jest.fn(),
 };
 const mockAppointment = {
   findMany: jest.fn(),
@@ -77,6 +79,8 @@ jest.mock("../../lib/prisma", () => ({
     get supportCase() {
       return mockSupportCase;
     },
+    // No ended room is waiting for Stream's record.
+    meeting: { findMany: async () => [] },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
 }));
@@ -143,6 +147,69 @@ import {
   DELETE as deleteUserReviewRoute,
 } from "../../app/api/user/reviews/[id]/route";
 import { GET as getReviewableSessionsRoute } from "../../app/api/user/reviews/reviewable-sessions/route";
+
+/** A dispute row as the route's select returns it, for one booked session. */
+const disputeRow = (occurrence: Record<string, unknown>) => ({
+  id: "disp-1",
+  disputeId: "rzp_disp_1",
+  amountPaise: 150000,
+  currency: "INR",
+  status: "NEEDS_RESPONSE",
+  reason: "Service not rendered",
+  paymentGateway: "RAZORPAY",
+  paymentId: "pay-1",
+  dueBy: new Date("2026-10-12T00:00:00Z"),
+  isChargeRefundable: true,
+  evidence: null,
+  evidenceSubmittedAt: null,
+  createdAt: new Date("2026-10-10T00:00:00Z"),
+  updatedAt: new Date("2026-10-10T00:00:00Z"),
+  payment: {
+    id: "pay-1",
+    paymentIntent: "pi_1",
+    paymentStatus: "SUCCEEDED",
+    amount: 150000,
+    currency: "INR",
+    paymentMethod: "CARD",
+    createdAt: new Date("2026-10-01T09:00:00Z"),
+    user: { id: "user-1", name: "Customer One", email: "c1@example.com" },
+    appointment: {
+      id: "appt-1",
+      appointmentType: "CONSULTATION",
+      createdAt: new Date("2026-10-01T09:00:00Z"),
+      occurrences: [occurrence],
+      supportThreads: [],
+      supportCases: [
+        {
+          id: "case-1",
+          status: "OPEN",
+          category: "billing",
+          referenceNumber: "FAM-2026-000001",
+          priority: "HIGH",
+          createdAt: new Date("2026-10-02T09:00:00Z"),
+        },
+      ],
+    },
+  },
+});
+
+/** GET the dispute detail route for that row. */
+async function getDispute(occurrence: Record<string, unknown>) {
+  mockDispute.findUnique.mockResolvedValue(disputeRow(occurrence));
+  const req = new NextRequest("http://localhost/api/admin/disputes/disp-1");
+  return getAdminDisputeRoute(req, {
+    params: Promise.resolve({ disputeId: "disp-1" }),
+  });
+}
+
+const PAST_SESSION = {
+  id: "occ-1",
+  startsAt: new Date("2026-10-01T10:00:00Z"),
+  endsAt: new Date("2026-10-01T11:00:00Z"),
+  completionStatus: "UNVERIFIED",
+  outcome: null,
+  presences: [],
+};
 
 describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
   beforeEach(() => {
@@ -359,63 +426,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
 
-    mockDispute.findUnique.mockResolvedValue({
-      id: "disp-1",
-      disputeId: "rzp_disp_1",
-      amountPaise: 150000,
-      currency: "INR",
-      status: "NEEDS_RESPONSE",
-      reason: "Service not rendered",
-      paymentGateway: "RAZORPAY",
-      paymentId: "pay-1",
-      dueBy: new Date("2026-10-12T00:00:00Z"),
-      isChargeRefundable: true,
-      evidence: null,
-      evidenceSubmittedAt: null,
-      createdAt: new Date("2026-10-10T00:00:00Z"),
-      updatedAt: new Date("2026-10-10T00:00:00Z"),
-      payment: {
-        id: "pay-1",
-        paymentIntent: "pi_1",
-        paymentStatus: "SUCCEEDED",
-        amount: 150000,
-        currency: "INR",
-        paymentMethod: "CARD",
-        createdAt: new Date("2026-10-01T09:00:00Z"),
-        user: { id: "user-1", name: "Customer One", email: "c1@example.com" },
-        appointment: {
-          id: "appt-1",
-          appointmentType: "CONSULTATION",
-          createdAt: new Date("2026-10-01T09:00:00Z"),
-          occurrences: [
-            {
-              id: "occ-1",
-              startsAt: new Date("2026-10-01T10:00:00Z"),
-              endsAt: new Date("2026-10-01T11:00:00Z"),
-              completionStatus: "UNVERIFIED",
-              outcome: null,
-              attendances: [],
-            },
-          ],
-          supportThreads: [],
-          supportCases: [
-            {
-              id: "case-1",
-              status: "OPEN",
-              category: "billing",
-              referenceNumber: "FAM-2026-000001",
-              priority: "HIGH",
-              createdAt: new Date("2026-10-02T09:00:00Z"),
-            },
-          ],
-        },
-      },
-    });
-
-    const req = new NextRequest("http://localhost/api/admin/disputes/disp-1");
-    const res = await getAdminDisputeRoute(req, {
-      params: Promise.resolve({ disputeId: "disp-1" }),
-    });
+    const res = await getDispute(PAST_SESSION);
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.evidencePack).toBeDefined();
@@ -426,9 +437,32 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     );
     expect(body.evidencePack.supportHistory.ticketCount).toBe(1);
     expect(body.evidencePack.supportHistory.openCount).toBe(1);
-    expect(body.payment.appointment.occurrences[0].attendances).toBeUndefined();
+    expect(body.payment.appointment.occurrences[0].presences).toBeUndefined();
     expect(body.payment.appointment.supportThreads).toBeUndefined();
     expect(body.payment.appointment.supportCases).toBeUndefined();
+  });
+
+  test("GET /api/admin/disputes/[disputeId] reports a session waiting on Stream's record as pending attendance, never as absence", async () => {
+    mockRequireBackofficeSurface.mockResolvedValue({
+      session: { user: { id: "admin-1", role: "ADMIN" } },
+    });
+
+    const res = await getDispute({
+      ...PAST_SESSION,
+      meeting: { attendanceSettledAt: null },
+    });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.evidencePack.attendance).toMatchObject({
+      presentCount: 0,
+      pendingSessions: 1,
+    });
+    expect(body.evidencePack.attendance.summary).toContain(
+      "still being read from Stream",
+    );
+    expect(body.evidencePack.attendance.summary).not.toContain(
+      "No meeting attendance telemetry records were recorded",
+    );
   });
 
   test("counts urgentDisputes strictly across ACTIONABLE_OPEN_STATUSES (SFR-05-20)", async () => {
@@ -441,58 +475,59 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     const fixtures = [
       {
         id: "disp-open-soon",
+        paymentGateway: "RAZORPAY",
         status: "NEEDS_RESPONSE",
         dueBy: new Date(nowMs + 2 * dayMs),
       },
       {
         id: "disp-warning-overdue",
+        paymentGateway: "RAZORPAY",
         status: "WARNING_NEEDS_RESPONSE",
         dueBy: new Date(nowMs - 2 * dayMs),
       },
       {
         id: "disp-review-overdue",
+        paymentGateway: "RAZORPAY",
         status: "UNDER_REVIEW",
         dueBy: new Date(nowMs - 2 * dayMs),
       },
     ];
 
-    mockDispute.count.mockImplementation(
-      async ({ where }: { where?: Record<string, unknown> }) => {
-        if (!where || Object.keys(where).length === 0) {
-          return fixtures.length;
+    // The urgent read and the stats counts apply the same where; one filter answers both.
+    const matching = (where: Record<string, unknown> = {}) =>
+      fixtures.filter((item) => {
+        const statusFilter = where.status;
+        if (typeof statusFilter === "string" && item.status !== statusFilter) {
+          return false;
         }
-        return fixtures.filter((item) => {
-          const statusFilter = where.status;
-          if (
-            typeof statusFilter === "string" &&
-            item.status !== statusFilter
-          ) {
-            return false;
-          }
-          if (
-            statusFilter &&
-            typeof statusFilter === "object" &&
-            "in" in statusFilter &&
-            Array.isArray(statusFilter.in) &&
-            !statusFilter.in.includes(item.status)
-          ) {
-            return false;
-          }
-          const dueByFilter = where.dueBy;
-          if (
-            dueByFilter &&
-            typeof dueByFilter === "object" &&
-            "lte" in dueByFilter &&
-            dueByFilter.lte instanceof Date &&
-            item.dueBy.getTime() > dueByFilter.lte.getTime()
-          ) {
-            return false;
-          }
-          return true;
-        }).length;
-      },
+        if (
+          statusFilter &&
+          typeof statusFilter === "object" &&
+          "in" in statusFilter &&
+          Array.isArray(statusFilter.in) &&
+          !statusFilter.in.includes(item.status)
+        ) {
+          return false;
+        }
+        const dueByFilter = where.dueBy;
+        if (
+          dueByFilter &&
+          typeof dueByFilter === "object" &&
+          "lte" in dueByFilter &&
+          dueByFilter.lte instanceof Date &&
+          item.dueBy.getTime() > dueByFilter.lte.getTime()
+        ) {
+          return false;
+        }
+        return true;
+      });
+    mockDispute.count.mockImplementation(
+      async ({ where }: { where?: Record<string, unknown> }) =>
+        matching(where).length,
     );
+    // The urgent banner counts its groups; the page read stays empty here.
     mockDispute.findMany.mockResolvedValue([]);
+    mockDispute.groupBy.mockImplementation(disputeGroupBy(fixtures));
 
     const req = new NextRequest("http://localhost/api/admin/disputes");
     const res = await getAdminDisputesListRoute(req);

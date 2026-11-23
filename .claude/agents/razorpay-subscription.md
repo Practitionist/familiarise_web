@@ -2,7 +2,7 @@
 name: razorpay-subscription
 description: Explains and works on recurring billing in this repo (in-house BillingSubscription + jobs/billing/ + per-cycle Razorpay Orders), or consults references/not-used-here/subscriptions.md if evaluating Razorpay's /v1/subscriptions API.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: blue
 ---
 
@@ -11,6 +11,7 @@ color: blue
 **This repository deliberately does NOT use Razorpay's `/v1/subscriptions` or `/v1/plans` APIs.**
 
 Instead, recurring platform and organization billing is managed **in-house**:
+
 1. **State Machine & Schedule**: `BillingSubscription` in `prisma/schema.prisma` and scheduled jobs in `jobs/billing/` track billing periods, renewals, tranches, and dunning.
 2. **Per-Cycle Charge via Razorpay Orders (`/v1/orders`)**: Each billing cycle or payment tranche mints a standard Razorpay Order (`POST /v1/orders`) and `Payment` row (`lib/payments/index.ts`), reusing the customer's saved `razorpayCustomerId` (`cust_...` via `ensureRazorpayCustomer`) and the single-writer confirmation pipeline (`routeCapturedPayment` / `handlePaymentSuccess`).
 3. **In-House GST Tax Invoices**: Every captured cycle generates a compliant GST tax invoice (`Invoice` / `OrganizationInvoice`) via `lib/invoices/` and `lib/compliance/gst.ts` (SAC `999293`, place-of-supply `CGST 9% + SGST 9%` vs `IGST 18%`). Razorpay's auto-generated subscription invoices are non-GST and cannot be used for Indian GST compliance.

@@ -45,25 +45,7 @@ type Earn = {
 };
 
 const tx: Record<string, Record<string, jest.Mock>> = {
-  appointmentParticipant: {
-    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    findFirst: jest.fn(),
-    // The REFUNDED stamp's pre-read for event learner seats; a 1:1 seat has none.
-    findMany: jest.fn().mockResolvedValue([]),
-  },
-  referralCreditUsage: { findMany: jest.fn() },
-  streamRevocationRetry: { updateMany: jest.fn(), createMany: jest.fn() },
-  appointment: { findUnique: jest.fn() },
-  appointmentOccurrence: { findMany: jest.fn() },
-  refund: {
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(async (...a: unknown[]) => {
-      tx.refund.update(...a);
-      return { count: 1 };
-    }),
-  },
+  ...creditRailTxBase(),
   payment: { findUniqueOrThrow: jest.fn() },
   consultantEarnings: {
     update: jest.fn(),
@@ -166,6 +148,11 @@ jest.mock("../../lib/payments/ledger/post", () => ({
 }));
 
 import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
+import {
+  CREDIT_FUNDED,
+  creditRailTxBase,
+  creditStillConsumed,
+} from "../fixtures/credit-rail-tx";
 
 const PAYMENT_ID = "pay-free-1";
 
@@ -284,7 +271,9 @@ beforeEach(() => {
       currency: "INR",
       paymentStatus: "SUCCEEDED",
       paymentGateway: "RAZORPAY",
+      ...CREDIT_FUNDED,
     });
+  creditStillConsumed(tx.referralCreditUsage);
 });
 
 describe("reversal posting — the APPLIED amount, never the request", () => {

@@ -16,6 +16,7 @@ import {
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { checkoutSuccessPath } from "@/lib/payments/pay-link-href";
 
 // #1396 — every checkout page and both gateway components caught an
 // unexpected error the same way; centralising it removed the repeated
@@ -195,6 +196,8 @@ const BUSY_ERROR_TYPES = new Set([
   "SERIALIZATION_CONFLICT",
   // A replay while this checkout's seat order is still being minted.
   "CHECKOUT_IN_PROGRESS",
+  // A 503: a database timeout before the booking committed.
+  "DATABASE_BUSY",
 ]);
 
 /** Never wait longer than this server-advised pause (function-ceiling friendly). */
@@ -209,7 +212,7 @@ interface BusyBody {
 const MAX_BUSY_RETRIES = 3;
 
 /**
- * Runs one checkout attempt; on a structured BUSY 409, tells the user what is
+ * Runs one checkout attempt; on a structured BUSY 409 or 503, tells the user what is
  * happening, waits the advised pause (capped, with jitter so a crowd does not
  * return in step) and retries, at most MAX_BUSY_RETRIES times. The same
  * clientIdempotencyKey rides every attempt, so a retry can never mint a
@@ -217,11 +220,11 @@ const MAX_BUSY_RETRIES = 3;
  */
 export async function fetchCheckoutWithBusyRetry(
   attempt: () => Promise<Response>,
-  notifyBusy: (waitSeconds: number) => void,
+  notifyBusy: (waitSeconds: number, errorType: string) => void,
 ): Promise<Response> {
   let response = await attempt();
   for (let retry = 0; retry < MAX_BUSY_RETRIES; retry++) {
-    if (response.status !== 409) return response;
+    if (response.status !== 409 && response.status !== 503) return response;
     let body: BusyBody;
     try {
       body = (await response.clone().json()) as BusyBody;
@@ -240,7 +243,7 @@ export async function fetchCheckoutWithBusyRetry(
       Math.max(1, Math.round(retryAfter)),
       MAX_BUSY_WAIT_SECONDS,
     );
-    notifyBusy(waitSeconds);
+    notifyBusy(waitSeconds, body.errorType);
     const jitterMs = Math.random() * 1000;
     await new Promise((resolve) =>
       setTimeout(resolve, waitSeconds * 1000 + jitterMs),
@@ -251,12 +254,19 @@ export async function fetchCheckoutWithBusyRetry(
 }
 
 /** Shared copy for the during-wait notice so all four surfaces sound alike. */
-export function busyRetryToast(waitSeconds: number): {
+export function busyRetryToast(
+  waitSeconds: number,
+  errorType?: string,
+): {
   title: string;
   description: string;
 } {
   return {
-    title: "Almost got it — someone is one step ahead",
+    // A database timeout is load, not another buyer.
+    title:
+      errorType === "DATABASE_BUSY"
+        ? "The booking system is briefly busy"
+        : "Almost got it — someone is one step ahead",
     description: `Your card has not been charged. Retrying automatically in ${waitSeconds}s…`,
   };
 }
@@ -448,9 +458,7 @@ export function createRazorpayCheckoutHandlers(
       // `Payment.paymentIntent` IS the Razorpay order id (the verify route
       // keys on `order_` for its sync branch), so that is the id to hand over.
       if (response.razorpay_order_id) {
-        const successUrl = `/checkout/checkout-success?payment_intent=${encodeURIComponent(
-          response.razorpay_order_id,
-        )}`;
+        const successUrl = checkoutSuccessPath(response.razorpay_order_id);
         if (navigate) navigate(successUrl);
         else window.location.href = successUrl;
         return;

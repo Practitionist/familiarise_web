@@ -5,6 +5,7 @@
  *  - a refund already made at the gateway is recorded, and only the rest is refunded;
  *  - an order gets one more read after its 72 hours, and none after that or past the grace;
  *  - a pre-mint placeholder is never read, and an authorisation alone is left to the gateway;
+ *  - an order that leaves the cohort between its id read and its load is not read;
  *  - the run takes the job's lock, reads at most `limit` orders, and new closes never starve
  *    a repeat read or pending work;
  *  - refund failures, network faults included, fail the run and are reported once;
@@ -79,7 +80,10 @@ jest.mock("../../../lib/observability/report", () => {
   };
 });
 
-import { reconcilePaymentStatus } from "../../../scripts/payments/reconcile-payment-status";
+import {
+  hasPaymentStatusReconcileWork,
+  reconcilePaymentStatus,
+} from "../../../scripts/payments/reconcile-payment-status";
 import { cleanupExpiredApprovalPendingPayments } from "../../../scripts/payments/cleanup-abandoned-payments";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
 import { CronLockHeldError } from "../../../lib/cron/with-cron-lock";
@@ -336,6 +340,42 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
     expect(readsOf(old.payment!.paymentIntent)).toBe(0);
     expect(readsOf(finalReadDone.payment!.paymentIntent)).toBe(0);
     expect(readsOf(premint)).toBe(0);
+    expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("loads closed orders through the probe's predicate, so an order that leaves the cohort after its id is read is not worked", async () => {
+    const request = await closedOrder(HOUR);
+    const paymentId = request.payment!.id;
+    const orderId = request.payment!.paymentIntent;
+    gatewayOrders.set(orderId, [captured(gatewayPaymentId())]);
+    expect(
+      await hasPaymentStatusReconcileWork(prisma, new Date(), () => false),
+    ).toBe(true);
+
+    const realQueryRaw = prisma.$queryRaw.bind(prisma);
+    let idRead = false;
+    const queryRaw = jest.spyOn(prisma, "$queryRaw").mockImplementation((async (
+      ...args: Parameters<typeof prisma.$queryRaw>
+    ) => {
+      const rows: unknown = await realQueryRaw(...args);
+      if (Array.isArray(rows) && rows.some((r) => r?.id === paymentId)) {
+        idRead = true;
+        // The capture's webhook lands between the id read and the load.
+        await prisma.payment.updateMany({
+          where: { id: paymentId, paymentStatus: "EXPIRED" },
+          data: { capturedAt: new Date() },
+        });
+      }
+      return rows;
+    }) as typeof prisma.$queryRaw);
+    try {
+      const run = await reconcilePaymentStatus();
+      expect(idRead).toBe(true);
+      expect(run.closedOrdersRead).toBe(0);
+    } finally {
+      queryRaw.mockRestore();
+    }
+    expect(readsOf(orderId)).toBe(0);
     expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
   });
 

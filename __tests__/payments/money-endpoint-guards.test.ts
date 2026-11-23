@@ -14,6 +14,31 @@
  */
 import { readFileSync } from "fs";
 import path from "path";
+import { NextRequest } from "next/server";
+
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+jest.mock("../../lib/auth-helpers", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").adminSurfaceModule(),
+);
+jest.mock("../../lib/backoffice/money-limit", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").moneyBudgetModule(),
+);
+const mockContestDispute = jest.fn();
+jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
+  ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
+  contestDispute: (...a: unknown[]) => mockContestDispute(...a),
+  uploadDisputeDocument: jest.fn(),
+}));
+const mockDispute = { current: null as Record<string, unknown> | null };
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    opsActionLog: { create: async () => ({ id: "ops_1" }) },
+    dispute: { findUnique: async () => mockDispute.current },
+  },
+}));
+
+import { POST } from "../../app/api/payments/disputes/route";
 
 import {
   evidenceDeadlinePassed,
@@ -101,16 +126,34 @@ describe("PM-37 — evidenceDeadlinePassed guard", () => {
   });
 });
 
-describe("PM-37 — disputes route enforces the guard before gateway push", () => {
-  it("the route calls evidenceDeadlinePassed before contestDispute", () => {
-    const src = read("app/api/payments/disputes/route.ts");
-    const guardIdx = src.indexOf("evidenceDeadlinePassed(");
-    const submitIdx = src.indexOf("contestDispute(");
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(submitIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeLessThan(submitIdx);
-    // Typed rejection, not a bare message.
-    expect(src).toContain("EVIDENCE_DEADLINE_PASSED");
-    expect(src).toMatch(/,\s*410,?\s*\)/);
+describe("PM-37 — the evidence door refuses a past-due dispute before any gateway push", () => {
+  it("answers 410 EVIDENCE_DEADLINE_PASSED and never calls contestDispute", async () => {
+    mockDispute.current = {
+      id: "dsp-row-1",
+      disputeId: "disp_rzp_1",
+      status: "NEEDS_RESPONSE",
+      paymentGateway: "RAZORPAY",
+      dueBy: new Date(Date.now() - 60_000),
+    };
+
+    const res = await POST(
+      new NextRequest("https://x.test/api/payments/disputes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          disputeId: "dsp-row-1",
+          action: "submit",
+          summary: "The session was delivered in full.",
+          reason: "contesting the chargeback with proof of delivery",
+          evidence: { proof_of_service: ["doc_abc"] },
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toMatchObject({
+      code: "EVIDENCE_DEADLINE_PASSED",
+    });
+    expect(mockContestDispute).not.toHaveBeenCalled();
   });
 });

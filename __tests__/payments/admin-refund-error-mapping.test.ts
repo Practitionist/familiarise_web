@@ -37,10 +37,14 @@ jest.mock("../../lib/payments/operations/refund", () => {
       this.name = "RefundGatewayError";
     }
   }
+  class RefundKeyReusedError extends RefundValidationError {
+    readonly httpStatus = 422;
+  }
   return {
     refundPayment: (...args: unknown[]) => refundPayment(...args),
     RefundValidationError,
     RefundGatewayError,
+    RefundKeyReusedError,
   };
 });
 jest.mock("../../lib/backoffice/refund-doors", () => ({
@@ -78,13 +82,28 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 const opsLog = jest.fn(async (_a: unknown) => ({ id: "ops_1" }));
+/** The payment the door's real eligibility reads: a refundable card payment unless a test says otherwise. */
+const doorPayment = jest.fn(async (_a: unknown): Promise<unknown> => ({
+  paymentStatus: "SUCCEEDED",
+  paymentIntent: "order_card_1",
+  amount: 250_000,
+  originalAmount: 250_000,
+  refunds: [],
+  disputes: [],
+  creditUsages: [],
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { opsActionLog: { create: (a: unknown) => opsLog(a) } },
+  default: {
+    opsActionLog: { create: (a: unknown) => opsLog(a) },
+    refund: { findUnique: async () => null },
+    payment: { findUnique: (a: unknown) => doorPayment(a) },
+  },
 }));
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/admin/refunds/route";
+import { refundDoorRefusal } from "../../lib/backoffice/refund-eligibility";
 
 const { RefundValidationError, RefundGatewayError } = jest.requireMock(
   "../../lib/payments/operations/refund",
@@ -176,6 +195,47 @@ describe("the door's own guards", () => {
     );
     expect(keys[0]).toBe(keys[1]);
     expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("refuses a price-free seat before the writer, with the issue door's code", async () => {
+    doorPayment.mockResolvedValueOnce({
+      paymentStatus: "SUCCEEDED",
+      paymentIntent: "free_seat_1",
+      amount: 0,
+      originalAmount: 0,
+      refunds: [],
+      disputes: [],
+      creditUsages: [],
+    });
+
+    const res = await POST(refundRequest(SINGLE), ROUTE);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRICE_FREE_PAYMENT");
+    expect(refundPayment).not.toHaveBeenCalled();
+  });
+
+  it("lets a 100% discount booking through as a ₹0 refund the writer ends", async () => {
+    refundPayment.mockResolvedValue({ refundId: "rfnd_1" });
+    doorPayment.mockResolvedValueOnce({
+      paymentStatus: "SUCCEEDED",
+      paymentIntent: "free_discount_1",
+      amount: 0,
+      originalAmount: 250_000,
+      refunds: [],
+      disputes: [],
+      creditUsages: [],
+    });
+
+    const res = await POST(refundRequest(SINGLE), ROUTE);
+
+    expect(res.status).toBe(200);
+    expect(refundPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_row_1",
+        amountPaise: undefined,
+      }),
+    );
   });
 
   it("rejects a reason shorter than five characters", async () => {
@@ -327,6 +387,43 @@ describe("a whole-event refund a held refund marker refuses", () => {
       code: "REFUND_NEEDS_SUPPORT",
       error:
         "Seat payment pay_seat_1 has a refund still owed from another action (occ:occ-1:pay:pay_seat_1); settle it from Refunds → Needs human, then run this again.",
+    });
+  });
+});
+
+describe("the credits rail's door rule", () => {
+  const credit = (over: Record<string, unknown>) => ({
+    paymentStatus: "SUCCEEDED" as const,
+    paymentIntent: "free_1",
+    amount: 0,
+    originalAmount: 50_000,
+    refunds: [] as { amountPaise: number; status: string }[],
+    disputes: [],
+    creditUsages: [] as { amount: number }[],
+    ...over,
+  });
+
+  it("opens a 100% discount once, and refuses only a spent credit that all came back", () => {
+    expect(refundDoorRefusal(credit({}))).toBeNull();
+    expect(
+      refundDoorRefusal(
+        credit({ refunds: [{ amountPaise: 0, status: "SUCCEEDED" }] }),
+      ),
+    ).toEqual({
+      code: "ALREADY_FULLY_REFUNDED",
+      message: "This booking was already ended, so nothing is left to refund.",
+    });
+    expect(
+      refundDoorRefusal(credit({ creditUsages: [{ amount: 50_000 }] })),
+    ).toBeNull();
+    expect(
+      refundDoorRefusal(credit({ creditUsages: [{ amount: 0 }] })),
+    ).toEqual({
+      code: "ALREADY_FULLY_REFUNDED",
+      message: "The credits behind this booking were already returned.",
+    });
+    expect(refundDoorRefusal(credit({ originalAmount: 0 }))).toMatchObject({
+      code: "PRICE_FREE_PAYMENT",
     });
   });
 });

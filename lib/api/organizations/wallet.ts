@@ -27,12 +27,16 @@
  *      checkout when that journal did not post.
  */
 
-import type { WalletReason } from "@prisma/client";
+import type { Prisma, WalletReason } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import {
+  TOPUP_REFUND_SHORTFALL_KEY_PREFIX,
+  walletEntryReason,
+} from "@/lib/labels/money-labels";
 
 /**
  * #1477 — an org that has run its wallet down is refusing a booking, not
@@ -610,7 +614,7 @@ export async function confirmTopUp(
 const TOPUP_SETTLED_RECEIVABLE_KEYS = [
   "overage-restore:",
   "overage-recarve:",
-  "topup-refund-shortfall:",
+  TOPUP_REFUND_SHORTFALL_KEY_PREFIX,
   "chargeback:",
   "topup:",
 ];
@@ -733,4 +737,63 @@ export function signedDeltaPaise(
     }
   }
   return total;
+}
+
+/** What every org-facing wallet reader selects per journal line; descriptions are internal and stay out. */
+export const walletLedgerLineSelect = {
+  id: true,
+  direction: true,
+  amountPaise: true,
+  createdAt: true,
+  transaction: {
+    select: { kind: true, idempotencyKey: true, paymentId: true },
+  },
+} as const satisfies Prisma.LedgerEntrySelect;
+
+/** A selected wallet line as the extended client returns it, with amountPaise mapped to number. */
+export type WalletLedgerLine = Omit<
+  Prisma.LedgerEntryGetPayload<{ select: typeof walletLedgerLineSelect }>,
+  "amountPaise"
+> & { amountPaise: number };
+
+type WalletLineReason = ReturnType<typeof walletEntryReason>;
+
+/** One wallet line as the org's Wallet tab shows it: a signed amount and why it moved. */
+export function walletLedgerRow(line: WalletLedgerLine): {
+  id: string;
+  deltaPaise: number;
+  reason: WalletLineReason;
+  paymentId: string | null;
+  createdAt: Date;
+} {
+  return {
+    id: line.id,
+    deltaPaise:
+      line.direction === "CREDIT" ? line.amountPaise : -line.amountPaise,
+    reason: walletEntryReason(line),
+    paymentId: line.transaction.paymentId,
+    createdAt: line.createdAt,
+  };
+}
+
+/** Wallet lines grouped by the same reason the Wallet tab shows, each with its count and signed total. */
+export function walletActivityByReason(
+  lines: readonly WalletLedgerLine[],
+): Array<{
+  reason: WalletLineReason;
+  count: number;
+  deltaPaise: number;
+}> {
+  const byReason = new Map<
+    WalletLineReason,
+    { count: number; deltaPaise: number }
+  >();
+  for (const line of lines) {
+    const { reason, deltaPaise } = walletLedgerRow(line);
+    const cur = byReason.get(reason) ?? { count: 0, deltaPaise: 0 };
+    cur.count += 1;
+    cur.deltaPaise += deltaPaise;
+    byReason.set(reason, cur);
+  }
+  return Array.from(byReason, ([reason, v]) => ({ reason, ...v }));
 }

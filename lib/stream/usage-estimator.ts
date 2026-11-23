@@ -27,11 +27,11 @@ export interface EstimateStreamUsageOptions {
 
 /**
  * Estimates Stream Video participant-minutes and USD cost over `[from, to]`
- * from recorded `MeetingPresence` intervals.
+ * from the stored `MeetingPresence` intervals, which hold Stream's settled
+ * record, so a session counts once its attendance has settled.
  *
- * When a participant's `leftAt` webhook is missing, the effective end falls back
- * to `meeting.endedAt`, then `occurrence.endsAt`, then `now`, capped at
- * `MAX_INTERVAL_MINUTES` so unclosed intervals cannot inflate cost estimates.
+ * A row with no `leftAt` falls back to `meeting.endedAt`, then
+ * `occurrence.endsAt`, then `now`, capped at `MAX_INTERVAL_MINUTES`.
  */
 export async function estimateStreamVideoUsage(
   options: EstimateStreamUsageOptions,

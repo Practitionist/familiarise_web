@@ -630,7 +630,8 @@ export function PlanCheckoutShell({
                 clientIdempotencyKey: attemptKey(checkoutData),
               }),
             }),
-          (waitSeconds) => toast(busyRetryToast(waitSeconds)),
+          (waitSeconds, errorType) =>
+            toast(busyRetryToast(waitSeconds, errorType)),
         );
         if (!response.ok) {
           handleApiError(await response.json());

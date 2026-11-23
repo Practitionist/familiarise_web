@@ -124,10 +124,20 @@ export const disputeListItemSchema = z.object({
 });
 export type DisputeListItem = z.infer<typeof disputeListItemSchema>;
 
+/** The urgent disputes by what the Razorpay evidence door answers for each. */
+export const urgentEvidenceSchema = z.object({
+  open: z.number().int().nonnegative(),
+  deadlinePassed: z.number().int().nonnegative(),
+  notOpen: z.number().int().nonnegative(),
+  otherGateway: z.number().int().nonnegative(),
+});
+export type UrgentEvidence = z.infer<typeof urgentEvidenceSchema>;
+
 export const disputeListPageSchema = z.object({
   disputes: z.array(disputeListItemSchema),
   ...pageMeta,
   urgentDisputes: z.number().int().nonnegative(),
+  urgentEvidence: urgentEvidenceSchema,
   stats: z.object({
     underReviewCount: z.number().int().nonnegative(),
     wonCount: z.number().int().nonnegative(),
@@ -185,6 +195,34 @@ export const orgPayoutListPageSchema = z.object({
   payouts: z.array(orgPayoutListItemSchema),
   pagination: offsetPagination,
 });
+
+/** A dispute list filter: one status, or `OPEN` for the open set the Home tile counts. */
+export const OPEN_DISPUTES_FILTER = "OPEN";
+export const disputeStatusFilterSchema = z.union([
+  z.literal(OPEN_DISPUTES_FILTER),
+  z.nativeEnum(DisputeStatus),
+]);
+export type DisputeStatusFilter = z.infer<typeof disputeStatusFilterSchema>;
+
+/** The status a money list link opens on (`?status=`); anything else is no filter. */
+export const paymentStatusParam = z
+  .nativeEnum(PaymentStatus)
+  .optional()
+  .catch(undefined);
+export const refundStatusParam = z
+  .nativeEnum(RefundStatus)
+  .optional()
+  .catch(undefined);
+export const disputeStatusParam = disputeStatusFilterSchema
+  .optional()
+  .catch(undefined);
+
+/** The list query each Home money tile opens on: exactly the set the tile counts. */
+export const HOME_TILE_LIST_QUERY = {
+  payments: `?status=${PaymentStatus.SUCCEEDED}`,
+  refunds: `?status=${RefundStatus.SUCCEEDED}`,
+  disputes: `?status=${OPEN_DISPUTES_FILTER}`,
+} as const;
 
 /** The expert an Earnings link opens on (`?consultantProfileId=`); anything else is no filter. */
 export const earningsExpertParam = z

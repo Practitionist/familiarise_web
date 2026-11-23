@@ -66,7 +66,7 @@ export const PAGE_META = {
   about: {
     title: "About Familiarise",
     description:
-      "Familiarise is an online learning platform for live classes, webinars, tutoring and one-on-one sessions with experts personally interviewed by our founder.",
+      "Familiarise is an online learning platform for live classes, webinars, tutoring and private sessions with vetted experts who do the work every day.",
   },
   contact: {
     title: "Contact Us",
@@ -102,7 +102,7 @@ export const PAGE_META = {
 // About Page Data
 export const ABOUT_DATA = {
   mission:
-    "To make quality education easier to reach by connecting learners with experts and educators, each personally interviewed by our founder, through live, interactive sessions. We aim to keep learning personal, affordable and effective.",
+    "To make quality education easier to reach by connecting learners with vetted experts and educators through live, interactive sessions. We aim to keep learning personal, affordable and effective.",
   vision:
     "A trusted place for live learning, where experts teach and learners grow through classes, webinars, tutoring and one-on-one sessions.",
   offerings: [
@@ -149,9 +149,9 @@ export const ABOUT_DATA = {
   ],
   benefits: [
     {
-      title: "Interviewed Experts",
+      title: "Vetted Experts",
       description:
-        "Every expert is personally interviewed by our founder before taking bookings, their employer is confirmed, and reviews come only from people who attended a completed session",
+        "Every expert is vetted before taking bookings, their employer is confirmed, and reviews come only from people who booked a session that took place",
     },
     {
       title: "Secure Payments",

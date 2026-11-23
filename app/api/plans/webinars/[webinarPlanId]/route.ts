@@ -21,6 +21,7 @@ export async function GET(
     const { webinarPlanId } = await params;
     return await planDetailResponse(
       await fetchWebinarPlanDetail(webinarPlanId),
+      { planType: "webinar", planId: webinarPlanId },
       "Webinar plan not found",
     );
   } catch (error) {

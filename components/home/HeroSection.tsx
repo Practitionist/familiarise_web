@@ -26,18 +26,28 @@ export function HeroSection({
 }) {
   return (
     <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
-      {/* Static radial gradient accents (avoids heavy blurred keyframe orbs on mobile GPUs) */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.45)_0%,_transparent_70%)]" />
-        <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(63,63,70,0.3)_0%,_transparent_70%)]" />
-        <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.35)_0%,_transparent_70%)]" />
-      </div>
-
-      {/* Grid pattern overlay */}
-      <div className="absolute inset-0 grid-pattern opacity-30" />
-
-      {/* Spotlight effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-[radial-gradient(ellipse_at_top,_rgba(39,39,42,0.25)_0%,_transparent_70%)] pointer-events-none" />
+      {/* Static dot grid that fades toward the edges, with a soft spotlight from the top. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage:
+            "radial-gradient(rgba(255,255,255,0.22) 1px, transparent 1.5px)",
+          backgroundSize: "24px 24px",
+          maskImage:
+            "radial-gradient(ellipse 75% 65% at 50% 40%, #000 35%, transparent 80%)",
+          WebkitMaskImage:
+            "radial-gradient(ellipse 75% 65% at 50% 40%, #000 35%, transparent 80%)",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 55% 50% at 50% 0%, rgba(255,255,255,0.16), transparent 70%)",
+        }}
+      />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
@@ -45,16 +55,14 @@ export function HeroSection({
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm border border-white/10 text-zinc-400 text-sm mb-8">
             <Sparkles className="w-4 h-4 text-zinc-300" />
             {/* Claim only what the onboarding process does; no audience counts. */}
-            <span>
-              Every expert is interviewed by our founder before listing
-            </span>
+            <span>Every expert is vetted before they take a booking</span>
           </div>
 
           {/* Main headline */}
           <h1 className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight">
             Learn live from{" "}
             <span className="relative inline-block">
-              <span className="silver-text">founder-interviewed experts</span>
+              <span className="silver-text">people who do the work</span>
             </span>
             <br />
             <span className="text-zinc-400">in your field</span>
@@ -62,8 +70,9 @@ export function HeroSection({
 
           {/* Subheadline */}
           <p className="text-lg md:text-xl text-zinc-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Join live classes and webinars, or book tutoring and 1-on-1 sessions
-            with founder-interviewed experts. Book, pay and learn in one place.
+            Join live classes and webinars, or book tutoring and private
+            sessions with working professionals. Book, pay and learn in one
+            place.
           </p>
 
           {/* CTAs */}

@@ -23,7 +23,7 @@ All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edg
 
 - **Compression & Signature Order**: Stream compresses webhook payloads larger than 256 bytes using gzip, but **`X-Signature` is always computed over the uncompressed UTF-8 JSON bytes**. Decompress first, verify `X-Signature` against the uncompressed UTF-8 payload + `X-Api-Key`, then deduplicate via `X-Webhook-Id`.
 - **V2 `event_hooks` Configuration**: Stream V2 `event_hooks` treat both `event_types: []` and `event_types: ["*"]` as wildcard unfiltered subscriptions; `ensure-webhook-subscription.ts` enforces exact set equality against `DESIRED_EVENT_TYPES` (`product: "video"`).
-- **Handled Events**: `call.recording_started`, `call.recording_stopped`, `call.recording_ready`, `call.recording_failed`, `call.session_participant_joined`, `call.session_participant_left`, `call.session_ended`, and `call.ended` (extracting `user.id` and `reason` for call termination auditing).
+- **Handled Events**: `call.recording_started`, `call.recording_stopped`, `call.recording_ready`, `call.recording_failed`, `call.session_participant_joined` (room state only), `call.stats_report_ready` (records that a session's attendance record is final), `call.session_ended`, and `call.ended` (extracting `user.id` and `reason` for call termination auditing).
 
 ### Resend (`POST /api/webhooks/resend`)
 

@@ -21,6 +21,7 @@ import {
 } from "@/lib/payments/core/razorpay";
 import { RefundError } from "@/lib/payments/core/types";
 import { reportSentryError } from "@/lib/observability/report";
+import { TOPUP_REFUND_SHORTFALL_KEY_PREFIX } from "@/lib/labels/money-labels";
 
 /**
  * Books one SUCCEEDED gateway refund of a top-up. The wallet floor wins: only
@@ -85,7 +86,7 @@ export async function bookTopUpRefund(
   const shortfallPaise = refundAmt - clawbackPaise;
   if (shortfallPaise > 0) {
     await postLedgerTxn(tx, {
-      idempotencyKey: `topup-refund-shortfall:${refundId}`,
+      idempotencyKey: `${TOPUP_REFUND_SHORTFALL_KEY_PREFIX}${refundId}`,
       kind: "TOPUP_REFUND",
       description:
         "Top-up refunded after the credited funds were spent — unrecovered portion receivable from the org",

@@ -55,7 +55,7 @@ SELECT r.id, count(t.id) FROM "Refund" r LEFT JOIN "LedgerTransaction" t ON t."i
 WHERE r.status = 'SUCCEEDED' AND r."paymentId" IN (:qaPayments) GROUP BY r.id HAVING count(t.id) <> 1;
 ```
 
-**Expect:** zero rows from each query. For each refunded payment, `ConsultantEarnings.refundedShareAmount / consultantSharePaise` ≈ refunded / amount (record the rounding); a settled refund has `cascadedAt` set.
+**Expect:** zero rows from each query. For each refunded payment, `ConsultantEarnings.refundedShareAmount / consultantSharePaise` ≈ refunded / amount: a partial refund (CO-72's 50 % cancel) reverses `floor(consultantSharePaise × refunded / amount)`; record the figures on an odd share, and whether a later refund that completes the payment ends the share at exactly zero; a settled refund has `cascadedAt` set.
 
 **Probe further:** any `SUCCEEDED` payment with no live booking and no refund is a P0 (charged, nothing delivered).
 

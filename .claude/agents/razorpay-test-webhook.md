@@ -2,13 +2,14 @@
 name: razorpay-test-webhook
 description: Tests this repo's Razorpay webhook handler (POST /api/webhooks/razorpay) locally or via Jest by sending realistic signed payloads for orders, payments, refunds, disputes, payouts, and fund account validations.
 tools: Glob, Grep, Read, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: red
 ---
 
 ## Before you start
 
 **Read these first under `.claude/skills/finance/`:**
+
 1. `references/razorpay/references/local-testing.md` — signed `curl` recipes and `/api/dev/mock-webhook` usage.
 2. `references/razorpay/references/webhooks.md` — all 24 validated event types in `schemas/webhooks/razorpay.ts` and `app/api/webhooks/razorpay-dispatch.ts`.
 3. `references/verification.md` — how webhook and money changes are verified in this repo.
@@ -35,6 +36,7 @@ If a local server is running on `http://localhost:3000` and `RAZORPAY_WEBHOOK_SE
 Test the events this repo actually handles (NOT `subscription.*`, which are unused here):
 
 ### 1. `payment.captured`
+
 ```json
 {
   "entity": "event",
@@ -64,6 +66,7 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 ```
 
 ### 2. `payment.failed`
+
 ```json
 {
   "entity": "event",
@@ -94,6 +97,7 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 ```
 
 ### 3. `refund.processed` (note `speed_requested: "optimum"`, `speed_processed: "instant"`)
+
 ```json
 {
   "entity": "event",
@@ -122,6 +126,7 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 ```
 
 ### 4. `payment.dispute.created` & `payment.dispute.action_required`
+
 ```json
 {
   "entity": "event",
@@ -177,6 +182,7 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 ```
 
 ### 5. `payout.initiated` & `payout.failed` (with `status_details`)
+
 ```json
 {
   "entity": "event",
@@ -250,6 +256,7 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 ```
 
 ### 6. `fund_account.validation.completed`
+
 ```json
 {
   "entity": "event",
@@ -284,6 +291,7 @@ Test the events this repo actually handles (NOT `subscription.*`, which are unus
 ```
 
 ### 7. Signature Rejection Test
+
 Send a request with `x-razorpay-signature: invalid_signature` and verify `POST /api/webhooks/razorpay` returns HTTP `400`.
 
 ---

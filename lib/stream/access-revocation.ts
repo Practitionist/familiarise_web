@@ -1,5 +1,13 @@
-import type { CollaboratorType, StreamRevocationKind } from "@prisma/client";
+import type { CollaboratorType } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
+import {
+  enqueueStreamRevocationRetries,
+  intentNotBefore,
+  refundTarget,
+  type AccessRevocationKind,
+  type AccessRevocationTarget,
+  type RefundRevocationIntent,
+} from "@/lib/stream/revocation-intents";
 import {
   getStreamChatClient,
   getStreamVideoClient,
@@ -22,65 +30,6 @@ import {
   removeUsersFromEventChannel,
 } from "@/lib/stream/event-channel-service";
 import { driveConductCallBlock } from "@/lib/stream/conduct-call-block";
-
-/** The revocations a mutating action owes Stream; erasure rows are written by the scrub. */
-export type AccessRevocationKind = Exclude<
-  StreamRevocationKind,
-  "ERASURE_REVOKE"
->;
-
-export interface AccessRevocationTarget {
-  kind: AccessRevocationKind;
-  userId: string;
-  planId: string;
-  planType?: CollaboratorType | null;
-  counterpartUserId?: string | null;
-}
-
-/**
- * Queues revocations for the moderation retry sweep. A target that already has
- * an open row is re-armed, so a capped row cannot swallow a new revocation; the
- * re-arm restarts the room scan, since a re-bought seat may hold earlier rooms again.
- * `nextRetryAt` holds the row back from the sweep while its writer drives it, and
- * the caller makes it fresh on every write, so it names this generation of the rows.
- * Inside a transaction pass its `tx`, so the rows commit or roll back with it.
- */
-export async function enqueueStreamRevocationRetries(
-  targets: AccessRevocationTarget[],
-  nextRetryAt: Date,
-  db: Tx = prisma,
-): Promise<void> {
-  if (targets.length === 0) return;
-  await db.streamRevocationRetry.updateMany({
-    where: {
-      erasureRequestId: null,
-      status: { not: "SUCCEEDED" },
-      OR: targets.map((t) => ({
-        kind: t.kind,
-        planId: t.planId,
-        userId: t.userId,
-      })),
-    },
-    data: {
-      status: "PENDING",
-      attempts: 0,
-      nextRetryAt,
-      lastError: null,
-      resumeAfter: null,
-    },
-  });
-  await db.streamRevocationRetry.createMany({
-    data: targets.map((t) => ({
-      kind: t.kind,
-      userId: t.userId,
-      planId: t.planId,
-      planType: t.planType ?? null,
-      counterpartUserId: t.counterpartUserId ?? null,
-      nextRetryAt,
-    })),
-    skipDuplicates: true,
-  });
-}
 
 /**
  * Enqueues and never throws: the action that owed the revocation has already
@@ -237,8 +186,6 @@ const CALL_PAGE_SIZE = 50;
 const SYNC_SEAT_REVOCATION_BUDGET_MS = 8_000;
 /** One sweep attempt's slice; an unfinished row stays owed and resumes on its next attempt. */
 const REDRIVE_SEAT_REVOCATION_BUDGET_MS = 20_000;
-/** A fresh intent waits this long for the sweep, so the sweep does not race its writer's drive. */
-const INTENT_SWEEP_GRACE_MS = 2 * 60_000;
 
 /** A 1:1 booking in one of these no longer admits anyone to its room or DM. */
 const TERMINAL_BOOKING_STATUSES = new Set([
@@ -869,8 +816,6 @@ async function rearmReadmittedSeats(
   if (owed.length > 0) await persistSeatRevocation(appointmentId, owed);
 }
 
-const intentNotBefore = () => new Date(Date.now() + INTENT_SWEEP_GRACE_MS);
-
 /** Writes intents through the caller's transaction at a fresh generation, which it returns. */
 async function enqueueInTx(
   tx: Tx,
@@ -1184,8 +1129,8 @@ async function seatsWithoutOpenSeatIntent(
 }
 
 /**
- * Re-stamps the refund's seats, turns the REFUNDED ones into per-seat intents
- * and drives them; the refund intent is done once they persist.
+ * Turns the refund's REFUNDED seats, stamped in the transaction that wrote this
+ * intent, into per-seat intents and drives them; the refund intent is done once they persist.
  */
 async function driveRefundRevocation(
   refundId: string,
@@ -1196,9 +1141,6 @@ async function driveRefundRevocation(
     select: { paymentId: true },
   });
   if (!refund) return { error: "Refund row not found" };
-  const { restampRefundedSeats } =
-    await import("@/lib/payments/operations/booking-refund");
-  await restampRefundedSeats(refundId);
   const refunded = await prisma.appointmentParticipant.findMany({
     where: { paymentId: refund.paymentId, status: "REFUNDED" },
     select: { userId: true, appointmentId: true },
@@ -1230,18 +1172,6 @@ async function driveRefundRevocation(
   return { error: generation ? null : "Seat revocations not persisted" };
 }
 
-/** A refund that ended a seat: its `Refund` row and the payer. */
-export interface RefundRevocationIntent {
-  refundId: string;
-  payerUserId: string;
-}
-
-const refundTarget = (intent: RefundRevocationIntent) => ({
-  kind: "REFUND_ACCESS_REVOKE" as const,
-  userId: intent.payerUserId,
-  planId: intent.refundId,
-});
-
 /**
  * Persists the access revocation a seat-ending refund owes, reading nothing
  * first, so a caller with a fallible step left after its commit owns it.
@@ -1253,17 +1183,6 @@ export async function persistRefundRevocation(
   return enqueueOrReport([refundTarget(intent)], "refund.persistRevocation", {
     nextRetryAt: intentNotBefore(),
   });
-}
-
-/**
- * Writes the refund's revocation intent through the refund's own transaction,
- * so both commit together; a failure rolls the refund back. Returns the row's generation.
- */
-export async function persistRefundRevocationInTx(
-  tx: Tx,
-  intent: RefundRevocationIntent,
-): Promise<Date> {
-  return enqueueInTx(tx, [refundTarget(intent)]);
 }
 
 /**

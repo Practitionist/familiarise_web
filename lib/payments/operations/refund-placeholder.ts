@@ -1,5 +1,6 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, RefundStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import { settleRefundSeatTx, type SeatDecision } from "./refund-seat";
 
 function jsonObject(value: Prisma.JsonValue | null): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -8,8 +9,8 @@ function jsonObject(value: Prisma.JsonValue | null): Record<string, unknown> {
 }
 
 /**
- * Retires a `pending_` placeholder whose gateway refund id a webhook row already holds.
- * A support recommendation bound to the placeholder is re-pointed first (its FK is Restrict).
+ * Retires a `pending_` placeholder whose gateway refund id a webhook row already holds, re-pointing a bound support
+ * recommendation first (its FK is Restrict). A winner already SUCCEEDED decides its seat here, from the inherited intent.
  */
 export async function retireSupersededPlaceholderTx(
   tx: Tx,
@@ -19,10 +20,10 @@ export async function retireSupersededPlaceholderTx(
     metadata: Prisma.JsonValue | null;
   },
   winnerId: string,
-): Promise<void> {
+): Promise<{ status: RefundStatus; seat: SeatDecision } | null> {
   const winner = await tx.refund.findUniqueOrThrow({
     where: { id: winnerId },
-    select: { metadata: true },
+    select: { metadata: true, status: true },
   });
   await tx.supportFinancialRecommendation.updateMany({
     where: { refundId: placeholder.id },
@@ -37,7 +38,7 @@ export async function retireSupersededPlaceholderTx(
       where: { id: placeholder.id },
       select: { id: true },
     });
-    if (!still) return;
+    if (!still) return null;
     throw new Error(
       `Refund placeholder ${placeholder.id} is no longer a pending, uncascaded reservation; refusing to retire it`,
     );
@@ -52,4 +53,9 @@ export async function retireSupersededPlaceholderTx(
       } as Prisma.InputJsonValue,
     },
   });
+  // Runs in the caller's Serializable transaction; a PENDING winner is decided by its own settle.
+  return {
+    status: winner.status,
+    seat: await settleRefundSeatTx(tx, winnerId),
+  };
 }

@@ -61,6 +61,7 @@ let preview = {
   amountPaise: 300_000,
   rail: "GATEWAY",
   blockedReason: null as string | null,
+  note: null as string | null,
   committedPaise: 0,
 };
 const originalFetch = global.fetch;
@@ -75,6 +76,7 @@ beforeEach(() => {
     amountPaise: 300_000,
     rail: "GATEWAY",
     blockedReason: null,
+    note: null,
     committedPaise: 0,
   };
   Object.defineProperty(global.crypto, "randomUUID", {
@@ -185,6 +187,30 @@ it("shows a chargeback block from the preview and refuses to confirm", async () 
   expect(
     screen.getByRole("button", { name: "Confirm refund review" }),
   ).toBeDisabled();
+  client.clear();
+});
+
+it("explains a 100% discount booking's ₹0 ending and lets it be confirmed", async () => {
+  preview = {
+    ...preview,
+    refundablePaise: 0,
+    amountPaise: 0,
+    rail: "CREDITS",
+    note: "This booking was free with a discount code; ending it returns no money but reverses the expert's earnings.",
+  };
+  const client = renderPanel(base);
+  fireEvent.click(screen.getByRole("button", { name: "Review refund" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Review refund",
+  });
+  expect(dialog).toHaveTextContent(/free with a discount code/);
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Refund review reason"), {
+    target: { value: "Session not delivered" },
+  });
+  expect(
+    screen.getByRole("button", { name: "Confirm refund review" }),
+  ).toBeEnabled();
   client.clear();
 });
 

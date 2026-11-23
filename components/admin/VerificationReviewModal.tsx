@@ -143,6 +143,8 @@ export function VerificationReviewModal({
   // The decision doors stay off until their reasons would pass the server's checks.
   const auditReasonReady = opsReasonSchema.safeParse(auditReason).success;
   const applicantReasonReady = rejectionReason.trim().length > 0;
+  // The review door refuses to approve a request with no documents (NO_DOCUMENTS); Approve mirrors it.
+  const hasDocuments = (verification?.documents.length ?? 0) > 0;
 
   const handleVerification = async (
     status: "APPROVED" | "REJECTED" | "NEEDS_INFO",
@@ -465,6 +467,12 @@ export function VerificationReviewModal({
               <FileText className="h-4 w-4" />
               Verification Documents ({verification.documents.length})
             </Label>
+            {!hasDocuments && (
+              <p className="mt-2 text-sm text-muted-foreground">
+                No documents are attached, so this request cannot be approved.
+                Use Request Changes to ask for them.
+              </p>
+            )}
             <div className="space-y-3 mt-2">
               {verification.documents.map((doc) => (
                 <Card key={doc.id}>
@@ -661,7 +669,7 @@ export function VerificationReviewModal({
           <Button
             className="bg-green-600 hover:bg-green-700"
             onClick={() => handleVerification("APPROVED")}
-            disabled={submitting || !auditReasonReady}
+            disabled={submitting || !auditReasonReady || !hasDocuments}
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />

@@ -2,7 +2,7 @@
 name: razorpay-invoice
 description: Works on this repo's in-house GST invoice and credit note pipeline (lib/payments/billing/, lib/compliance/gst.ts, SAC 999293, CGST/SGST vs IGST place-of-supply split). Use when modifying invoice generation, GST compliance, or credit notes for Razorpay payments/refunds/disputes.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: yellow
 ---
 

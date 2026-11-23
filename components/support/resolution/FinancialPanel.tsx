@@ -27,6 +27,7 @@ import {
   type CaseResolution,
   type RunCaseAction,
 } from "./resolution-data";
+import type { FundingRail } from "@/lib/payments/funding-rail";
 
 type Recommendation = CaseResolution["recommendations"][number];
 type PlanRefund = NonNullable<CaseResolution["planRefund"]>;
@@ -62,6 +63,8 @@ const Preview = z.object({
     amountPaise: z.number(),
     rail: z.string(),
     blockedReason: z.string().nullable(),
+    /** Plain copy for a remedy that moves no money, e.g. a 100% discount booking. */
+    note: z.string().nullable(),
     committedPaise: z.number(),
   }),
 });
@@ -231,7 +234,8 @@ function ReviewDialog({
           <AlertDialogDescription>
             {preview &&
               (preview.rail === "CREDITS"
-                ? "Restore the booking's credits in full. No cash refund is sent."
+                ? (preview.note ??
+                  "Restore the booking's credits in full. No cash refund is sent.")
                 : `${inr(preview.amountPaise)} through ${preview.rail}. Current refundable balance: ${inr(preview.refundablePaise)}.`)}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -301,12 +305,15 @@ function ReviewDialog({
 
 function RecommendForm({
   paymentId,
+  creditFunded,
   plan,
   limitPaise,
   busy,
   run,
 }: Readonly<{
   paymentId: string;
+  /** The credits rail returns the whole booking, so the seat is always released. */
+  creditFunded: boolean;
   /** Set for a 1:1 plan payment: the refund may be priced in sessions. */
   plan: PlanRefund | null;
   limitPaise: number | null;
@@ -317,7 +324,8 @@ function RecommendForm({
   const [amount, setAmount] = useState("");
   const [sessionsText, setSessionsText] = useState("");
   const [reason, setReason] = useState("");
-  const [releaseSeat, setReleaseSeat] = useState(false);
+  const [releaseChosen, setReleaseChosen] = useState(false);
+  const releaseSeat = creditFunded || releaseChosen;
   const sessions = plan ? parseSessions(sessionsText, plan) : null;
   const sessionAmount =
     plan && sessions !== null
@@ -347,7 +355,7 @@ function RecommendForm({
             setAmount("");
             setSessionsText("");
             setReason("");
-            setReleaseSeat(false);
+            setReleaseChosen(false);
           },
         );
       }}
@@ -399,13 +407,19 @@ function RecommendForm({
           type="checkbox"
           className="mt-0.5"
           checked={releaseSeat}
+          disabled={creditFunded}
           aria-describedby={`${seatId}-hint`}
-          onChange={(event) => setReleaseSeat(event.target.checked)}
+          onChange={(event) => setReleaseChosen(event.target.checked)}
         />
         <div>
           <label htmlFor={seatId} className="font-medium">
             Also release the customer&apos;s seat
           </label>
+          {creditFunded && (
+            <p className="text-xs font-medium">
+              Credits always return the whole booking, so the seat is released.
+            </p>
+          )}
           <p id={`${seatId}-hint`} className="text-xs text-muted-foreground">
             Leave unchecked to refund money only: the customer keeps their seat.
             When checked, the seat is marked refunded once the refund is sent:
@@ -437,6 +451,7 @@ function RecommendForm({
 export function FinancialPanel({
   caseId,
   paymentId,
+  paymentRail,
   basePath,
   data,
   busy,
@@ -444,6 +459,7 @@ export function FinancialPanel({
 }: Readonly<{
   caseId: string;
   paymentId?: string;
+  paymentRail?: FundingRail;
   basePath: string;
   data: CaseResolution;
   busy: boolean;
@@ -572,6 +588,7 @@ export function FinancialPanel({
         {paymentId && (
           <RecommendForm
             paymentId={paymentId}
+            creditFunded={paymentRail === "CREDITS"}
             plan={
               data.planRefund?.paymentId === paymentId ? data.planRefund : null
             }

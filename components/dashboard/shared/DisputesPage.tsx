@@ -7,8 +7,11 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import {
   disputeListPageSchema,
+  OPEN_DISPUTES_FILTER,
   readListBody,
   type DisputeListItem,
+  type DisputeStatusFilter,
+  type UrgentEvidence,
 } from "@/lib/backoffice/money-list-schemas";
 import { disputeStatus } from "@/lib/labels/backoffice-labels";
 import { gatewayLabel } from "@/lib/labels/money-labels";
@@ -188,6 +191,41 @@ const disputeColumns = (
   },
 ];
 
+/**
+ * What to do about the urgent disputes, from the evidence door's own answer
+ * for each: only the ones it would take are told to submit evidence.
+ */
+function urgentEvidenceLines(
+  counts: UrgentEvidence | undefined,
+  canSubmit: boolean,
+): string[] {
+  if (!counts) return [];
+  const lines: string[] = [];
+  if (counts.open > 0) {
+    lines.push(
+      canSubmit
+        ? `Submit evidence on ${counts.open} before the deadline.`
+        : `Please escalate ${counts.open} to an admin for evidence submission.`,
+    );
+  }
+  if (counts.deadlinePassed > 0) {
+    lines.push(
+      `${counts.deadlinePassed} past the evidence deadline: no evidence can be sent, so watch for the outcome.`,
+    );
+  }
+  if (counts.notOpen > 0) {
+    lines.push(
+      `${counts.notOpen} early warning: no evidence is taken until it becomes a dispute, so check its status.`,
+    );
+  }
+  if (counts.otherGateway > 0) {
+    lines.push(
+      `${counts.otherGateway} on another gateway: respond in that gateway's dashboard.`,
+    );
+  }
+  return lines;
+}
+
 export interface DisputesPageProps {
   /** API endpoint for fetching disputes */
   apiEndpoint?: string;
@@ -195,18 +233,23 @@ export interface DisputesPageProps {
   title?: string;
   /** Page description */
   description?: string;
+  /** The status filter a link opened the list on */
+  initialStatus?: DisputeStatusFilter;
 }
 
 export function DisputesPage({
   apiEndpoint = "/api/admin/disputes",
   title = "Disputes",
   description = "View and track payment disputes",
+  initialStatus,
 }: DisputesPageProps) {
-  const { basePath } = useBackofficeCapability();
+  const { basePath, can } = useBackofficeCapability();
   const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<string>(
+    initialStatus ?? "all",
+  );
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
   const { data, isPending, isFetching, isError, refetch } = useQuery({
@@ -242,6 +285,7 @@ export function DisputesPage({
   const disputes = data?.disputes ?? [];
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;
+  const urgentEvidence = data?.urgentEvidence;
   const underReviewCount = data?.stats?.underReviewCount ?? 0;
   const wonCount = data?.stats?.wonCount ?? 0;
 
@@ -291,7 +335,12 @@ export function DisputesPage({
           <AlertDescription>
             {urgentCount} dispute{urgentCount > 1 ? "s are" : " is"} overdue or
             require{urgentCount === 1 ? "s" : ""} an imminent response (&lt;= 3
-            days). Please escalate to admin for evidence submission.
+            days).
+            {urgentEvidenceLines(urgentEvidence, can("disputes.manage")).map(
+              (line) => (
+                <span key={line}> {line}</span>
+              ),
+            )}
           </AlertDescription>
         </Alert>
       )}
@@ -362,6 +411,7 @@ export function DisputesPage({
         }}
         selects={[
           statusSelect(statusFilter, setStatusFilter, [
+            { value: OPEN_DISPUTES_FILTER, label: "Open" },
             { value: "NEEDS_RESPONSE", label: "Needs Response" },
             {
               value: "WARNING_NEEDS_RESPONSE",

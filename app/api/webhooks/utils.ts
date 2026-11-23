@@ -64,6 +64,7 @@ import {
   mintRefundCreditNote,
   remainingOrgInvoiceCreditPaise,
 } from "@/lib/payments/operations/refund";
+import { settleRefundSeatTx } from "@/lib/payments/operations/refund-seat";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { invoiceRefundDebits } from "@/lib/payments/billing/org-invoice-journal";
 import {
@@ -843,6 +844,8 @@ export async function handleRefundCreated(
               `🔄 Reversed ${restored} referral credits for refunded payment ${paymentId}`,
             );
           }
+          // The booking seat is decided once, here, as the refund settles; the revocation sweep drives Stream.
+          await settleRefundSeatTx(tx, refundRowId);
         };
 
         if (existingRefund) {

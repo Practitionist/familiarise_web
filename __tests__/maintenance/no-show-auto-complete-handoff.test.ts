@@ -46,14 +46,23 @@ jest.mock("../../lib/support/create-ticket", () => ({
   createSupportTicket: jest.fn(async () => ({ id: "ticket-1" })),
 }));
 
-// The detector corroborates against Stream before moving money; one distinct
-// participant is Stream agreeing that only the consultee was there.
-jest.mock("../../lib/stream/call-presence", () => ({
+// The detector moves money only on Stream's settled record; this is what it stored.
+const settlement: {
+  current: Awaited<
+    ReturnType<
+      typeof import("../../lib/meetings/settle-attendance").settleOccurrenceAttendance
+    >
+  >;
+} = { current: { kind: "settled", intervals: [] } };
+jest.mock("../../lib/meetings/settle-attendance", () => ({
+  ...jest.requireActual("../../lib/meetings/settle-attendance"),
+  settleOccurrenceAttendance: jest.fn(async () => settlement.current),
+}));
+
+const reportStandingFinding = jest.fn(async (..._args: unknown[]) => true);
+jest.mock("../../lib/observability/standing-finding", () => ({
   __esModule: true,
-  getCallPresenceEvidence: jest.fn(async () => ({
-    unique: 1,
-    maxConcurrent: 1,
-  })),
+  reportStandingFinding: (...a: unknown[]) => reportStandingFinding(...a),
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -106,7 +115,6 @@ import { detectConsultantNoShows } from "../../scripts/appointments/detect-consu
 import {
   NO_SHOW_GRACE_MINUTES,
   NO_SHOW_HANDOFF_MINUTES,
-  classifyConsultantAttendance,
   isPastNoShowHandoff,
 } from "../../lib/booking/attendance";
 
@@ -123,14 +131,22 @@ function minutesAgo(minutes: number): Date {
 }
 
 /**
- * A past, paid consultation; `attendees` is who has a MeetingAttendance row and
- * `completionStatus` is what the #1569 slot pass decided for its session.
+ * A past, paid consultation; `attendees` is who Stream's settled record shows
+ * and `completionStatus` is what the slot pass decided for its session.
  */
 function consultation(
   endedMinutesAgo: number,
   attendees: string[],
   completionStatus = "SCHEDULED",
 ) {
+  settlement.current = {
+    kind: "settled",
+    intervals: attendees.map((userId) => ({
+      userId,
+      joinedAt: minutesAgo(endedMinutesAgo + 60),
+      leftAt: minutesAgo(endedMinutesAgo),
+    })),
+  };
   return {
     id: "cons-1",
     status: "APPROVED",
@@ -159,16 +175,13 @@ function consultation(
           outcome: null,
           isTentative: false,
           deletedAt: null,
-          presences: attendees.map((userId) => ({
-            userId,
-            joinedAt: minutesAgo(endedMinutesAgo + 60),
-            leftAt: minutesAgo(endedMinutesAgo),
-          })),
           meeting: {
+            id: "meeting-1",
             streamCallId: "call-1",
+            extendedSeconds: 0,
+            attendanceSettledAt: null,
             endedAt: minutesAgo(endedMinutesAgo),
             endedReason: "call_ended",
-            attendances: attendees.map((userId) => ({ userId })),
           },
         },
       ],
@@ -329,32 +342,23 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     ).toBeGreaterThanOrEqual(HOURLY_MINUTES);
   });
 
-  it("classifies the three shapes the two jobs divide the world into", () => {
-    const parties = {
-      consultantUserId: CONSULTANT,
-      consulteeUserId: CONSULTEE,
-    };
-    const slots = (attendees: string[]) => [
-      {
-        meeting: {
-          attendances: attendees.map((userId) => ({ userId })),
-        },
-      },
-    ];
+  it.each(["not-final", "unavailable", "expired", "too-early"] as const)(
+    "the detector neither refunds nor strikes while Stream's record is %s",
+    async (kind) => {
+      db.consultation.findMany.mockResolvedValue([
+        consultation(NO_SHOW_GRACE_MINUTES + 30, [CONSULTEE]),
+      ]);
+      settlement.current = { kind };
 
-    expect(classifyConsultantAttendance(slots([CONSULTANT]), parties)).toBe(
-      "consultant-attended",
-    );
-    expect(classifyConsultantAttendance(slots([CONSULTEE]), parties)).toBe(
-      "consultant-absent",
-    );
-    // Nobody joined, and no session at all: the detector raises a ticket for the
-    // first and cannot see the second, so auto-complete keeps both.
-    expect(classifyConsultantAttendance(slots([]), parties)).toBe(
-      "inconclusive",
-    );
-    expect(classifyConsultantAttendance([{ meeting: null }], parties)).toBe(
-      "inconclusive",
-    );
-  });
+      const result = await detectConsultantNoShows();
+
+      expect(result).toMatchObject({ detected: 0, refunded: 0, unsettled: 1 });
+      expect(refundBookingPayment).not.toHaveBeenCalled();
+      expect(db.consultation.updateMany).not.toHaveBeenCalled();
+      expect(db.systemEvent.create).not.toHaveBeenCalled();
+      expect(reportStandingFinding).toHaveBeenCalledWith(
+        expect.objectContaining({ ids: ["cons-1"] }),
+      );
+    },
+  );
 });

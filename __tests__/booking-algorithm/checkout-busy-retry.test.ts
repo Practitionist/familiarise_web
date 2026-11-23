@@ -113,7 +113,7 @@ describe("fetchCheckoutWithBusyRetry (B5)", () => {
     const result = await promise;
 
     expect(attempts).toBe(2);
-    expect(notify).toHaveBeenCalledWith(1);
+    expect(notify).toHaveBeenCalledWith(1, "EVENT_CHECKOUT_BUSY");
     expect(result.status).toBe(200);
   });
 
@@ -162,7 +162,7 @@ describe("fetchCheckoutWithBusyRetry (B5)", () => {
     await jest.advanceTimersByTimeAsync(3 * 21_100);
     await promise;
 
-    expect(notify).toHaveBeenCalledWith(20);
+    expect(notify).toHaveBeenCalledWith(20, "CONSULTEE_BOOKING_BUSY");
   });
 
   it("gives up after three automatic retries and returns the last BUSY answer", async () => {

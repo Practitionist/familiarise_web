@@ -185,6 +185,12 @@ it("keeps internal dispute ID clicks and double-clicks from opening the dispute 
       limit: 20,
       totalPages: 1,
       urgentDisputes: 0,
+      urgentEvidence: {
+        open: 0,
+        deadlinePassed: 0,
+        notOpen: 0,
+        otherGateway: 0,
+      },
       stats: { underReviewCount: 0, wonCount: 0 },
     }),
   }) as unknown as typeof fetch;

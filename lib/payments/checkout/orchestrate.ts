@@ -42,6 +42,10 @@ import {
   seatGatewayDeadline,
 } from "@/lib/payments/constants";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import {
+  isQueryReadTimeout,
+  isRolledBackTransaction,
+} from "@/lib/db/pg-errors";
 import { getExchangeRates } from "@/lib/currency";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { asWelcomeDiscountConflict } from "@/lib/referrals/attribution";
@@ -858,6 +862,9 @@ export async function handleCheckout(
         );
       }
       const dbError = asSeatPaymentConflict(asWelcomeDiscountConflict(caught));
+      // A conflict Postgres aborted or a transaction Prisma expired booked
+      // nothing; it passes through typed for the route to answer and report.
+      const rolledBack = isRolledBackTransaction(dbError);
       console.error("Failed to create payment record:", dbError);
       // Classification for Sentry tagging ONLY — deliberately NOT the same
       // list `preservedMessages` below uses for the rethrow decision, so
@@ -921,10 +928,12 @@ export async function handleCheckout(
             // "ended" match "unintended", tagging real faults as routine.
             new RegExp(`\\b${msg}\\b`, "i").test(dbError.message),
           ));
-      reportSentryError(dbError, {
-        subsystem: "payments",
-        expected: isModelledOutcome,
-      });
+      if (!rolledBack) {
+        reportSentryError(dbError, {
+          subsystem: "payments",
+          expected: isModelledOutcome,
+        });
+      }
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -979,7 +988,7 @@ export async function handleCheckout(
       // #837 — WalletFrozenError carries httpStatus=409 + an actionable reason;
       // don't let it collapse into the generic "Failed to record payment
       // information" below. Rethrow so the route surfaces the 409.
-      if (dbError instanceof WalletFrozenError) {
+      if (dbError instanceof WalletFrozenError || rolledBack) {
         throw dbError;
       }
 
@@ -1030,6 +1039,8 @@ export async function handleCheckout(
         }
       }
 
+      // A read timeout stays wrapped: it may have cut off a COMMIT that landed,
+      // so the route must not answer it as uncharged.
       throw new Error(
         "Failed to record payment information. Please try again.",
         { cause: dbError },
@@ -1069,15 +1080,18 @@ export async function handleCheckout(
     );
     // #1583 C-P1-04 — the same-key collision the inner catch let through.
     const isKeyCollision = isUniqueViolationOn(error, "clientIdempotencyKey");
-    reportSentryError(error, {
-      subsystem: "payments",
-      expected:
-        isModeledLockRace ||
-        isConsulteeDoubleBook ||
-        isBusinessRefusal ||
-        isKeyCollision ||
-        error instanceof SlotTakenError,
-    });
+    // A bare rollback or database timeout is answered and reported once, by the route.
+    if (!isRolledBackTransaction(error) && !isQueryReadTimeout(error)) {
+      reportSentryError(error, {
+        subsystem: "payments",
+        expected:
+          isModeledLockRace ||
+          isConsulteeDoubleBook ||
+          isBusinessRefusal ||
+          isKeyCollision ||
+          error instanceof SlotTakenError,
+      });
+    }
     // Typed busy errors keep their 409 and retryAfter for the route and the client's retry.
     const isTypedBusy =
       error instanceof EventCheckoutBusyError ||

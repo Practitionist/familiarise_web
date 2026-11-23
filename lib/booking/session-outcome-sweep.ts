@@ -1,9 +1,9 @@
 /**
- * #1569 D2 — the one writer of an occurrence's outcome. The end + 1 h slot pass
- * in `auto-complete-appointments` reads each past SCHEDULED session's presence,
- * asks `classifySessionOutcome`, and writes COMPLETED, VOIDED or UNVERIFIED plus
- * the outcome columns in one CAS. The Stream webhooks and the orphan reconciler
- * only close the room.
+ * The one writer of an occurrence's outcome. The end + 1 h slot pass in
+ * `auto-complete-appointments` settles each past SCHEDULED session's attendance
+ * from Stream's own record (`settleOccurrenceAttendance`), asks
+ * `classifySessionOutcome`, and writes COMPLETED, VOIDED or UNVERIFIED plus the
+ * outcome columns in one CAS. The Stream webhooks and the orphan reconciler only close the room.
  */
 
 import { OccurrenceCompletionStatus, type Prisma } from "@prisma/client";
@@ -23,18 +23,20 @@ import {
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { personalHref } from "@/lib/novu/resolve-href";
-import {
-  getCallParticipantSessionsFromStream,
-  getCallPresenceEvidence,
-  type CallPresenceEvidence,
-  type StreamParticipantSessionInterval,
-} from "@/lib/stream/call-presence";
 import { getAppUrl } from "@/lib/url";
 import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
-import { isPastNoShowHandoff } from "./attendance";
+import {
+  ATTENDANCE_SETTLE_WAIT_MS,
+  SETTLE_MEETING_SELECT,
+  settleOccurrenceAttendance,
+} from "@/lib/meetings/settle-attendance";
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
+import { isPastNoShowHandoff, NO_SHOW_GRACE_MINUTES } from "./attendance";
 import {
   classifySessionOutcome,
+  COMPLETION_FOR_OUTCOME,
+  overlapsDeclaredIncident,
   type OutageWindow,
   type PresenceInterval,
   type SessionOutcomeVerdict,
@@ -52,47 +54,13 @@ import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
 
-/** How long past the booked end a one-sided session waits for Stream before it parks UNVERIFIED. */
-const STREAM_EVIDENCE_WAIT_MS = 24 * 60 * 60 * 1000;
-
-/** Stream reads one sweep run may spend on attendance evidence; a slot past the budget waits for the next run. */
-const STREAM_WITNESS_READS_PER_RUN = 100;
-
-/** Shared by every slot one run decides. */
-export interface StreamWitnessBudget {
-  remaining: number;
-  /** Reads for an unresolved interval that Stream could not answer; the run reports them once. */
-  failures: number;
-}
-
-export function createStreamWitnessBudget(): StreamWitnessBudget {
-  return { remaining: STREAM_WITNESS_READS_PER_RUN, failures: 0 };
-}
-
 export const OUTCOME_SLOT_SELECT = {
   id: true,
   appointmentId: true,
   startsAt: true,
   endsAt: true,
   meeting: {
-    select: {
-      id: true,
-      streamCallId: true,
-      endedAt: true,
-      endedReason: true,
-      extendedSeconds: true,
-    },
-  },
-  presences: {
-    select: {
-      id: true,
-      userId: true,
-      userSessionId: true,
-      streamCallId: true,
-      joinedAt: true,
-      leftAt: true,
-      closedByEnd: true,
-    },
+    select: { ...SETTLE_MEETING_SELECT, endedAt: true, endedReason: true },
   },
   appointment: {
     select: {
@@ -113,19 +81,18 @@ export type OutcomeSlot = Prisma.AppointmentOccurrenceGetPayload<{
 export interface OutcomeContext {
   now: Date;
   outages: OutageWindow[];
-  /** Called once per session Stream saw people in while we recorded nobody. */
-  onFeedGap?: () => void;
-  witness: StreamWitnessBudget;
+  /** Called once per session parked because Stream's record could not be read in time. */
+  onUnreadable?: (occurrenceId: string) => void;
+  /** The run's Stream failure reporter, flushed once per run. */
+  failures?: RunFailureReporter;
+  /** Epoch ms by which every Stream request of a settle must answer, so in-flight work fits the run. */
+  settleDeadlineAt?: number;
 }
 
 export type SlotDecision =
   | {
       kind: "deferred";
-      reason:
-        | "live-overrun"
-        | "no-show-detector"
-        | "stream-budget"
-        | "stream-evidence";
+      reason: "live-overrun" | "no-show-detector" | "attendance-unsettled";
     }
   | {
       kind: "written";
@@ -178,160 +145,108 @@ export async function readOutageWindows(
   ];
 }
 
-type OutcomeMeeting = NonNullable<OutcomeSlot["meeting"]>;
+type RoomEnd = {
+  endedAt: Date | null;
+  endedReason: string | null;
+  attendanceSettledAt: Date | null;
+};
 
-interface StreamEvidence {
-  report: CallPresenceEvidence | null;
-  /** Participant sessions per call id Stream answered for. */
-  sessions: Map<string, StreamParticipantSessionInterval[]>;
-}
+/** The room's end as classified (read after the settle) and the call id the settle read (loaded before it). */
+type RoomFence = { end: RoomEnd; settledCallId: string };
 
-const EXHAUSTED = Symbol("stream-budget");
-
-async function spendWitnessRead<T>(
-  budget: StreamWitnessBudget,
-  read: () => Promise<T>,
-): Promise<T | typeof EXHAUSTED> {
-  if (budget.remaining <= 0) return EXHAUSTED;
-  budget.remaining--;
-  return read();
-}
-
-/** Assumed closes and open rows wait on Stream; a leave Stream reported is final. */
-const isUnresolved = (p: OutcomeSlot["presences"][number]) =>
-  p.leftAt === null || p.closedByEnd;
-
-/**
- * Reads Stream's report and the participant sessions of every segment with an
- * unresolved interval, plus the current segment whenever our rows may be missing
- * someone (no rows, no report count, or Stream saw more people). Runs before the
- * outcome transaction, so a lost join alone never decides a void.
- */
-async function readStreamEvidence(
-  slot: OutcomeSlot,
-  meeting: OutcomeMeeting,
-  budget: StreamWitnessBudget,
-): Promise<StreamEvidence | typeof EXHAUSTED> {
-  const report = await spendWitnessRead(budget, () =>
-    getCallPresenceEvidence(meeting.streamCallId),
-  );
-  if (report === EXHAUSTED) return EXHAUSTED;
-
-  const unresolvedCallIds = new Set(
-    slot.presences
-      .filter(isUnresolved)
-      .map((p) => p.streamCallId ?? meeting.streamCallId),
-  );
-  const seenUsers = new Set(slot.presences.map((p) => p.userId));
-  const callIds = new Set(unresolvedCallIds);
-  if (
-    slot.presences.length === 0 ||
-    report === null ||
-    report.unique > seenUsers.size
-  ) {
-    callIds.add(meeting.streamCallId);
-  }
-
-  const sessions = new Map<string, StreamParticipantSessionInterval[]>();
-  for (const callId of callIds) {
-    const read = await spendWitnessRead(budget, () =>
-      getCallParticipantSessionsFromStream(
-        callId,
-        callId === meeting.streamCallId ? report?.sessionId : null,
-      ),
-    );
-    if (read === EXHAUSTED) return EXHAUSTED;
-    if (read) sessions.set(callId, read);
-    else if (unresolvedCallIds.has(callId)) budget.failures++;
-  }
-  return { report, sessions };
-}
-
-interface ResolvedPresence {
-  /** What the classifier reads; an unresolved interval stays open (leftAt null). */
-  intervals: PresenceInterval[];
-  /** Assumed closes Stream answered with a reported leave. */
-  leaves: { id: string; leftAt: Date }[];
-  /** Device stays Stream saw that we hold no row for. */
-  missing: (StreamParticipantSessionInterval & { streamCallId: string })[];
-}
-
-/** Pure: replaces each unresolved interval with Stream's leave, or leaves it open. */
-function resolvePresencesFromStream(
-  presences: OutcomeSlot["presences"],
-  currentCallId: string,
-  sessions: ReadonlyMap<string, readonly StreamParticipantSessionInterval[]>,
-): ResolvedPresence {
-  const leaves: ResolvedPresence["leaves"] = [];
-  const intervals: PresenceInterval[] = presences.map((p) => {
-    if (!isUnresolved(p)) {
-      return { userId: p.userId, joinedAt: p.joinedAt, leftAt: p.leftAt };
-    }
-    const witnessed = sessions
-      .get(p.streamCallId ?? currentCallId)
-      ?.find((s) => s.userSessionId === p.userSessionId);
-    if (witnessed?.leftAt) leaves.push({ id: p.id, leftAt: witnessed.leftAt });
-    return {
-      userId: p.userId,
-      joinedAt: p.joinedAt,
-      leftAt: witnessed?.leftAt ?? null,
-    };
+/** The room's end as it stands now: read after a settle, so an end that committed during the Stream reads is the one judged. */
+export const readRoomEnd = (meetingId: string): Promise<RoomEnd | null> =>
+  prisma.meeting.findUnique({
+    where: { id: meetingId },
+    select: { endedAt: true, endedReason: true, attendanceSettledAt: true },
   });
 
-  const known = new Set(presences.map((p) => p.userSessionId));
-  const missing: ResolvedPresence["missing"] = [];
-  for (const [streamCallId, rows] of sessions) {
-    for (const row of rows) {
-      if (known.has(row.userSessionId)) continue;
-      known.add(row.userSessionId);
-      missing.push({ ...row, streamCallId });
-      intervals.push({
-        userId: row.userId,
-        joinedAt: row.joinedAt,
-        leftAt: row.leftAt,
-      });
-    }
+/**
+ * When the detector's handoff clock starts: the booked end, or, for a record
+ * stored later than the detector's grace allows, that much before the stamp,
+ * so the detector always gets its runs on the settled record.
+ */
+function noShowHandoffAnchor(endsAt: Date, settledAt: Date | null): Date {
+  if (!settledAt) return endsAt;
+  const fromStamp = new Date(
+    settledAt.getTime() - NO_SHOW_GRACE_MINUTES * 60_000,
+  );
+  return fromStamp > endsAt ? fromStamp : endsAt;
+}
+
+/** A session no one could read: no host attribution and no money moves. */
+const UNREADABLE_VERDICT: SessionOutcomeVerdict = {
+  outcome: "INCONCLUSIVE",
+  completionStatus: COMPLETION_FOR_OUTCOME.INCONCLUSIVE,
+  deliveredMinutes: null,
+  lostMinutes: null,
+  hostAttributed: false,
+};
+
+type SlotEvidence =
+  | { kind: "intervals"; intervals: PresenceInterval[] }
+  | { kind: "unreadable" }
+  | { kind: "wait" };
+
+/** A declared incident needs no read; otherwise the stored snapshot, settled now if it can be. */
+async function slotEvidence(
+  slot: OutcomeSlot,
+  ctx: OutcomeContext,
+): Promise<SlotEvidence> {
+  const { meeting } = slot;
+  if (
+    !meeting ||
+    overlapsDeclaredIncident(slot.startsAt, slot.endsAt, ctx.outages)
+  ) {
+    return { kind: "intervals", intervals: [] };
   }
-  return { intervals, leaves, missing };
+  const settled = await settleOccurrenceAttendance(
+    { occurrenceId: slot.id, endsAt: slot.endsAt, meeting },
+    { now: ctx.now, failures: ctx.failures, deadlineAt: ctx.settleDeadlineAt },
+  );
+  if (settled.kind === "settled") {
+    return { kind: "intervals", intervals: settled.intervals };
+  }
+  // A read cut short by this run's deadline says nothing about Stream: always try again.
+  if (settled.kind === "out-of-time") return { kind: "wait" };
+  // Past Stream's retention nothing will come back; anything else is retried until the wait ends.
+  const waited =
+    ctx.now.getTime() - slot.endsAt.getTime() >= ATTENDANCE_SETTLE_WAIT_MS;
+  return settled.kind === "expired" || waited
+    ? { kind: "unreadable" }
+    : { kind: "wait" };
 }
 
 /**
- * Persists what Stream answered, outside the outcome transaction: reported leaves
- * replace assumed closes (CAS on the assumption), closed missing stays are
- * inserted, and a still-open row is capped at the room end, marked as assumed.
+ * Takes the occurrence row, then the room row, and re-reads the room: an end
+ * since the classification, a rotation since the settle loaded the room, or (for
+ * an unreadable park) a snapshot wins. NO KEY UPDATE leaves the presence inserts' FK checks free.
  */
-async function persistStreamResolution(
-  slot: OutcomeSlot,
-  meeting: OutcomeMeeting,
-  resolved: ResolvedPresence,
-): Promise<void> {
-  for (const leave of resolved.leaves) {
-    await prisma.meetingPresence.updateMany({
-      where: { id: leave.id, OR: [{ leftAt: null }, { closedByEnd: true }] },
-      data: { leftAt: leave.leftAt, closedByEnd: false },
-    });
-  }
-  const closedMissing = resolved.missing.filter((m) => m.leftAt !== null);
-  if (closedMissing.length > 0) {
-    await prisma.meetingPresence.createMany({
-      data: closedMissing.map((m) => ({
-        meetingId: meeting.id,
-        appointmentOccurrenceId: slot.id,
-        userId: m.userId,
-        userSessionId: m.userSessionId,
-        streamCallId: m.streamCallId,
-        joinedAt: m.joinedAt,
-        leftAt: m.leftAt,
-      })),
-      skipDuplicates: true,
-    });
-  }
-  if (slot.presences.some((p) => p.leftAt === null)) {
-    await prisma.meetingPresence.updateMany({
-      where: { appointmentOccurrenceId: slot.id, leftAt: null },
-      data: { leftAt: meeting.endedAt ?? slot.endsAt, closedByEnd: true },
-    });
-  }
+async function roomChangedSinceRead(
+  tx: Tx,
+  occurrenceId: string,
+  { end, settledCallId }: RoomFence,
+  requireUnsettled: boolean,
+): Promise<boolean> {
+  await tx.$executeRaw`SELECT 1 FROM "AppointmentOccurrence" WHERE id = ${occurrenceId} FOR NO KEY UPDATE`;
+  const rows = await tx.$queryRaw<
+    {
+      endedAt: Date | null;
+      endedReason: string | null;
+      streamCallId: string;
+      settledAt: Date | null;
+    }[]
+  >`
+    SELECT "endedAt", "endedReason", "streamCallId", "attendanceSettledAt" AS "settledAt"
+    FROM "Meeting" WHERE "appointmentOccurrenceId" = ${occurrenceId} FOR NO KEY UPDATE`;
+  const current = rows[0];
+  if (!current) return true;
+  return (
+    (current.endedAt?.getTime() ?? null) !== (end.endedAt?.getTime() ?? null) ||
+    current.endedReason !== end.endedReason ||
+    current.streamCallId !== settledCallId ||
+    (requireUnsettled && current.settledAt !== null)
+  );
 }
 
 async function writeSlotOutcomeTransaction(
@@ -340,9 +255,23 @@ async function writeSlotOutcomeTransaction(
   to: OccurrenceCompletionStatus,
   verdict: SessionOutcomeVerdict,
   now: Date,
+  /** The room's end as classified (re-checked under lock), and whether an unreadable verdict needs the room still unsettled. */
+  fence: { room: RoomFence | null; requireUnsettled: boolean },
 ): Promise<boolean> {
+  const { requireUnsettled } = fence;
   const txResult = await prisma.$transaction(
     async (tx) => {
+      if (
+        fence.room &&
+        (await roomChangedSinceRead(tx, slot.id, fence.room, requireUnsettled))
+      ) {
+        return {
+          applied: false,
+          noShow: null,
+          missedRecording: null,
+          voided: null,
+        };
+      }
       const count = await transitionOccurrenceCompletion(tx, {
         // voidedAt: null — a re-run never re-stamps a void.
         where: {
@@ -381,7 +310,7 @@ async function writeSlotOutcomeTransaction(
       }
       const noShow =
         count > 0 && verdict.outcome === "LEARNER_ABSENT"
-          ? await stageNoShowBells(tx, slot, "one-to-one")
+          ? await stageNoShowBells(tx, { ...slot, presences }, "one-to-one")
           : null;
       // Owner decision — a group seat absent from a held session hears only of its recording.
       const isGroup = !!(
@@ -509,77 +438,48 @@ export async function decideSlotOutcome(
   ctx: OutcomeContext,
 ): Promise<SlotDecision> {
   const { meeting } = slot;
-  // An unended room someone is still in, or still inside its room-time grace, is an overrun, not a verdict.
+  // An unended room still inside its room-time grace is an overrun, not a verdict.
   if (
     meeting &&
     !meeting.endedAt &&
-    (slot.presences.some((p) => !p.leftAt) ||
-      ctx.now.getTime() <
-        resolveRoomEndsAt(slot.endsAt, meeting.extendedSeconds).getTime() +
-          REJOIN_GRACE_MS)
+    ctx.now.getTime() <
+      resolveRoomEndsAt(slot.endsAt, meeting.extendedSeconds).getTime() +
+        REJOIN_GRACE_MS
   ) {
     return { kind: "deferred", reason: "live-overrun" };
   }
 
-  let presences: PresenceInterval[] = slot.presences;
-  let report: CallPresenceEvidence | null = null;
-  let streamAnswered = false;
-  if (meeting) {
-    const evidence = await readStreamEvidence(slot, meeting, ctx.witness);
-    if (evidence === EXHAUSTED) {
-      return { kind: "deferred", reason: "stream-budget" };
-    }
-    report = evidence.report;
-    streamAnswered =
-      report !== null || evidence.sessions.has(meeting.streamCallId);
-    const resolved = resolvePresencesFromStream(
-      slot.presences,
-      meeting.streamCallId,
-      evidence.sessions,
-    );
-    await persistStreamResolution(slot, meeting, resolved);
-    presences = resolved.intervals;
-    // Stream saw people while our webhook rows recorded nobody.
-    if (
-      slot.presences.length === 0 &&
-      ((report?.unique ?? 0) > 0 || presences.length > 0)
-    ) {
-      ctx.onFeedGap?.();
-    }
+  const evidence = await slotEvidence(slot, ctx);
+  if (evidence.kind === "wait") {
+    return { kind: "deferred", reason: "attendance-unsettled" };
   }
-
-  let verdict = classifySessionOutcome({
-    startsAt: slot.startsAt,
-    endsAt: slot.endsAt,
-    hostUserIds: sessionHostUserIds(slot.appointment),
-    intervals: presences,
-    meeting: meeting
-      ? { endedAt: meeting.endedAt, endedReason: meeting.endedReason }
-      : null,
-    report,
-    maintenanceWindows: ctx.outages,
-  });
-  // Webhook rows alone never mark one side absent: wait for Stream, then park for ops.
-  if (
-    meeting &&
-    !streamAnswered &&
-    (verdict.outcome === "LEARNER_ABSENT" || verdict.outcome === "HOST_ABSENT")
-  ) {
-    if (ctx.now.getTime() - slot.endsAt.getTime() < STREAM_EVIDENCE_WAIT_MS) {
-      return { kind: "deferred", reason: "stream-evidence" };
-    }
-    verdict = {
-      ...verdict,
-      outcome: "INCONCLUSIVE",
-      completionStatus: "UNVERIFIED",
-      hostAttributed: false,
-    };
-  }
+  const presences = evidence.kind === "intervals" ? evidence.intervals : [];
+  // The end fields are read after the settle, so an end that committed during the Stream reads is the one judged.
+  const room = meeting ? await readRoomEnd(meeting.id) : null;
+  const verdict =
+    evidence.kind === "unreadable"
+      ? UNREADABLE_VERDICT
+      : classifySessionOutcome({
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+          hostUserIds: sessionHostUserIds(slot.appointment),
+          intervals: presences,
+          meeting: room
+            ? { endedAt: room.endedAt, endedReason: room.endedReason }
+            : null,
+          maintenanceWindows: ctx.outages,
+        });
   let to: OccurrenceCompletionStatus = verdict.completionStatus;
   if (verdict.outcome === "HOST_ABSENT" && slot.appointment.consultationId) {
     // D5 — the detector cancels and refunds a consultation host no-show; one it
     // declined parks UNVERIFIED for ops after the handoff instead of voiding.
-    if (!isPastNoShowHandoff(slot.endsAt, ctx.now, ctx.outages)) {
+    if (
+      !isPastNoShowHandoff(
+        noShowHandoffAnchor(slot.endsAt, room?.attendanceSettledAt ?? null),
+        ctx.now,
+        ctx.outages,
+      )
+    ) {
       return { kind: "deferred", reason: "no-show-detector" };
     }
     to = OccurrenceCompletionStatus.UNVERIFIED;
@@ -591,7 +491,15 @@ export async function decideSlotOutcome(
     to,
     verdict,
     ctx.now,
+    {
+      room:
+        meeting && room
+          ? { end: room, settledCallId: meeting.streamCallId }
+          : null,
+      requireUnsettled: evidence.kind === "unreadable",
+    },
   );
+  if (moved && evidence.kind === "unreadable") ctx.onUnreadable?.(slot.id);
   return { kind: "written", to, verdict, moved };
 }
 

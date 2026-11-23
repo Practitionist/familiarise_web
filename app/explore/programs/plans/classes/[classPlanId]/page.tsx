@@ -5,6 +5,7 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { getClassPlanDetail } from "@/lib/data/plan-details";
+import { planTeamForViewer } from "@/lib/api/plans/public-team";
 import {
   viewerSeatAppointmentIds,
   viewerWaitlistAppointmentIds,
@@ -64,20 +65,27 @@ export default async function ClassDetailsPage({
     notFound();
   }
 
-  const planWithDefaults = {
-    ...classPlan,
-    type: "class" as const,
-    imageUrl: generateProgramImageUrl(classPlan.imageUrl),
-  };
-
   const viewerUserId = session?.user?.id ?? null;
   const batchAppointmentIds = classPlan.classes.flatMap((c) =>
     c.appointment ? [c.appointment.id] : [],
   );
-  const [enrolledAppointmentIds, waitingAppointmentIds] = await Promise.all([
-    viewerSeatAppointmentIds(viewerUserId, batchAppointmentIds),
-    viewerWaitlistAppointmentIds(viewerUserId, batchAppointmentIds),
-  ]);
+  const [enrolledAppointmentIds, waitingAppointmentIds, collaborators] =
+    await Promise.all([
+      viewerSeatAppointmentIds(viewerUserId, batchAppointmentIds),
+      viewerWaitlistAppointmentIds(viewerUserId, batchAppointmentIds),
+      planTeamForViewer(
+        classPlan.collaborators,
+        { planType: "class", planId: classPlanId },
+        session,
+      ),
+    ]);
+
+  const planWithDefaults = {
+    ...classPlan,
+    collaborators,
+    type: "class" as const,
+    imageUrl: generateProgramImageUrl(classPlan.imageUrl),
+  };
 
   return (
     <>

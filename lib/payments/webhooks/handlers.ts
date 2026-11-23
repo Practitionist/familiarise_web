@@ -392,10 +392,15 @@ export async function handlePaymentSuccess(
         paymentStatus: true,
         amount: true,
         gatewayPaymentId: true,
+        appointment: { select: { appointmentType: true } },
       },
     });
     if (existing === null) {
       preMintAdoption = await verifiedPreMintAdoption(paymentIntentId);
+    }
+    // A booking that exists names its own type; the notes name it only for one the capture creates.
+    if (existing?.appointment) {
+      metadata.appointmentType = existing.appointment.appointmentType;
     }
     if (
       existing?.paymentStatus === PaymentStatus.SUCCEEDED &&
@@ -416,6 +421,7 @@ export async function handlePaymentSuccess(
   }
 
   let preplannedEarnings: PreplannedEarningsContext | null = null;
+  const plannedForType = metadata.appointmentType;
   try {
     preplannedEarnings = await planEarningsForPayment(
       { paymentIntent: paymentIntentId },
@@ -703,35 +709,59 @@ export async function handlePaymentSuccess(
             return null; // Signal: already processed, skip Phase 2
           }
 
+          let refusal: {
+            error: unknown;
+            reason: string;
+            outcome: string;
+          } | null = null;
           if (payment.appointmentId) {
-            if (!metadata.userId && payment.userId) {
-              metadata.userId = payment.userId;
-            }
-            if (!metadata.appointmentType) {
-              const existingAppt = await tx.appointment.findUnique({
-                where: { id: payment.appointmentId },
-                select: { appointmentType: true },
-              });
-              if (existingAppt?.appointmentType) {
-                metadata.appointmentType = existingAppt.appointmentType;
+            // A booking that exists is confirmed from its own rows, never from the notes.
+            const booked = await tx.appointment.findUnique({
+              where: { id: payment.appointmentId },
+              select: {
+                appointmentType: true,
+                trial: { select: { id: true } },
+              },
+            });
+            if (booked) {
+              metadata.appointmentType = booked.appointmentType;
+              delete metadata.trialId;
+              if (booked.appointmentType === AppointmentsType.TRIAL) {
+                if (booked.trial) {
+                  metadata.trialId = booked.trial.id;
+                } else {
+                  const reason = `Trial booking ${payment.appointmentId} has no trial`;
+                  refusal = {
+                    error: new Error(reason),
+                    reason,
+                    outcome: "booking NOT confirmed",
+                  };
+                }
               }
+            }
+          } else {
+            try {
+              validateWebhookMetadata(metadata);
+            } catch (validationError) {
+              if (recoverable) throw validationError;
+              const errorMessage =
+                validationError instanceof ZodError
+                  ? validationError.errors
+                      .map((e) => `${e.path.join(".")}: ${e.message}`)
+                      .join("; ")
+                  : validationError instanceof Error
+                    ? validationError.message
+                    : String(validationError);
+              refusal = {
+                error: validationError,
+                reason: `Metadata validation failed: ${errorMessage}`,
+                outcome: "appointment NOT created",
+              };
             }
           }
 
-          try {
-            validateWebhookMetadata(metadata);
-          } catch (validationError) {
-            if (recoverable) throw validationError;
-            const errorMessage =
-              validationError instanceof ZodError
-                ? validationError.errors
-                    .map((e) => `${e.path.join(".")}: ${e.message}`)
-                    .join("; ")
-                : validationError instanceof Error
-                  ? validationError.message
-                  : String(validationError);
-
-            reportSentryError(validationError, {
+          if (refusal) {
+            reportSentryError(refusal.error, {
               subsystem: "payments",
               level: "fatal",
               contexts: {
@@ -743,8 +773,8 @@ export async function handlePaymentSuccess(
               },
             });
             console.error(
-              `❌ Metadata validation failed for payment ${paymentIntentId}:`,
-              errorMessage,
+              `❌ Capture parked for payment ${paymentIntentId}:`,
+              refusal.reason,
             );
 
             // The parked row keeps its capture time: its recovery splits the seat by the team at this instant.
@@ -754,7 +784,7 @@ export async function handlePaymentSuccess(
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
                 capturedAt: new Date(),
-                description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
+                description: `REQUIRES_MANUAL_RECOVERY: ${refusal.reason}. Customer charged but ${refusal.outcome}.`,
               },
             });
             if (recoveryStamped.count === 0) {
@@ -763,25 +793,50 @@ export async function handlePaymentSuccess(
                 paymentId: payment.id,
                 orderId: paymentIntentId,
                 observedStatus: payment.paymentStatus,
-                reason: `metadata validation failed: ${errorMessage}`,
+                reason: refusal.reason,
               });
             } else {
               await parkCapture();
+              // One operator event per parked payment: only the delivery whose stamp won writes it.
+              await recordSystemErrorSafe({
+                organizationId: null,
+                category: "PAYMENT",
+                summary: payment.appointmentId
+                  ? `Capture for payment ${payment.id} parked; booking ${payment.appointmentId} is unconfirmed`
+                  : `Capture for payment ${payment.id} parked; no booking was created`,
+                err: new Error(refusal.reason),
+                context: {
+                  paymentId: payment.id,
+                  appointmentId: payment.appointmentId,
+                  paymentIntent: paymentIntentId,
+                  gatewayPaymentId: gatewayPaymentId ?? null,
+                  amountPaise: gatewayAmountPaise ?? payment.amount,
+                  reason: refusal.reason,
+                },
+                correlationId: `parked-capture:${payment.id}`,
+                db: tx,
+                // Reported to Sentry above, once.
+                skipSentry: true,
+              });
             }
 
             console.error(
               JSON.stringify({
-                event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
+                event: payment.appointmentId
+                  ? "CRITICAL_PAYMENT_BOOKING_UNCONFIRMED"
+                  : "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
                 alert_priority: "P1",
                 payment_id: payment.id,
+                appointment_id: payment.appointmentId,
                 payment_intent: paymentIntentId,
                 user_id: payment.userId,
                 user_email: payment.user.email,
                 amount: payment.amount,
                 currency: payment.currency,
-                error: errorMessage,
-                action_required:
-                  "IMMEDIATE: Manual appointment creation or full refund required",
+                error: refusal.reason,
+                action_required: payment.appointmentId
+                  ? "IMMEDIATE: confirm the existing booking by hand or refund in full"
+                  : "IMMEDIATE: Manual appointment creation or full refund required",
                 dashboard_url: `${getAppUrl()}/dashboard/admin/payments/${payment.id}`,
                 timestamp: new Date().toISOString(),
               }),
@@ -789,6 +844,11 @@ export async function handlePaymentSuccess(
 
             return null;
           }
+          // A forecast made for another type than the booking's is not used.
+          const preplanned =
+            plannedForType === metadata.appointmentType
+              ? preplannedEarnings
+              : null;
 
           // The capture instant: stamped on the payment, and the time its
           // split reads the team at. A recovered capture keeps its own.
@@ -1049,7 +1109,7 @@ export async function handlePaymentSuccess(
             await tx.$executeRaw`SAVEPOINT sp_phase1_earnings`;
             try {
               const resolvedInTx =
-                preplannedEarnings?.resolvedPayment ??
+                preplanned?.resolvedPayment ??
                 (await resolvePaymentForEarnings(
                   { id: payment.id },
                   metadata.appointmentType,
@@ -1061,7 +1121,7 @@ export async function handlePaymentSuccess(
                   appointmentType: resolvedInTx.earningsAppointmentType,
                   teamAt: capturedAt,
                   tx,
-                  preplanned: preplannedEarnings ?? undefined,
+                  preplanned: preplanned ?? undefined,
                 });
                 earningsCreatedInPhase1 = true;
                 console.log(
@@ -1089,7 +1149,7 @@ export async function handlePaymentSuccess(
             await recordReferralCaptureInSavepoint(tx, {
               paymentId: payment.id,
               consultantProfileId: async () =>
-                preplannedEarnings?.resolvedPayment.consultantProfileId ??
+                preplanned?.resolvedPayment.consultantProfileId ??
                 (
                   await resolvePaymentForEarnings(
                     { id: payment.id },
@@ -1656,7 +1716,6 @@ export async function handlePaymentFailure(
         appointmentId: true,
         amount: true,
         currency: true,
-        description: true,
         expiresAt: true,
         user: { select: { email: true, name: true } },
       },
@@ -1668,7 +1727,7 @@ export async function handlePaymentFailure(
       prePayment.appointmentId
     ) {
       preRenderedFailedEmail = await preparePaymentFailedEmail(
-        prePayment,
+        { ...prePayment, failureReason },
         prisma,
       );
     }
@@ -1694,7 +1753,6 @@ export async function handlePaymentFailure(
         appointmentId: true,
         amount: true,
         currency: true,
-        description: true,
         expiresAt: true,
         user: { select: { email: true, name: true } },
         appointment: {
@@ -1813,7 +1871,7 @@ export async function handlePaymentFailure(
 
     const failedEmail = await stagePaymentFailedEmail(
       tx,
-      payment,
+      { ...payment, failureReason },
       preRenderedFailedEmail,
     );
 

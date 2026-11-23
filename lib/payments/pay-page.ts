@@ -60,7 +60,6 @@ export type PayPageState =
       kind: "open";
       order: PayPageOrder;
       summary: PayPageSummary;
-      doneHref: string;
       needsBuyerState: boolean;
       /** Pre-fills the state picker; mirrors the checkout tax context. */
       taxContext: { billingStateCode: string | null; isInternational: boolean };
@@ -302,7 +301,6 @@ function openState(row: PayPageRow): PayPageState {
       description: row.description,
       expiresAt: row.expiresAt,
     },
-    doneHref: detailHref(row),
     needsBuyerState: payNeedsBuyerState(row),
     taxContext: {
       billingStateCode: savedState.success ? savedState.data : null,

@@ -22,7 +22,7 @@ Official citations:
 ## 1. Critical Availability & Mode Constraints
 
 1. **NOT Available in Test Mode**:
-   - Every official RazorpayX Account Validation page states: _"Account Validation is **not available in test mode** and is possible **only for RazorpayX Lite**."_
+   - The [Account Validation overview](https://razorpay.com/docs/api/x/account-validation/) and the [Composite Account Validation overview](https://razorpay.com/docs/api/x/composite-account-validation/) state: _"Account Validation is not available in test mode and is possible only for RazorpayX Lite."_ The [Reverse Penny Drop page](https://razorpay.com/docs/api/x/account-validation/reverse-penny-drop/) says: _"This API is not supported in test mode."_ The [Fund Account Validation guide](https://razorpay.com/docs/x/fund-account-validation/) says only that it is "possible only for RazorpayX Lite", and the [Validate a Bank Account page](https://razorpay.com/docs/api/x/account-validation/bank-account/) states neither. The [Validate a VPA page](https://razorpay.com/docs/api/x/account-validation/vpa/) adds: _"RazorpayX Lite is currently not available for new merchants."_
    - In preview/dev/test environments, `createReversePennyDrop` is refused by RazorpayX; `gatewayCall` catches `PaymentError` and returns a clean `503 RPD_UNAVAILABLE` instructing the user to add bank details manually.
 2. **Never Persist Full Bank Account Numbers**:
    - Even when Reverse Penny Drop returns `validation_results.bank_account.account_number` in memory, `persistVerifiedAccount` immediately creates the RazorpayX Contact + FundAccount (`fa_...`) and persists **only** `accountNumberLast4`, `ifscCode`, `bankName`, `accountHolderName`, `razorpayContactId`, and `razorpayFundAccId` on `PayoutAccount`.
@@ -31,14 +31,12 @@ Official citations:
 
 ## 2. The #1 Gotcha: `status: "completed"` Does NOT Mean the Account Is Valid
 
-From [Official RazorpayX Account Validation Docs](https://razorpay.com/docs/api/x/account-validation/bank-account/):
+From the [Fund Account Validation guide](https://razorpay.com/docs/x/fund-account-validation/):
 
-> _"The `completed` status does not determine whether a fund account is valid. It only notifies you that the validation process has been completed. Refer to the `results` parameter in the response to know the validation outcome."_
+> _"The completed status does not mean the bank account or VPA is valid. It just means the account validation transaction was completed and results are available to you via the API response and webhooks payloads. Based on the response, you can decide if you should make a payout to the account."_
 
-- When a bank account or VPA is **invalid** or inactive, the validation process still finishes with:
-  - `status: "completed"` (firing `fund_account.validation.completed`)
-  - `results.account_status: "invalid"` (or `"inactive"` on `validation_results`; `""` on `fund_account.validation.failed`)
-  - `results.registered_name: null`
+- The pages list `account_status` as `active` or `invalid` on the bank-account and entity pages, and as `active` or `inactive` on the Reverse Penny Drop page. The code treats `invalid` and `inactive` alike.
+- In the failed samples (the bank-account page and the [account validation webhooks page](https://razorpay.com/docs/webhooks/account-validation/)), `status` is `"failed"` and both `results.account_status` and `results.registered_name` are `""`. No page shows a sample of a completed validation with an `invalid` account; the entity page says `registered_name` is "Gaurav Kumar or null".
 - `status: "failed"` (`fund_account.validation.failed`) fires when an upstream banking/NPCI failure or timeout prevented RazorpayX from completing the ₹1 penny drop or UPI collection window.
 
 Always inspect `summary.accountStatus === "valid"` via `summariseFundAccountValidation(raw)` (requiring **both** `raw.status === "completed"` and `account_status === "active"`).
@@ -72,10 +70,28 @@ To guarantee zero-loss payout account onboarding:
    - Polls `GET /v1/fund_accounts/validations/:fav_id` and verifies `validation.referenceId === consultantProfileId` (`404 RPD_NOT_YOURS` on mismatch).
    - Acquires short-lived Redis mutex `rpd:settle:<validationId>` (30s TTL), creates RazorpayX Contact + FundAccount (`fa_...`), and writes the verified `PayoutAccount` row in Postgres.
 3. **Path B — Server-Side Webhook Completion (`fund_account.validation.completed` / `fund_account.validation.failed`)**:
-   - Verified at `POST /api/webhooks/razorpay` via `isPayoutEventName(body)` (`event.startsWith("fund_account.")`) under `RAZORPAYX_WEBHOOK_SECRET` (or `RAZORPAY_WEBHOOK_SECRET`), deduplicated on `${eventType}:${entityId}:${sha256(rawBody).slice(0, 16)}`.
+   - Verified at `POST /api/webhooks/razorpay` via `isPayoutEventName(body)` (`event.startsWith("fund_account.")`) under `RAZORPAYX_WEBHOOK_SECRET` (or `RAZORPAY_WEBHOOK_SECRET`), deduplicated on `${eventType}:${entityId}:${x-razorpay-event-id | sha256(rawBody).slice(0, 16)}`.
    - Normalizes both standard penny-drop (`results`) and RPD (`validation_results`) payloads through `summariseFundAccountValidation` (`lib/payments/payouts/razorpay-payouts.ts`), requiring `eventType === "fund_account.validation.completed"` **and** explicit `accountStatus === "valid"` (`account_status === "active"`).
    - Matches authoritatively on `razorpayFundAccId` (`PayoutAccount`) / `razorpayFundAccountId` (`OrganizationPayoutAccount`) when present — never joining `razorpayFundAccId` and `consultantProfileId` via `OR` — so swapping bank accounts mid-validation never marks an unvalidated replacement account as verified.
    - On `fund_account.validation.failed` (or non-active validation outcome): transitions `OrganizationPayoutAccount` (`PENDING_VERIFICATION -> FAILED_VERIFICATION`) via CAS `updateMany`, matching on `razorpayFundAccountId` when `fund_account.id` is present and falling back to `{ id: referenceId, status: "PENDING_VERIFICATION" }` when `entity.fund_account` is `null`.
+
+---
+
+## 5. Gateway Behaviour Read From Razorpay's Pages
+
+Read on 2026-11-23 from the pages cited below.
+
+- **`registered_name` is the bank's name.** It is "The name linked to the account" ([Validation entity](https://razorpay.com/docs/api/x/account-validation/entity/)) and "The account holder's full name as registered with their bank" ([Reverse Penny Drop](https://razorpay.com/docs/api/x/account-validation/reverse-penny-drop/)). In `lib/payments/payouts/reverse-penny-drop.ts`, `persistVerifiedAccount` uses it as the account holder name (falling back to the consultant's profile name), and `applyVerifiedFundAccountUpdate` on the webhook path sets `accountHolderName` only when it is present.
+- **`name_match_score` is defined only on the composite pages.** [Composite Account Validation Entity](https://razorpay.com/docs/api/x/composite-account-validation/entity/) says: "A score between 0 - 100. 100 : The name provided by you and the bank registered name are the same. 0 : There is no match ... Between 0 & 100 : There is a partial match". The non-composite pages say less: "The percentage score indicating how closely the account holder's name matches the records" (entity and bank-account pages, type `string`) and "A numeric score indicating how closely ..." (Reverse Penny Drop page, type `integer`). The type disagrees across pages and so do the samples: the Reverse Penny Drop sample returns the string `"00"`, both VPA samples, including the `failed` one, return the number `100`, and `null` appears in the `created` and `failed` samples on the composite bank-account page and the failed `fund_account.validation.failed` sample on the webhooks page. A non-null score is therefore no evidence that the validation completed or that the account is active. `summariseFundAccountValidation` turns `null`, `undefined` and `""` into `null` and anything else through `Number()`, so `"00"` becomes `0`.
+- **Nothing gates on the score.** `app/api/consultant/payout-accounts/[id]/route.ts` returns `nameMatchScore` to the client, and no server code compares it with a threshold.
+- **The result key differs from the parameter table.** The sample responses on the bank-account page show `results` (with `account_status` and `registered_name` only), while the same page's response parameters describe `validation_results` (with `name_match_score`). The code reads `validation_results ?? results`.
+
+Rules when changing these functions:
+
+- Decide validity only through `summariseFundAccountValidation` (`status === "completed"` and `account_status === "active"`); never from `name_match_score` or `registered_name`.
+- Keep the `validation_results ?? results` fallback and the `null`/string/number handling of `name_match_score`.
+- Keep `registered_name` optional in `persistVerifiedAccount` and `applyVerifiedFundAccountUpdate`; a missing name must not block verification.
+- Verify with `npx jest __tests__/payments/audit-hardening-regressions.test.ts __tests__/payments/razorpay-webhook-megafix.test.ts`.
 
 ---
 

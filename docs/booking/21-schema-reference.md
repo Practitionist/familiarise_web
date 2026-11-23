@@ -16,7 +16,7 @@ One row per held call. The table below lists its columns.
 | `appointmentId` (`Cascade`)                                            | The purchase this call belongs to.                                                                                                                                                                                                                                 |
 | `consultantProfileId?`                                                 | Denormalized from the appointment for the DB-level overlap guard (#440). Nullable for attendee (webinar/class) rows, which the partial-index guard excludes; many same-window rows per event are legitimate there.                                                 |
 | `meeting`                                                              | The `Meeting` row for this call, if one has been created.                                                                                                                                                                                                          |
-| `attendances`                                                          | The `MeetingAttendance` rows stamped against this occurrence — #1554 keys attendance to the call itself, so the "were you there" gate reads it without a join through `Meeting`.                                                                                   |
+| `attendances`                                                          | Retired `MeetingAttendance` rows; nothing writes them, and only the rating gate's pre-rollout arm and the retention prune read them, until the table is dropped at the next schema step. Who attended is read from `presences`, Stream's settled record.           |
 | `deletedAt?`                                                           | Soft-delete tombstone (#676), mirroring `Appointment.deletedAt`.                                                                                                                                                                                                   |
 
 The table below lists the occurrence row's indexes and sidecar constraints.
@@ -101,6 +101,10 @@ One row per Stream call. The table below lists its columns.
 | `isRecording`, `recordingStartedAt?`, `recordingStartedBy?` | Recording state; `recordingStartedBy` is the userId who started it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `endedAt?`, `endedReason?`                                  | When and why the session lifecycle ended. `endedReason` stays a string but holds only the values in `MEETING_END_REASONS` (`lib/meetings/end-reasons.ts`: `call_ended`, `maintenance`, `org_deactivated`, `org_deleted`, `session_timeout`, `ended_early`, `stream_ended`, `reconciled`, `reconciled_no_end`, `stream_not_found`, `stream_not_configured`); the sidecar CHECK `meeting_ended_reason_known` (`prisma/sql/check-constraints.sql`) enforces it. `END_REASON_POLICY` says whether each reason is deliberate, rejoinable, host-reopenable and what it means for money. |
 | `extendedSeconds`, `extensionsUsed`                         | The host's room extension (default 0 and 0; one 900-second extension at most). The room end is `AppointmentOccurrence.endsAt + extendedSeconds`; the booked `endsAt` is never moved by an extension.                                                                                                                                                                                                                                                                                                                                                                              |
+| `attendanceSettledAt?` (`Timestamptz`)                      | When Stream's settled participant record of every call and session of the occurrence was stored as its `MeetingPresence` rows. Set once, by compare-and-set, in that same transaction (`settleOccurrenceAttendance` in `lib/meetings/settle-attendance.ts`); `endedAt` records only that the room closed.                                                                                                                                                                                                                                                                         |
+| `streamReportReadySessionIds` (default empty)               | Stream sessions of the occurrence whose stats report Stream announced ready (`call.stats_report_ready`); a session listed here needs no other corroboration when attendance settles, six hours after the room end.                                                                                                                                                                                                                                                                                                                                                                |
+| `lastStreamSessionId?`                                      | The latest Stream session the room-state webhooks (join, session end, call end) saw on the room's call; the settle step requires session stats to list it.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `lastJoinedAt?` (`Timestamptz`)                             | The latest participant join a webhook reported on the room's call; a non-deliberate end older than it never stamps.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `appointmentOccurrenceId` (unique, `Cascade`)               | The one call this meeting is for. #1554 renamed this relation from the slot-era name; it is `@unique` because a call has exactly one `Meeting`.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `organizationId?` (`SetNull`)                               | Denormalized from `occurrence.appointment.organizationId` so org-scoped Stream-call audit queries index directly on `(organizationId, createdAt)` instead of joining `Meeting` → `AppointmentOccurrence` → `Appointment`. Nullable because platform calls (personal bookings) have no org context; written once at `Meeting.create` and never updated after.                                                                                                                                                                                                                      |
 
@@ -113,33 +117,38 @@ The table below lists the row's indexes.
 
 ## `MeetingAttendance`
 
-Per-participant join/leave audit for a call (STR-4, #689). The table below lists its columns.
+Retired. It was a per-person join and leave summary written by the participant webhooks; nothing writes it now. The rating gate still reads it for sessions held before the settled record (so every session the earlier rule accepted stays rateable), and the three-year retention prune deletes from it; the owner drops the table at the next schema step, which ends that arm. Attendance is the `MeetingPresence` rows that `settleOccurrenceAttendance` stores from Stream's settled record.
 
-| Column                                                  | Why it exists                                                                                                                                                               |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `meetingId` (`Cascade`)                                 | The call this attendance row is about.                                                                                                                                      |
-| `appointmentOccurrenceId` (`Cascade`)                   | #1554 — the occurrence this attendance belongs to, stamped by the participant webhook so the rating gate can read "you were at THIS call" without a join through `Meeting`. |
-| `userId`                                                | The attendee.                                                                                                                                                               |
-| `firstJoinedAt`, `lastLeftAt?`, `joinCount` (default 1) | The join/leave record and rejoin count.                                                                                                                                     |
+## `MeetingPresence`
+
+Stream's settled participant record of a call, one row per device stay, written only by `settleOccurrenceAttendance` in the transaction that sets `Meeting.attendanceSettledAt`. The classifier, the no-show detector, the rating gate and the attendance views read it. The table below lists its columns. Rows written by the retired webhook mirror can still exist on a room that never settled, so a reader trusts these rows only when the room's `Meeting.attendanceSettledAt` is set, as `heldOccurrence` (`lib/reviews.ts`), the dispute route, the sponsored-seat list and the host attendance view do.
+
+| Column                                 | Why it exists                                                                                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `meetingId`, `appointmentOccurrenceId` | The room and the occurrence the stay belongs to.                                                         |
+| `userId`, `userSessionId`              | Stream's user id (equal to `User.id`) and its per-device session id.                                     |
+| `streamCallId?`                        | The call the stay came from, so an occurrence read under a rotated call id keeps both; set on every row. |
+| `joinedAt`, `leftAt?` (`Timestamptz`)  | Stream's join and leave, to the millisecond; a settled row always has a leave.                           |
+| `closedByEnd` (default `false`)        | Retired; always false on a settled row, and dropped at the next schema step.                             |
 
 The table below lists the row's unique and indexes.
 
-| Index                                        | Why it exists                                                   |
-| -------------------------------------------- | --------------------------------------------------------------- |
-| `@@unique([meetingId, userId])`              | One attendance row per person per call.                         |
-| `@@index([meetingId])`, `@@index([userId])`  | The two lookup directions.                                      |
-| `@@index([appointmentOccurrenceId, userId])` | The rating gate's "did this user attend this occurrence" check. |
+| Index                                                 | Why it exists                                             |
+| ----------------------------------------------------- | --------------------------------------------------------- |
+| `@@unique([meetingId, userSessionId])`                | One row per device stay, so a repeated insert is skipped. |
+| `@@index([appointmentOccurrenceId])`                  | The per-occurrence read of the sweep and the rating gate. |
+| `@@index([meetingId, userId])`, `@@index([joinedAt])` | Per-person reads and the usage estimate's time range.     |
 
 ## `RecordingConsent`
 
 One standing consent decision per person per meeting (#1134 P1-7). The table below lists its columns.
 
-| Column                                               | Why it exists                                                                                             |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `meetingId` (`Cascade`)                              | The call the consent is about.                                                                            |
-| `userId`                                             | Stream user id, equal to `User.id`, matching `MeetingAttendance.userId` and `Meeting.recordingStartedBy`. |
-| `decision` (`RecordingConsentDecision`), `decidedAt` | The standing decision and when it was made; changing your mind updates the same row.                      |
-| `noticeVersion` (default 1)                          | Which notice text was shown, bumped when the wording changes materially.                                  |
+| Column                                               | Why it exists                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `meetingId` (`Cascade`)                              | The call the consent is about.                                                                          |
+| `userId`                                             | Stream user id, equal to `User.id`, matching `MeetingPresence.userId` and `Meeting.recordingStartedBy`. |
+| `decision` (`RecordingConsentDecision`), `decidedAt` | The standing decision and when it was made; changing your mind updates the same row.                    |
+| `noticeVersion` (default 1)                          | Which notice text was shown, bumped when the wording changes materially.                                |
 
 The table below lists the row's unique and indexes.
 

@@ -9,8 +9,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
  */
 
 jest.mock("@/hooks/use-media-query", () => ({ useMediaQuery: () => true }));
+jest.mock("@/hooks/use-toast", () => ({
+  useToast: () => ({ toast: jest.fn() }),
+}));
+jest.mock("@/lib/auth/reauth-client", () => ({
+  fetchWithReauth: (url: string, init: RequestInit) => fetch(url, init),
+}));
 
+import { z } from "zod";
 import { SessionOutcomesCard } from "@/components/dashboard/backoffice/money/SessionOutcomesCard";
+import { rereadToast } from "@/components/dashboard/backoffice/money/RereadAttendanceDialog";
+import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
 import {
   needsHumanQuerySchema,
   type NeedsHumanItem,
@@ -27,6 +36,7 @@ const item: NeedsHumanItem = {
   lostMinutes: 40,
   endedReason: null,
   aged: true,
+  canRereadAttendance: true,
   booking: {
     type: "CONSULTATION",
     title: "Career chat",
@@ -114,4 +124,56 @@ it("takes the error path on a 200 whose body is not a queue page", async () => {
     (await screen.findAllByRole("button", { name: /retry|try again/i })).length,
   ).toBeGreaterThan(0);
   expect(screen.queryByText("Nothing is waiting.")).not.toBeInTheDocument();
+});
+
+it("the re-read door posts a reason the route's schema accepts, and words what Stream's record shows", async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <SessionOutcomesCard onOpenBooking={jest.fn()} />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(
+    (
+      await screen.findAllByRole("button", {
+        name: "Read from Stream again for Career chat, 1 Nov 2026, 3:30 pm IST",
+      })
+    )[0],
+  );
+  fireEvent.change(screen.getByRole("textbox"), {
+    target: { value: "Stream was down for a day" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Read from Stream" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([url]) => url.endsWith("/attendance")),
+    ).toBe(true),
+  );
+  const [url, init] = fetchMock.mock.calls.find(([u]) =>
+    u.endsWith("/attendance"),
+  ) as unknown as [string, RequestInit];
+  expect(url).toBe("/api/admin/sessions/occ-1/attendance");
+  expect(init.method).toBe("POST");
+  // The route's body: its (empty) shape plus the required reason.
+  expect(
+    z
+      .object({})
+      .extend({ reason: opsReasonSchema })
+      .strict()
+      .parse(JSON.parse(String(init.body))),
+  ).toEqual({ reason: "Stream was down for a day" });
+
+  expect(
+    rereadToast({
+      result: "settled",
+      verdict: { outcome: "HELD", deliveredMinutes: 58, lostMinutes: 2 },
+    }),
+  ).toBe(
+    "Stream's record is stored. It reads as Held, 58 minutes delivered; set the outcome to apply it.",
+  );
+  expect(rereadToast({ result: "unavailable", verdict: null })).toMatch(
+    /did not answer/,
+  );
+  expect(rereadToast({ result: "out-of-time", verdict: null })).toBe(
+    "Stream took too long to answer, so nothing was stored; read it again.",
+  );
 });

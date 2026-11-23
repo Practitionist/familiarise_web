@@ -115,8 +115,8 @@ it("Subscriptions opens the booking on Appointments, never the missing /bookings
   expect(document.querySelector('a[href*="/bookings"]')).toBeNull();
 });
 
-it("Dispute detail names the gateway, the method and the booking, and goes back to the Money tab", async () => {
-  serve(() => ({
+function disputeDetail(overrides: Record<string, unknown> = {}) {
+  return {
     id: "d1",
     disputeId: "disp_1",
     amountPaise: 150_000,
@@ -150,10 +150,20 @@ it("Dispute detail names the gateway, the method and the booking, and goes back 
         createdAt: "2026-11-01T00:00:00Z",
       },
       occurrences: { total: 0, completedCount: 0, outcomes: [] },
-      attendance: { presentCount: 0, recordsFound: false, summary: "None." },
+      attendance: {
+        presentCount: 0,
+        recordsFound: false,
+        pendingSessions: 0,
+        summary: "None.",
+      },
       supportHistory: { ticketCount: 0, openCount: 0, threads: [] },
     },
-  }));
+    ...overrides,
+  };
+}
+
+it("Dispute detail names the gateway, the method and the booking, and goes back to the Money tab", async () => {
+  serve(() => disputeDetail());
   withQuery(<DisputeDetailPage disputeId="d1" />);
   await screen.findAllByText("Career coaching");
   expect(screen.getByText("Razorpay")).toBeTruthy();
@@ -164,6 +174,23 @@ it("Dispute detail names the gateway, the method and the booking, and goes back 
     "href",
     "/dashboard/admin/money/disputes",
   );
+});
+
+it.each([
+  ["opens evidence on an open dispute before its deadline", 2, true],
+  ["offers no evidence once the deadline has passed", -1, false],
+])("Dispute detail %s", async (_, dueInDays, offered) => {
+  serve(() =>
+    disputeDetail({
+      status: "NEEDS_RESPONSE",
+      dueBy: new Date(Date.now() + dueInDays * 86_400_000).toISOString(),
+    }),
+  );
+  withQuery(<DisputeDetailPage disputeId="d1" />);
+  await screen.findAllByText("Career coaching");
+  expect(
+    screen.queryByRole("button", { name: "Submit Evidence" }) !== null,
+  ).toBe(offered);
 });
 
 const paymentTrace = (paymentIds: string[]): EntityTrace => ({
