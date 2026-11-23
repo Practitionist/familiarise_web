@@ -193,6 +193,25 @@ describe("pending-age gauges", () => {
     expect(idle).toEqual(due);
     // No parked capture: the fake finds no payment.
     expect(pendingAges).toEqual({ ...ages, parkedCaptures: 0 });
+    expect(gaugeReads).toBe(1);
+    expect(starts.filter((s) => s.model === "payment")).toHaveLength(1);
+  });
+
+  it("starts no parked-capture read once the gauge statement spends the budget", async () => {
+    gaugeRows = () => {
+      clock = IDLE_PROBE_BUDGET_MS;
+      return [ages];
+    };
+    const { idle, pendingAges } = await probeTick(
+      due,
+      fakeDb(() => 10) as never,
+      new Date(),
+    );
+
+    expect(idle).toEqual(due);
+    expect(gaugeReads).toBe(1);
+    expect(starts.map((s) => s.model)).not.toContain("payment");
+    expect(pendingAges).toBeNull();
   });
 
   it("keeps the idle answers and reports no gauges when the gauge read fails", async () => {

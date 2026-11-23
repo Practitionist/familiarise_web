@@ -61,7 +61,7 @@ export async function probeTick(
         }
         if (failed.length > 0 || outOfTime()) return;
         try {
-          result.pendingAges = await readPendingAges(tx, now);
+          result.pendingAges = await readPendingAges(tx, now, outOfTime);
         } catch {
           console.warn(JSON.stringify({ event: "pending-ages-failed" }));
         }

@@ -48,9 +48,20 @@ const sqlGaugesSchema = pendingAgesSchema.omit({ parkedCaptures: true });
  * Every watched queue's oldest-pending age, 0 when nothing is past its due point:
  * one statement, then the parked-capture queue's first row through the page's own
  * `where`. `OrganizationInvoice` and `WebhookEvent` keep UTC `timestamp` columns,
- * read `AT TIME ZONE 'UTC'`.
+ * read `AT TIME ZONE 'UTC'`. With `outOfTime`, the second statement starts only
+ * while it is false, and the result is null otherwise.
  */
-export async function readPendingAges(tx: Tx, now: Date): Promise<PendingAges> {
+export async function readPendingAges(tx: Tx, now: Date): Promise<PendingAges>;
+export async function readPendingAges(
+  tx: Tx,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<PendingAges | null>;
+export async function readPendingAges(
+  tx: Tx,
+  now: Date,
+  outOfTime: () => boolean = () => false,
+): Promise<PendingAges | null> {
   const dunnable = Prisma.join([...DUNNABLE_ORG_STATUSES]);
   const reminderSecs = REMINDER_INTERVAL_MS / 1000;
   const rows = await tx.$queryRaw(Prisma.sql`
@@ -112,6 +123,7 @@ export async function readPendingAges(tx: Tx, now: Date): Promise<PendingAges> {
       )} AS "notificationRetries"
   `);
   const [ages] = z.tuple([sqlGaugesSchema]).parse(rows);
+  if (outOfTime()) return null;
   const parked = await tx.payment.findFirst({
     where: PARKED_CAPTURE_WHERE,
     orderBy: parkedCaptureOrder("asc"),
