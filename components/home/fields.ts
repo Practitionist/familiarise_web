@@ -54,12 +54,24 @@ export const FIELD_TILES: FieldTile[] = [
     label: "Technology",
     icon: Code,
     subtopics: ["AI & ML", "Data science", "System design"],
+    photo: {
+      src: "/images/fields/technology.webp",
+      alt: "A tidy desk with a keyboard, tablet and notebook seen from above",
+      credit:
+        "Vadim Sherbakov, Unsplash (unsplash.com/photos/Hi9GSwWkCJk), via Lorem Picsum",
+    },
   },
   {
     domain: "Business",
     label: "Business & product",
     icon: Briefcase,
     subtopics: ["Product management", "Startups", "Sales & marketing"],
+    photo: {
+      src: "/images/fields/business.webp",
+      alt: "A wallet, notebook, watch and other work essentials laid out on a desk",
+      credit:
+        "Vadim Sherbakov, Unsplash (unsplash.com/photos/tCICLJ5ktBE), via Lorem Picsum",
+    },
   },
   {
     domain: "Finance",
@@ -72,18 +84,36 @@ export const FIELD_TILES: FieldTile[] = [
     label: "Creative Arts",
     icon: Palette,
     subtopics: ["Design", "Writing", "Music"],
+    photo: {
+      src: "/images/fields/creative-arts.webp",
+      alt: "A hand adjusting faders on a music mixing desk",
+      credit:
+        "Drew Patrick Miller, Unsplash (unsplash.com/photos/_o6AAx9dl_Y), via Lorem Picsum",
+    },
   },
   {
     domain: "Health",
     label: "Health",
     icon: HeartPulse,
     subtopics: ["Fitness", "Nutrition", "Wellbeing"],
+    photo: {
+      src: "/images/fields/health.webp",
+      alt: "Fresh vegetables and peppercorns on a chopping board",
+      credit:
+        "Webvilla, Unsplash (unsplash.com/photos/hv1MrBzGGNY), via Lorem Picsum",
+    },
   },
   {
     domain: "Personal Development",
     label: "Personal Development",
     icon: Sprout,
     subtopics: ["Communication", "Leadership", "Productivity"],
+    photo: {
+      src: "/images/fields/personal-development.webp",
+      alt: "An open book on a wooden table",
+      credit:
+        "Alejandro Escamilla, Unsplash (unsplash.com/photos/cZhUxIQjILg), via Lorem Picsum",
+    },
   },
   {
     domain: "Languages",
