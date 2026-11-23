@@ -1,4 +1,11 @@
-import { ArrowUpRight, ChevronRight } from "lucide-react";
+import {
+  ArrowUpRight,
+  CalendarDays,
+  ChevronRight,
+  CircleCheck,
+  MessageSquareText,
+  Video,
+} from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -7,141 +14,173 @@ import { Button } from "@/components/ui/button";
 import { domainPath } from "@/lib/explore/domain-slug";
 import { cn } from "@/utils/tailwind";
 import {
-  FIELD_TILES,
+  FIELD_GROUPS,
   GOAL_LINKS,
-  SUBTOPIC_TILES,
-  type FieldTile,
-  type SubtopicTile,
+  type FieldGroup,
+  type FieldMockup,
 } from "./fields";
 
-type FieldSize = "hero" | "wide" | "small";
-
-// The first field fills a 2x2 cell, the next two a 2x1 cell each, and the rest one cell.
-const FIELD_SIZE_CLASSES: Record<FieldSize, string> = {
-  hero: "col-span-2 row-span-2 min-h-[22rem]",
-  wide: "col-span-2",
-  small: "col-span-1",
+const SPAN_CLASSES: Record<number, string> = {
+  2: "lg:col-span-2",
+  3: "lg:col-span-3",
+  5: "lg:col-span-5",
 };
 
-function fieldSize(index: number): FieldSize {
-  if (index === 0) return "hero";
-  return index < 3 ? "wide" : "small";
+/** Wide-narrow, then narrow-wide, on five columns; the last tile stretches to close an unfinished row. */
+function tileSpans(count: number): number[] {
+  const spans = Array.from({ length: count }, (_, i) =>
+    i % 4 === 0 || i % 4 === 3 ? 3 : 2,
+  );
+  const remainder = spans.reduce((sum, span) => sum + span, 0) % 5;
+  if (remainder > 0) spans[count - 1] += 5 - remainder;
+  return spans;
 }
 
 function expertCount(count: number): string {
   return count === 1 ? "1 expert" : `${count} experts`;
 }
 
-const DOT_GRID_STYLE = {
-  backgroundImage:
-    "radial-gradient(rgba(255,255,255,0.14) 1px, transparent 1.5px)",
-  backgroundSize: "20px 20px",
-  maskImage:
-    "radial-gradient(ellipse 80% 80% at 100% 0%, #000 20%, transparent 70%)",
-  WebkitMaskImage:
-    "radial-gradient(ellipse 80% 80% at 100% 0%, #000 20%, transparent 70%)",
-} as const;
+const MOCKUP_CARD =
+  "rounded-2xl bg-white/90 p-4 shadow-elevation-2 backdrop-blur";
 
-function FieldCard({
-  field,
-  count,
-  size,
-}: Readonly<{ field: FieldTile; count: number; size: FieldSize }>) {
-  const Icon = field.icon;
-  const hero = size === "hero";
-  return (
-    <Link
-      href={domainPath(field.domain)}
-      className={cn(
-        "group relative flex flex-col overflow-hidden rounded-2xl bg-zinc-950 p-5 text-white transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:p-6",
-        FIELD_SIZE_CLASSES[size],
-      )}
-    >
-      {field.photo ? (
-        <>
-          <Image
-            src={field.photo.src}
-            alt={field.photo.alt}
-            fill
-            sizes={
-              size === "small"
-                ? "(min-width: 1024px) 25vw, 50vw"
-                : "(min-width: 1024px) 50vw, 100vw"
-            }
-            className="object-cover transition-transform duration-500 group-hover:scale-105"
-          />
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-black/10"
-          />
-        </>
-      ) : (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          style={DOT_GRID_STYLE}
-        />
-      )}
-      <div className="relative flex items-start justify-between gap-4">
-        <span
-          className={cn(
-            "flex shrink-0 items-center justify-center rounded-xl bg-white/10 backdrop-blur-sm",
-            hero ? "h-12 w-12" : "h-10 w-10",
-          )}
-        >
-          <Icon aria-hidden="true" className={hero ? "h-6 w-6" : "h-5 w-5"} />
-        </span>
-        <ArrowUpRight
-          aria-hidden="true"
-          className="h-5 w-5 shrink-0 text-zinc-300 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-        />
-      </div>
-      <div className="relative mt-auto pt-6">
-        <h3
-          className={cn(
-            "font-semibold tracking-tight",
-            hero ? "text-3xl" : size === "wide" ? "text-2xl" : "text-lg",
-          )}
-        >
-          {field.label}
-        </h3>
-        <p
-          className={cn(
-            "mt-1 text-sm text-zinc-300",
-            size === "small" && "line-clamp-1",
-          )}
-        >
-          {field.subtopics.join(" · ")}
-        </p>
-        <p className="mt-3 text-sm font-medium">{expertCount(count)}</p>
-      </div>
-    </Link>
-  );
+/** Decorative product snippets; they illustrate the kind of session, not real bookings. */
+function Mockup({ kind }: Readonly<{ kind: FieldMockup }>) {
+  switch (kind) {
+    case "live":
+      return (
+        <div className="flex items-center gap-3 rounded-2xl bg-zinc-950 px-4 py-3 text-white shadow-elevation-2">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-red-500" />
+          </span>
+          <div>
+            <p className="text-xs text-zinc-400">Live now</p>
+            <p className="text-sm font-medium">System design review</p>
+          </div>
+          <Video className="ml-2 h-4 w-4 text-zinc-400" />
+        </div>
+      );
+    case "slots":
+      return (
+        <div className={cn(MOCKUP_CARD, "w-full max-w-xs")}>
+          <p className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+            <CalendarDays className="h-4 w-4" />
+            Book a 1:1 session
+          </p>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-medium">
+            <span className="rounded-lg border border-zinc-200 py-2 text-zinc-700">
+              4:00 PM
+            </span>
+            <span className="rounded-lg bg-zinc-950 py-2 text-white">
+              5:30 PM
+            </span>
+            <span className="rounded-lg border border-zinc-200 py-2 text-zinc-700">
+              7:00 PM
+            </span>
+          </div>
+          <p className="mt-3 rounded-lg bg-emerald-600 py-2 text-center text-xs font-semibold text-white">
+            Confirm booking
+          </p>
+        </div>
+      );
+    case "review":
+      return (
+        <div className={cn(MOCKUP_CARD, "w-full max-w-xs")}>
+          <div className="h-16 rounded-xl bg-gradient-to-br from-rose-300 via-orange-200 to-amber-100" />
+          <div className="mt-3 flex items-start gap-2">
+            <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+            <p className="text-xs text-zinc-700">
+              Strong palette. Give the cards more breathing room.
+            </p>
+          </div>
+        </div>
+      );
+    case "progress":
+      return (
+        <div className={cn(MOCKUP_CARD, "w-60")}>
+          <p className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+            <CircleCheck className="h-4 w-4 text-lime-600" />
+            This month&apos;s plan
+          </p>
+          <div className="mt-3 h-2 rounded-full bg-zinc-100">
+            <div className="h-2 w-3/4 rounded-full bg-lime-500" />
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">3 of 4 sessions done</p>
+        </div>
+      );
+  }
 }
 
-function SubtopicCard({ subtopic }: Readonly<{ subtopic: SubtopicTile }>) {
-  const Icon = subtopic.icon;
+function GroupTile({
+  group,
+  domains,
+  span,
+}: Readonly<{
+  group: FieldGroup;
+  domains: { name: string; count: number }[];
+  span: number;
+}>) {
+  const wide = span > 2;
   return (
-    <Link
-      href={`/explore/experts?search=${encodeURIComponent(subtopic.search)}`}
-      className="group col-span-1 flex flex-col justify-between rounded-2xl border border-border bg-card p-5 transition-all duration-300 hover:-translate-y-1 hover:border-foreground/30 hover:shadow-elevation-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <article
+      className={cn(
+        "relative flex min-h-[26rem] flex-col overflow-hidden rounded-3xl bg-gradient-to-br p-7 md:p-9",
+        group.tint,
+        SPAN_CLASSES[span],
+      )}
     >
-      <div className="flex items-start justify-between gap-4">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-white">
-          <Icon aria-hidden="true" className="h-5 w-5" />
-        </span>
-        <ArrowUpRight
-          aria-hidden="true"
-          className="h-5 w-5 shrink-0 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-        />
-      </div>
-      <div className="pt-6">
-        <h3 className="font-semibold tracking-tight text-foreground">
-          {subtopic.label}
+      <div className={cn("relative z-10", wide && "lg:max-w-[50%]")}>
+        <h3 className="text-2xl font-semibold tracking-tight text-zinc-900 md:text-3xl">
+          {group.title}
         </h3>
-        <p className="mt-1 text-sm text-muted-foreground">Search experts</p>
+        <p className="mt-3 text-base leading-relaxed text-zinc-700">
+          {group.benefit}
+        </p>
+        <ul className="mt-5 flex flex-wrap gap-2">
+          {domains.map(({ name, count }) => (
+            <li key={name}>
+              <Link
+                href={domainPath(name)}
+                className="group inline-flex items-center gap-1.5 rounded-full bg-white/80 px-4 py-2 text-sm font-medium text-zinc-900 shadow-elevation-1 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {name}
+                <span className="text-zinc-500">· {expertCount(count)}</span>
+                <ArrowUpRight
+                  aria-hidden="true"
+                  className="h-4 w-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                />
+              </Link>
+            </li>
+          ))}
+        </ul>
       </div>
-    </Link>
+
+      <div
+        aria-hidden="true"
+        className={cn(
+          "relative mt-8 flex flex-1 items-end",
+          wide ? "lg:absolute lg:inset-y-8 lg:right-8 lg:mt-0 lg:w-[44%]" : "",
+        )}
+      >
+        {group.photo ? (
+          <div className="relative h-56 w-full overflow-hidden rounded-2xl shadow-elevation-2 lg:h-full">
+            <Image
+              src={group.photo.src}
+              alt=""
+              fill
+              sizes="(min-width: 1024px) 26vw, 100vw"
+              className="object-cover"
+            />
+            <div className="absolute bottom-4 left-4 right-4 flex">
+              <Mockup kind={group.mockup} />
+            </div>
+          </div>
+        ) : (
+          <div className="flex w-full justify-end">
+            <Mockup kind={group.mockup} />
+          </div>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -151,16 +190,17 @@ export function CategoriesSection({
   /** Verified consultant counts keyed by lowercased domain name. */
   consultantsByDomain: Record<string, number>;
 }>) {
-  const countFor = (domain: string) =>
-    consultantsByDomain[domain.toLowerCase()] ?? 0;
-  // Demand order decides the sequence; a field or subtopic shows only while its field has verified experts.
-  const fields = FIELD_TILES.map((field) => ({
-    field,
-    count: countFor(field.domain),
-  })).filter(({ count }) => count > 0);
-  const subtopics = SUBTOPIC_TILES.filter(
-    (subtopic) => countFor(subtopic.domain) > 0,
-  );
+  // A tile shows while any of its domains has verified experts, and lists only those domains.
+  const groups = FIELD_GROUPS.map((group) => ({
+    group,
+    domains: group.domains
+      .map((name) => ({
+        name,
+        count: consultantsByDomain[name.toLowerCase()] ?? 0,
+      }))
+      .filter(({ count }) => count > 0),
+  })).filter(({ domains }) => domains.length > 0);
+  const spans = tileSpans(groups.length);
 
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-white to-zinc-50 relative overflow-hidden">
@@ -182,17 +222,14 @@ export function CategoriesSection({
           </p>
         </div>
 
-        <div className="grid grid-flow-row-dense auto-rows-[minmax(11rem,auto)] grid-cols-2 gap-4 lg:grid-cols-4">
-          {fields.map(({ field, count }, index) => (
-            <FieldCard
-              key={field.domain}
-              field={field}
-              count={count}
-              size={fieldSize(index)}
+        <div className="grid gap-4 lg:grid-cols-5">
+          {groups.map(({ group, domains }, index) => (
+            <GroupTile
+              key={group.title}
+              group={group}
+              domains={domains}
+              span={spans[index]}
             />
-          ))}
-          {subtopics.map((subtopic) => (
-            <SubtopicCard key={subtopic.label} subtopic={subtopic} />
           ))}
         </div>
 
