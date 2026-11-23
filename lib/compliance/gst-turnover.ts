@@ -27,7 +27,7 @@ export interface GstTurnoverCheck {
 
 /**
  * Checkout flags these real sales as mock too; a flagged CARD row is a development mock.
- * LICENSE is left out until the owner values it (GST-inclusive list price or contract fee).
+ * LICENSE is absent: the alarm runs only while unregistered, when checkout refuses every org rail.
  */
 const CHECKOUT_CONFIRMED_SALE_METHODS = ["WALLET", "INVOICE", "CREDITS"];
 
