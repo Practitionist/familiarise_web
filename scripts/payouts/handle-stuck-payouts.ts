@@ -3,7 +3,8 @@
  *
  * Handles payouts stuck in PROCESSING status for too long.
  * Queries payment gateways to get actual status and updates DB.
- * Retries failed payouts up to MAX_RETRIES.
+ * Retries a payout the gateway never received up to
+ * PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS attempts, then fails it.
  *
  * This catches cases where:
  * - Payout webhook was missed or delayed
@@ -34,6 +35,7 @@ import {
 } from "@/lib/payments/payouts";
 import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
 import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
+import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import {
   type PayoutLookup,
   WEBHOOK_STATUS_MAP,
@@ -55,9 +57,6 @@ import { createRunFailureReporter } from "@/lib/observability/run-failures";
 
 // Consider payouts stuck if in PROCESSING for more than 24 hours
 const STUCK_THRESHOLD_HOURS = 24;
-
-// Maximum retry attempts before marking as permanently FAILED
-const MAX_RETRIES = 3;
 
 export interface StuckPayoutsResult {
   success: boolean;
@@ -269,13 +268,19 @@ async function handleStuckPayoutsUnlocked(
       if (!providerPayoutId) {
         console.log(`   Gateway holds no payout for this reference`);
 
-        if (payout.retryCount >= MAX_RETRIES) {
+        // A re-arm that would reach the ceiling fails instead, so the disbursement run never strands it APPROVED.
+        if (payout.retryCount + 1 >= PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS) {
           // #1205-triage — CAS the terminal flip inside the same tx as the
           // earnings release: without the PROCESSING guard, a concurrently
           // completing gateway webhook could be overwritten by this FAILED.
           const cas = await prisma.$transaction(async (tx) => {
+            // Only the confirmed "none" releases earnings: a gateway id bound meanwhile means a payout exists.
             const claimed = await tx.consultantPayout.updateMany({
-              where: { id: payout.id, status: PayoutStatus.PROCESSING },
+              where: {
+                id: payout.id,
+                status: PayoutStatus.PROCESSING,
+                providerPayoutId: null,
+              },
               data: {
                 status: PayoutStatus.FAILED,
                 failureReason:
@@ -303,12 +308,13 @@ async function handleStuckPayoutsUnlocked(
             await releaseClawbackRecovery(tx, payout.id);
             return { released: released.count, claimed: true };
           });
-          failedCount++;
           if (!cas.claimed) {
+            skippedCount++;
             console.log(
               `   Skipped — payout left PROCESSING concurrently (webhook won)`,
             );
           } else {
+            failedCount++;
             console.log(
               `   Marked as permanently FAILED (max retries reached); released ${cas.released} earning(s)`,
             );
@@ -527,7 +533,7 @@ async function handleStuckOrgPayouts(
   };
   const stuck = await prisma.organizationPayout.findMany({
     where: stuckPayoutWhere(stuckThreshold),
-    select: { id: true, gatewayPayoutId: true },
+    select: { id: true, gatewayPayoutId: true, updatedAt: true },
     orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
     take: limit,
   });
@@ -559,7 +565,7 @@ async function handleStuckOrgPayouts(
 }
 
 async function reconcileStuckOrgPayout(
-  payout: { id: string; gatewayPayoutId: string | null },
+  payout: { id: string; gatewayPayoutId: string | null; updatedAt: Date },
   run: StuckOrgPayoutsRun,
 ): Promise<void> {
   let gatewayPayoutId = payout.gatewayPayoutId;
@@ -572,11 +578,13 @@ async function reconcileStuckOrgPayout(
       return;
     }
     if (ref.kind === "none") {
+      // `updatedAt` pins the claim the lookup saw; a newer claim moved it, so its create is never undone.
       const reset = await prisma.organizationPayout.updateMany({
         where: {
           id: payout.id,
           status: PayoutStatus.PROCESSING,
           gatewayPayoutId: null,
+          updatedAt: payout.updatedAt,
         },
         data: { status: PayoutStatus.APPROVED },
       });

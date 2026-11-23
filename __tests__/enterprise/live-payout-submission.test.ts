@@ -122,7 +122,18 @@ const SNAPSHOT_ACCOUNT = {
 };
 
 function setupHappyClaim() {
-  // Row was PENDING — claim succeeds.
+  // The pre-claim read: an APPROVED payout whose account and balance pass.
+  mockedPrisma.organizationPayout.findUnique.mockResolvedValue({
+    status: "APPROVED",
+    platformHeldAt: null,
+    organizationId: ORG_ID,
+    amountPaise: 250000,
+    currency: "INR",
+    paymentGateway: "RAZORPAY",
+    createdAt: new Date(),
+    orgPayoutAccount: SNAPSHOT_ACCOUNT,
+  });
+  // The claim succeeds.
   mockedPrisma.organizationPayout.updateMany.mockResolvedValue({ count: 1 });
   mockedPrisma.organizationPayout.findUniqueOrThrow.mockResolvedValue({
     id: PAYOUT_ID,
@@ -273,17 +284,7 @@ describe("processOrgPayout — live submission gating", () => {
         payoutReference: null,
         orgPayoutAccount: SNAPSHOT_ACCOUNT,
       })
-      // second call: inside submitOrgPayoutToGateway
-      .mockResolvedValueOnce({
-        id: PAYOUT_ID,
-        organizationId: ORG_ID,
-        amountPaise: 250000,
-        currency: "INR",
-        paymentGateway: "RAZORPAY",
-        payoutReference: null,
-        orgPayoutAccount: SNAPSHOT_ACCOUNT,
-      })
-      // third call: inside markPayoutFailedFromSubmission
+      // second call: inside markPayoutFailedFromSubmission
       .mockResolvedValueOnce({ organizationId: ORG_ID });
 
     const result = await processOrgPayout(PAYOUT_ID);
@@ -349,25 +350,6 @@ describe("processOrgPayout — live submission gating", () => {
       mockedPrisma.organizationPayout.updateMany.mockResolvedValue({
         count: 1,
       }); // the PENDING → PROCESSING claim still wins
-      mockedPrisma.organizationPayout.findUniqueOrThrow
-        .mockResolvedValueOnce({
-          id: PAYOUT_ID,
-          organizationId: ORG_ID,
-          amountPaise: 250000,
-          currency: "INR",
-          paymentGateway: "RAZORPAY",
-          payoutReference: null,
-          orgPayoutAccount: SNAPSHOT_ACCOUNT,
-        })
-        .mockResolvedValueOnce({
-          id: PAYOUT_ID,
-          organizationId: ORG_ID,
-          amountPaise: 250000,
-          currency: "INR",
-          paymentGateway: "RAZORPAY",
-          payoutReference: null,
-          orgPayoutAccount: SNAPSHOT_ACCOUNT,
-        });
       mockedPrisma.organizationEarnings.updateMany.mockClear();
 
       // The transient path deliberately re-throws so the cron owns the retry.
