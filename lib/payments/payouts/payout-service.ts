@@ -64,6 +64,7 @@ import {
   CronLockUnavailableError,
 } from "@/lib/cron/with-cron-lock";
 import { assertPayoutBalance } from "./balance-preflight";
+import { findRazorpayPayoutByReference } from "./payout-gateway-lookup";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
 import {
@@ -1409,41 +1410,107 @@ async function runConsultantPayoutClaimGate(
   return { kind: "claimed" };
 }
 
-async function failCatchUpTakenPayout(
-  payoutId: string,
+/** Why a staged retry cannot resend its body as staged. */
+type UnsendableCause = {
+  code: string;
+  text: string;
+  /** The run failure reporter's op, so each cause is reported once per run. */
+  op: string;
+};
+
+const CATCH_UP_TAKEN: UnsendableCause = {
+  code: "TDS_CATCH_UP_TAKEN",
+  text: "the 194-O catch-up this payout staged is held by another payout of the expert",
+  op: "payout-tds-catch-up-taken",
+};
+
+/**
+ * Settles a staged retry that cannot be resent from a fresh reference lookup, made outside
+ * any transaction: none fails it unsent, found records the payout for its webhook, else hold.
+ */
+async function settleUnsendableStagedPayout(
+  target: ClaimTarget,
+  cause: UnsendableCause,
   failures: RunFailureReporter,
 ): Promise<PayoutResult> {
-  const cause =
-    "TDS_CATCH_UP_TAKEN: the 194-O catch-up this payout staged is held by another payout of the expert";
-  const failedReason = `${cause}; failed unsent, its earnings go to the next batch`;
-  const released = await withSerializableRetry(
-    () =>
-      prisma.$transaction(
-        (tx) => failUnsentConsultantPayout(tx, payoutId, failedReason),
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      ),
-    1,
-  );
-  const error = released
-    ? failedReason
-    : `${cause}; left APPROVED with its earnings linked because it carries a gateway id or moved`;
+  const payoutId = target.id;
+  const lookup = await findRazorpayPayoutByReference(payoutId);
+  let outcome: "released" | "found" | "held" = "held";
+  let foundId: string | undefined;
+  let error: string;
+  if (lookup.kind === "none") {
+    const reason = `${cause.code}: ${cause.text}; RazorpayX holds no payout for it, so it failed unsent and its earnings go to the next batch`;
+    const released = await withSerializableRetry(
+      () =>
+        prisma.$transaction(
+          (tx) => failUnsentConsultantPayout(tx, payoutId, reason),
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+      1,
+    );
+    if (released) outcome = "released";
+    error = released
+      ? reason
+      : `${cause.code}: ${cause.text}; left APPROVED with its earnings linked because it carries a gateway id or moved`;
+  } else if (lookup.kind === "found") {
+    if (await recordFoundStagedPayout(target, lookup.providerPayoutId)) {
+      outcome = "found";
+      foundId = lookup.providerPayoutId;
+    }
+    error =
+      outcome === "found"
+        ? `${cause.code}: ${cause.text}; RazorpayX holds ${lookup.providerPayoutId} for it, recorded PROCESSING for its webhook and nothing sent`
+        : `${cause.code}: ${cause.text}; RazorpayX holds ${lookup.providerPayoutId} but the row moved, so nothing was recorded`;
+  } else {
+    error = `${cause.code}: ${cause.text}; reference lookup ${lookup.kind} (${lookup.detail}), so nothing changed and the next run asks again`;
+  }
   console.warn(`[Payouts] Payout ${payoutId}: ${error}`);
   failures.add(
-    "payout-tds-catch-up-taken",
+    cause.op,
     new Error(error),
+    { payoutId, outcome },
     {
-      payoutId,
-      released,
+      level: "warning",
     },
-    { level: "warning" },
   );
-  // A row left APPROVED is a hold, so it does not use up the run's limit.
+  // Only a release is a failure; a row left for its webhook or the next run is a hold.
   return {
     payoutId,
     success: false,
     error,
-    ...(released ? {} : { skipped: true }),
+    ...(outcome === "released" ? {} : { skipped: true }),
+    ...(outcome === "found" ? { providerPayoutId: foundId } : {}),
   };
+}
+
+/**
+ * Binds a payout RazorpayX already holds to its staged row and moves it PROCESSING, where the
+ * webhook and both reconcilers read it; a catch-up flag another payout holds is dropped.
+ */
+async function recordFoundStagedPayout(
+  target: ClaimTarget,
+  providerPayoutId: string,
+): Promise<boolean> {
+  const record = (dropCatchUp: boolean) =>
+    prisma.consultantPayout.updateMany({
+      where: {
+        id: target.id,
+        status: PayoutStatus.APPROVED,
+        providerPayoutId: null,
+        netAmount: target.netAmount,
+      },
+      data: {
+        status: PayoutStatus.PROCESSING,
+        providerPayoutId,
+        ...(dropCatchUp ? { tdsCatchUpFy: null } : {}),
+      },
+    });
+  try {
+    return (await record(false)).count > 0;
+  } catch (err) {
+    if (!isTdsCatchUpRace(err)) throw err;
+    return (await record(true)).count > 0;
+  }
 }
 
 async function claimConsultantPayoutForDisbursement(
@@ -1467,10 +1534,10 @@ async function claimConsultantPayoutForDisbursement(
           )
         : await runConsultantPayoutClaimGate(prisma, target);
   } catch (err) {
-    // Another payout took this FY's catch-up while this one waited APPROVED. Its staged
-    // body cannot be honoured, so it fails unsent and the next batch re-plans under a new key.
+    // Another payout took this FY's catch-up while this one waited APPROVED, so its staged
+    // body cannot be honoured; a fresh lookup decides whether it fails unsent.
     if (!isTdsCatchUpRace(err)) throw err;
-    return failCatchUpTakenPayout(payoutId, failures);
+    return settleUnsendableStagedPayout(target, CATCH_UP_TAKEN, failures);
   }
 
   if (claimOutcome.kind === "dispute_blocked") {
