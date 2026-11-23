@@ -1309,10 +1309,12 @@ type ClaimGateOutcome =
   | { kind: "already_claimed" }
   | { kind: "claimed" };
 
+/** The claim's view of the row: its amount and the net it staged for a first send, or null. */
+type ClaimTarget = { id: string; amount: number; netAmount: number | null };
+
 async function runConsultantPayoutClaimGate(
   db: PrismaLike,
-  payoutId: string,
-  amount: number,
+  { id: payoutId, amount, netAmount }: ClaimTarget,
 ): Promise<ClaimGateOutcome> {
   const disputedEarning = await db.consultantEarnings.findFirst({
     where: {
@@ -1370,10 +1372,11 @@ async function runConsultantPayoutClaimGate(
     return { kind: "shortfall", owedPaise, shortfallReason };
   }
 
-  // A retried payout re-enters the live catch-up index unstamped; staging restamps it.
+  // The staged TDS fields, catch-up included, ride through the claim unchanged;
+  // matching the read netAmount keeps a row staged since the read from being re-planned.
   const claimed = await db.consultantPayout.updateMany({
-    where: { id: payoutId, status: PayoutStatus.APPROVED },
-    data: { status: PayoutStatus.PROCESSING, tdsCatchUpFy: null },
+    where: { id: payoutId, status: PayoutStatus.APPROVED, netAmount },
+    data: { status: PayoutStatus.PROCESSING },
   });
   if (claimed.count === 0) {
     casMiss();
@@ -1383,22 +1386,32 @@ async function runConsultantPayoutClaimGate(
 }
 
 async function claimConsultantPayoutForDisbursement(
-  payoutId: string,
-  amount: number,
+  target: ClaimTarget,
 ): Promise<PayoutResult | null> {
-  const claimOutcome =
-    typeof prisma.$transaction === "function"
-      ? await withSerializableRetry(
-          () =>
-            prisma.$transaction(
-              (tx) => runConsultantPayoutClaimGate(tx, payoutId, amount),
-              {
-                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-              },
-            ),
-          1,
-        )
-      : await runConsultantPayoutClaimGate(prisma, payoutId, amount);
+  const { id: payoutId, amount } = target;
+  let claimOutcome: ClaimGateOutcome;
+  try {
+    claimOutcome =
+      typeof prisma.$transaction === "function"
+        ? await withSerializableRetry(
+            () =>
+              prisma.$transaction(
+                (tx) => runConsultantPayoutClaimGate(tx, target),
+                {
+                  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+                },
+              ),
+            1,
+          )
+        : await runConsultantPayoutClaimGate(prisma, target);
+  } catch (err) {
+    // Another payout took this FY's catch-up while this one waited APPROVED; resending
+    // the staged body would withhold it twice, so the row stays APPROVED for an operator.
+    if (!isTdsCatchUpRace(err)) throw err;
+    const error = `TDS_CATCH_UP_TAKEN: payout ${payoutId} staged this FY's 194-O catch-up, which another live payout now holds; resend needs an operator`;
+    console.warn(`[Payouts] ${error}`);
+    return { payoutId, success: false, error };
+  }
 
   if (claimOutcome.kind === "dispute_blocked") {
     console.warn(
@@ -1599,6 +1612,96 @@ async function handleProcessSinglePayoutError(
   };
 }
 
+/** Plans the payout's TDS and stages it on the PROCESSING row; null when the row left PROCESSING first. */
+async function planAndStageConsultantTds(
+  payout: { id: string; consultantProfileId: string; amount: number },
+  consultantTaxInfo: ConsultantTdsInput["taxInfo"],
+): Promise<number | null> {
+  const financialYear = getIndianFinancialYear();
+  const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
+    payout.consultantProfileId,
+    financialYear,
+  );
+  const recoveredPaise = await clawbackRecoveredPaise(prisma, payout.id);
+  if (payout.amount - recoveredPaise <= 0) {
+    throw new Error(
+      `Payout ${payout.id} nets to ${payout.amount - recoveredPaise} paise after clawback recovery`,
+    );
+  }
+  const tdsInput: ConsultantTdsInput = {
+    consultantProfileId: payout.consultantProfileId,
+    payoutId: payout.id,
+    netSharePaise: payout.amount,
+    grossThisPayoutPaise: await earningsGrossPaise(
+      prisma,
+      { payoutId: payout.id },
+      payout.amount,
+    ),
+    capacityPaise: payout.amount - recoveredPaise,
+    financialYear,
+    cumulativeBeforePayout,
+    taxInfo: consultantTaxInfo,
+    resolvedRate: await resolveEffectiveTdsRate(prisma, "194O", new Date()),
+    allowCatchUp: true,
+  };
+  let plan = await planConsultantPayoutTds(prisma, tdsInput);
+  const netAfter = (p: ConsultantTdsPlan) =>
+    payout.amount - recoveredPaise - p.withholdPaise + p.creditPaise;
+
+  // Stage TDS fields before gateway submission so an immediate completion webhook posts the net cash leg.
+  const stage = (p: ConsultantTdsPlan) =>
+    prisma.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.PROCESSING },
+      data: {
+        tdsDeducted: p.withholdPaise,
+        netAmount: netAfter(p),
+        tdsRateAppliedBps: p.rateAppliedBps,
+        tdsFinancialYear: financialYear,
+        tdsCatchUpFy: p.catchUpFy,
+        tdsCarryPaise: p.carryPaise,
+        tdsCreditPaise: p.creditPaise,
+      },
+    });
+  let staged: Prisma.BatchPayload;
+  try {
+    staged = await stage(plan);
+  } catch (err) {
+    // The database allows one catch-up per expert per FY; the loser pays on its own gross.
+    if (!plan.catchUpFy || !isTdsCatchUpRace(err)) throw err;
+    plan = await planConsultantPayoutTds(prisma, {
+      ...tdsInput,
+      allowCatchUp: false,
+    });
+    staged = await stage(plan);
+  }
+  const payoutAmountAfterTDS = netAfter(plan);
+
+  if (plan.withholdPaise > 0 || plan.creditPaise > 0 || plan.carryPaise !== 0) {
+    console.log(
+      JSON.stringify({
+        event: "tds_deduction",
+        payoutId: payout.id,
+        consultantProfileId: payout.consultantProfileId,
+        grossAmount: tdsInput.grossThisPayoutPaise,
+        taxableAmount: plan.taxablePaise,
+        cumulativeBeforePayout,
+        tdsAmount: plan.withholdPaise,
+        tdsCreditPaise: plan.creditPaise,
+        tdsCarryPaise: plan.carryPaise,
+        tdsCatchUpFy: plan.catchUpFy,
+        tdsRateAppliedBps: plan.rateAppliedBps,
+        tdsSection: plan.tdsSection,
+        netAmount: payoutAmountAfterTDS,
+        financialYear,
+        reason: plan.reason,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+
+  return staged.count === 0 ? null : payoutAmountAfterTDS;
+}
+
 async function processSinglePayout(payout: {
   id: string;
   consultantProfileId: string;
@@ -1607,6 +1710,7 @@ async function processSinglePayout(payout: {
   currency: string;
   method: PayoutMethod;
   idempotencyKey: string | null;
+  netAmount: number | null;
   payoutAccount: PayoutDestination | null;
   consultantProfile: {
     payoutAccounts?: PayoutDestination[];
@@ -1624,12 +1728,8 @@ async function processSinglePayout(payout: {
   const markSubmitted = () => {
     submittedToGateway = true;
   };
-  const financialYear = getIndianFinancialYear();
   try {
-    const blockedResult = await claimConsultantPayoutForDisbursement(
-      payout.id,
-      payout.amount,
-    );
+    const blockedResult = await claimConsultantPayoutForDisbursement(payout);
     if (blockedResult) {
       return blockedResult;
     }
@@ -1651,92 +1751,12 @@ async function processSinglePayout(payout: {
       );
     }
 
-    const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
-      payout.consultantProfileId,
-      financialYear,
-    );
-    const recoveredPaise = await clawbackRecoveredPaise(prisma, payout.id);
-    if (payout.amount - recoveredPaise <= 0) {
-      throw new Error(
-        `Payout ${payout.id} nets to ${payout.amount - recoveredPaise} paise after clawback recovery`,
-      );
-    }
-    const tdsInput: ConsultantTdsInput = {
-      consultantProfileId: payout.consultantProfileId,
-      payoutId: payout.id,
-      netSharePaise: payout.amount,
-      grossThisPayoutPaise: await earningsGrossPaise(
-        prisma,
-        { payoutId: payout.id },
-        payout.amount,
-      ),
-      capacityPaise: payout.amount - recoveredPaise,
-      financialYear,
-      cumulativeBeforePayout,
-      taxInfo: consultantTaxInfo,
-      resolvedRate: await resolveEffectiveTdsRate(prisma, "194O", new Date()),
-      allowCatchUp: true,
-    };
-    let plan = await planConsultantPayoutTds(prisma, tdsInput);
-    const netAfter = (p: ConsultantTdsPlan) =>
-      payout.amount - recoveredPaise - p.withholdPaise + p.creditPaise;
+    // A row staged by an earlier attempt resends that attempt's amount under the same key.
+    const payoutAmountAfterTDS =
+      payout.netAmount ??
+      (await planAndStageConsultantTds(payout, consultantTaxInfo));
 
-    // Stage TDS fields before gateway submission so an immediate completion webhook posts the net cash leg.
-    const stage = (p: ConsultantTdsPlan) =>
-      prisma.consultantPayout.updateMany({
-        where: { id: payout.id, status: PayoutStatus.PROCESSING },
-        data: {
-          tdsDeducted: p.withholdPaise,
-          netAmount: netAfter(p),
-          tdsRateAppliedBps: p.rateAppliedBps,
-          tdsFinancialYear: financialYear,
-          tdsCatchUpFy: p.catchUpFy,
-          tdsCarryPaise: p.carryPaise,
-          tdsCreditPaise: p.creditPaise,
-        },
-      });
-    let staged: Prisma.BatchPayload;
-    try {
-      staged = await stage(plan);
-    } catch (err) {
-      // The database allows one catch-up per expert per FY; the loser pays on its own gross.
-      if (!plan.catchUpFy || !isTdsCatchUpRace(err)) throw err;
-      plan = await planConsultantPayoutTds(prisma, {
-        ...tdsInput,
-        allowCatchUp: false,
-      });
-      staged = await stage(plan);
-    }
-    const payoutAmountAfterTDS = netAfter(plan);
-
-    if (
-      plan.withholdPaise > 0 ||
-      plan.creditPaise > 0 ||
-      plan.carryPaise !== 0
-    ) {
-      console.log(
-        JSON.stringify({
-          event: "tds_deduction",
-          payoutId: payout.id,
-          consultantProfileId: payout.consultantProfileId,
-          grossAmount: tdsInput.grossThisPayoutPaise,
-          taxableAmount: plan.taxablePaise,
-          cumulativeBeforePayout,
-          tdsAmount: plan.withholdPaise,
-          tdsCreditPaise: plan.creditPaise,
-          tdsCarryPaise: plan.carryPaise,
-          tdsCatchUpFy: plan.catchUpFy,
-          tdsRateAppliedBps: plan.rateAppliedBps,
-          tdsSection: plan.tdsSection,
-          netAmount: payoutAmountAfterTDS,
-          financialYear,
-          reason: plan.reason,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-
-    if (staged.count === 0) {
+    if (payoutAmountAfterTDS === null) {
       console.warn(
         `[Payouts] Payout ${payout.id} left PROCESSING before submission — skipping`,
       );
