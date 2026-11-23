@@ -128,8 +128,8 @@ export interface FieldGroup {
   benefit: string;
   /** Domains in the database this tile covers; it shows while any has verified experts. */
   domains: string[];
-  tint: string;
-  photo?: FieldPhoto;
+  /** Fills the whole tile under a dark gradient. */
+  photo: FieldPhoto;
   mockup: FieldMockup;
 }
 
@@ -139,7 +139,6 @@ export const FIELD_GROUPS: FieldGroup[] = [
     title: "Technology",
     benefit: "Learn from engineers who build and ship software every day.",
     domains: ["Technology"],
-    tint: "from-sky-100 via-sky-50 to-cyan-100",
     photo: PHOTOS.technology,
     mockup: "live",
   },
@@ -147,22 +146,21 @@ export const FIELD_GROUPS: FieldGroup[] = [
     title: "Business & finance",
     benefit: "Product, growth and money advice from people who run them.",
     domains: ["Business", "Finance"],
-    tint: "from-emerald-50 via-teal-50 to-emerald-100",
+    photo: PHOTOS.business,
     mockup: "slots",
   },
   {
     title: "Creative Arts",
     benefit: "Honest feedback on your work from practising creatives.",
     domains: ["Creative Arts"],
-    tint: "from-rose-100 via-pink-50 to-rose-50",
+    photo: PHOTOS.creativeArts,
     mockup: "review",
   },
   {
     title: "Health & personal growth",
     benefit: "Coaching for body and mind, one session at a time.",
     domains: ["Health", "Personal Development"],
-    tint: "from-lime-100 via-lime-50 to-green-50",
-    photo: PHOTOS.personalDevelopment,
+    photo: PHOTOS.health,
     mockup: "progress",
   },
 ];

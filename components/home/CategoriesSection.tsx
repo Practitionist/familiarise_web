@@ -123,27 +123,48 @@ function GroupTile({
   return (
     <article
       className={cn(
-        "relative flex min-h-[26rem] flex-col overflow-hidden rounded-3xl bg-gradient-to-br p-7 md:p-9",
-        group.tint,
+        "relative isolate flex min-h-[26rem] flex-col justify-between overflow-hidden rounded-3xl bg-zinc-900 p-7 text-white md:p-9",
         SPAN_CLASSES[span],
       )}
     >
-      <div className={cn("relative z-10", wide && "lg:max-w-[50%]")}>
-        <h3 className="text-2xl font-semibold tracking-tight text-zinc-900 md:text-3xl">
+      <Image
+        src={group.photo.src}
+        alt=""
+        fill
+        sizes={
+          wide
+            ? "(min-width: 1024px) 60vw, 100vw"
+            : "(min-width: 1024px) 40vw, 100vw"
+        }
+        className="-z-10 object-cover"
+      />
+      {/* Darkest behind the text: from the left on wide tiles, from the top on narrow ones. */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 -z-10",
+          wide
+            ? "bg-gradient-to-r from-black/85 via-black/55 to-black/15"
+            : "bg-gradient-to-b from-black/85 via-black/50 to-black/25",
+        )}
+      />
+
+      <div className={cn(wide && "lg:max-w-[55%]")}>
+        <h3 className="text-2xl font-semibold tracking-tight md:text-3xl">
           {group.title}
         </h3>
-        <p className="mt-3 text-base leading-relaxed text-zinc-700">
+        <p className="mt-3 text-base leading-relaxed text-zinc-200">
           {group.benefit}
         </p>
-        <ul className="mt-5 flex flex-wrap gap-2">
+        <ul className="mt-5 flex flex-wrap gap-x-6 gap-y-2">
           {domains.map(({ name, count }) => (
             <li key={name}>
               <Link
                 href={domainPath(name)}
-                className="group inline-flex items-center gap-1.5 rounded-full bg-white/80 px-4 py-2 text-sm font-medium text-zinc-900 shadow-elevation-1 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="group inline-flex items-center gap-1.5 text-sm font-medium underline decoration-white/40 underline-offset-4 transition-colors hover:decoration-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               >
                 {name}
-                <span className="text-zinc-500">· {expertCount(count)}</span>
+                <span className="text-zinc-300">· {expertCount(count)}</span>
                 <ArrowUpRight
                   aria-hidden="true"
                   className="h-4 w-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
@@ -154,31 +175,8 @@ function GroupTile({
         </ul>
       </div>
 
-      <div
-        aria-hidden="true"
-        className={cn(
-          "relative mt-8 flex flex-1 items-end",
-          wide ? "lg:absolute lg:inset-y-8 lg:right-8 lg:mt-0 lg:w-[44%]" : "",
-        )}
-      >
-        {group.photo ? (
-          <div className="relative h-56 w-full overflow-hidden rounded-2xl shadow-elevation-2 lg:h-full">
-            <Image
-              src={group.photo.src}
-              alt=""
-              fill
-              sizes="(min-width: 1024px) 26vw, 100vw"
-              className="object-cover"
-            />
-            <div className="absolute bottom-4 left-4 right-4 flex">
-              <Mockup kind={group.mockup} />
-            </div>
-          </div>
-        ) : (
-          <div className="flex w-full justify-end">
-            <Mockup kind={group.mockup} />
-          </div>
-        )}
+      <div aria-hidden="true" className="mt-8 flex justify-end">
+        <Mockup kind={group.mockup} />
       </div>
     </article>
   );
