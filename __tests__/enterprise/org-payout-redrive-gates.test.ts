@@ -16,6 +16,7 @@ import {
 } from "../../lib/payments/payouts/shared-lifecycle";
 import { PAYOUT_ACCOUNT_COOLING_OFF_MS } from "../../lib/payments/payouts/payout-requirements";
 import { sanitizePayoutFailure } from "../../lib/dashboard/earnings-state";
+import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 
 type Row = Record<string, unknown>;
 type Where = Record<string, unknown>;
@@ -26,8 +27,9 @@ function matches(row: Row, where: Where): boolean {
     if (v === null) return (row[k] ?? null) === null;
     if (v instanceof Date) return (row[k] as Date)?.getTime() === v.getTime();
     if (v && typeof v === "object") {
-      const op = v as { in?: unknown[]; lt?: Date };
+      const op = v as { in?: unknown[]; lt?: Date; not?: unknown };
       if (op.in) return op.in.includes(row[k]);
+      if ("not" in op) return (row[k] ?? null) !== op.not;
       if (op.lt) return (row[k] as Date) < op.lt;
       throw new Error(`matches: unsupported filter on ${k}`);
     }
@@ -64,11 +66,35 @@ const write = (row: Row, data: Row) => {
     mockStatusTrail[row.id as string].push(data.status);
   }
 };
+type OrderBy = Record<string, "asc" | "desc">;
+/** Prisma's orderBy over Date columns, then `take`. */
+function ordered(rows: Row[], orderBy?: OrderBy | OrderBy[], take?: number) {
+  const keys = orderBy ? (Array.isArray(orderBy) ? orderBy : [orderBy]) : [];
+  const sorted = [...rows].sort((a, b) => {
+    for (const o of keys) {
+      const [k, dir] = Object.entries(o)[0];
+      const d = (a[k] as Date).getTime() - (b[k] as Date).getTime();
+      if (d !== 0) return dir === "desc" ? -d : d;
+    }
+    return 0;
+  });
+  return take === undefined ? sorted : sorted.slice(0, take);
+}
+const mockAuditCreate = jest.fn(async (_a: { data: Row }) => ({}));
 const mockDb = strict("prisma", {
   organizationPayout: strict("prisma.organizationPayout", {
     // Copies, as Prisma returns: a later write never changes what a reader saw.
-    findMany: jest.fn(async ({ where }: { where: Where }) =>
-      mockPayouts.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+    findMany: jest.fn(
+      async (a: {
+        where: Where;
+        orderBy?: OrderBy | OrderBy[];
+        take?: number;
+      }) =>
+        ordered(
+          mockPayouts.filter((r) => matches(r, a.where)),
+          a.orderBy,
+          a.take,
+        ).map((r) => ({ ...r })),
     ),
     findUnique: jest.fn(async ({ where }: { where: Where }) => byId(where.id)),
     findUniqueOrThrow: jest.fn(async ({ where }: { where: Where }) =>
@@ -136,7 +162,7 @@ const mockDb = strict("prisma", {
   user: strict("prisma.user", {}),
   failedEmail: strict("prisma.failedEmail", {}),
   orgAuditLog: strict("prisma.orgAuditLog", {
-    create: jest.fn(async () => ({})),
+    create: (a: { data: Row }) => mockAuditCreate(a),
   }),
   $transaction: jest.fn(
     async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(mockDb),
@@ -198,6 +224,7 @@ import {
   processOrgPayout,
   processPendingOrgPayouts,
 } from "../../lib/payments/payouts/org-payout-service";
+import { RazorpayXHttpError } from "../../lib/payments/payouts/razorpay-payouts";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -254,6 +281,7 @@ beforeEach(() => {
   getAccountBalance.mockResolvedValue(100_000_000);
   listPayouts.mockResolvedValue({ entity: "collection", items: [] });
   createPayout.mockResolvedValue({ id: "pout_1", status: "queued" });
+  mockAuditCreate.mockImplementation(async () => ({}));
 });
 
 afterAll(() => {
@@ -502,4 +530,123 @@ describe("one report per run, however many payouts", () => {
       });
     },
   );
+});
+
+const changes: Array<[string, (a: Row) => void]> = [
+  [
+    "a freeze",
+    (a) => {
+      a.payoutsFrozenAt = new Date();
+    },
+  ],
+  [
+    "a suspension",
+    (a) => {
+      a.status = "SUSPENDED";
+    },
+  ],
+  [
+    "an account change",
+    (a) => {
+      a.payoutsAllowedAfter = new Date(
+        Date.now() + PAYOUT_ACCOUNT_COOLING_OFF_MS,
+      );
+    },
+  ],
+];
+
+describe("a destination change after the claim transaction read the account", () => {
+  it.each(changes)(
+    "%s committing before the send fails the claimed payout, sends nothing and is reported once",
+    async (_label, change) => {
+      const payout = addPayout("op_1");
+      // Lands at the claim transaction's last write, after its account read.
+      mockAuditCreate.mockImplementation(async ({ data }) => {
+        if (data.action === AUDIT_ACTIONS.PAYOUT.PAYOUT_PROCESSED) {
+          change(payout.orgPayoutAccount as Row);
+        }
+        return {};
+      });
+
+      await processPendingOrgPayouts();
+
+      expect(createPayout).not.toHaveBeenCalled();
+      expect(mockStatusTrail.op_1).toEqual([
+        "APPROVED",
+        "PROCESSING",
+        "FAILED",
+      ]);
+      expect(earningsOf("op_1").map((e) => [e.status, e.orgPayoutId])).toEqual([
+        ["READY", null],
+        ["READY", null],
+      ]);
+      expect(reportSentryError).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
+describe("an approved payout already bound to a gateway payout", () => {
+  it.each([
+    ["a frozen account", { payoutsFrozenAt: new Date() }],
+    ["an allowed account", {}],
+  ])(
+    "with %s goes to reconciliation: no release and no new send",
+    async (_label, account) => {
+      const payout = addPayout("op_1", { gatewayPayoutId: "pout_late" });
+      Object.assign(payout.orgPayoutAccount as Row, account);
+
+      await processPendingOrgPayouts();
+
+      expect(createPayout).not.toHaveBeenCalled();
+      expect(payout).toMatchObject({
+        status: "PROCESSING",
+        gatewayPayoutId: "pout_late",
+        failureReason: null,
+      });
+      expect(earningsOf("op_1").map((e) => [e.status, e.orgPayoutId])).toEqual([
+        ["BATCHED", "op_1"],
+        ["BATCHED", "op_1"],
+      ]);
+    },
+  );
+});
+
+describe("one run, bounded gateway reads and a fair queue", () => {
+  it("reads the RazorpayX balance once per run, however many payouts", async () => {
+    addPayout("op_1");
+    addPayout("op_2");
+    addPayout("op_3");
+    mockDisputedPayments.add("op_2_pay_1");
+
+    await processPendingOrgPayouts();
+
+    expect(getAccountBalance).toHaveBeenCalledTimes(1);
+    expect(createPayout).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives a payout never attempted its turn ahead of re-armed retries", async () => {
+    const older = new Date(Date.now() - 48 * HOUR);
+    for (const n of [1, 2, 3, 4, 5]) {
+      // Re-armed just now after a create whose outcome stayed unknown.
+      addPayout(`op_r${n}`, { createdAt: older, updatedAt: new Date() });
+    }
+    const fresh = addPayout("op_new", {
+      updatedAt: new Date(Date.now() - 12 * HOUR),
+    });
+    createPayout.mockImplementation(async ({ referenceId }: Row) => {
+      if (referenceId === "op_new") return { id: "pout_new", status: "queued" };
+      throw new RazorpayXHttpError(
+        "RazorpayX API error (HTTP 503)",
+        "SERVER_ERROR",
+        503,
+      );
+    });
+
+    await processPendingOrgPayouts({ limit: 5 });
+
+    expect(fresh).toMatchObject({
+      status: "PROCESSING",
+      gatewayPayoutId: "pout_new",
+    });
+  });
 });

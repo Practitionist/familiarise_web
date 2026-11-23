@@ -330,3 +330,19 @@ it("does not pull back an organisation payout claimed again while its lookup was
   expect(org).toMatchObject({ status: "PROCESSING", gatewayPayoutId: null });
   expect(run.retriedCount).toBe(0);
 });
+
+it("counts a failure CAS lost to a gateway id bound mid-lookup as skipped, not failed", async () => {
+  mockPayout.retryCount = 2;
+  listPayouts.mockImplementation(async () => {
+    mockPayout.providerPayoutId = "pout_late";
+    return { items: [] };
+  });
+  const { recordSystemEvent } = jest.requireMock(
+    "../../lib/enterprise/system-events",
+  ) as { recordSystemEvent: jest.Mock };
+
+  const run = await handleStuckPayouts();
+
+  expect(run).toMatchObject({ failedCount: 0, skippedCount: 1 });
+  expect(recordSystemEvent).not.toHaveBeenCalled();
+});
