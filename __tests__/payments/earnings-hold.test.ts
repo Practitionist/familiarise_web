@@ -103,7 +103,10 @@ describe("recomputeEarningsHold", () => {
     expect(update).toHaveBeenCalledWith({
       where: {
         id: "earn-1",
-        status: "PENDING",
+        OR: [
+          { status: "PENDING" },
+          { status: "HELD", preHoldStatus: "PENDING" },
+        ],
         holdUntil: { lt: at("2026-09-27T11:00:00Z") },
       },
       data: { holdUntil: at("2026-09-27T11:00:00Z") },
@@ -111,7 +114,10 @@ describe("recomputeEarningsHold", () => {
     expect(orgUpdate).toHaveBeenCalledWith({
       where: {
         id: "org-earn-1",
-        status: "PENDING",
+        OR: [
+          { status: "PENDING" },
+          { status: "HELD", preHoldStatus: "PENDING" },
+        ],
         holdUntil: { lt: at("2026-09-27T11:00:00Z") },
       },
       data: { holdUntil: at("2026-09-27T11:00:00Z") },
