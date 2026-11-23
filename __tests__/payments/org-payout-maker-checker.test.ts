@@ -188,7 +188,12 @@ it("re-arms a stale payout the gateway never saw without submitting it, whoever 
   expect(reArmed).toHaveLength(2);
   for (const id of ["op-mine", "op-theirs"]) {
     expect(reArmed).toContainEqual({
-      where: { id, status: "PROCESSING", gatewayPayoutId: null },
+      where: {
+        id,
+        status: "PROCESSING",
+        gatewayPayoutId: null,
+        updatedAt: OLD_UPDATE,
+      },
       data: { status: "APPROVED" },
     });
   }

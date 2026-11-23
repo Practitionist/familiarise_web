@@ -532,7 +532,7 @@ async function handleStuckOrgPayouts(
   };
   const stuck = await prisma.organizationPayout.findMany({
     where: stuckPayoutWhere(stuckThreshold),
-    select: { id: true, gatewayPayoutId: true },
+    select: { id: true, gatewayPayoutId: true, updatedAt: true },
     orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
     take: limit,
   });
@@ -564,7 +564,7 @@ async function handleStuckOrgPayouts(
 }
 
 async function reconcileStuckOrgPayout(
-  payout: { id: string; gatewayPayoutId: string | null },
+  payout: { id: string; gatewayPayoutId: string | null; updatedAt: Date },
   run: StuckOrgPayoutsRun,
 ): Promise<void> {
   let gatewayPayoutId = payout.gatewayPayoutId;
@@ -577,11 +577,13 @@ async function reconcileStuckOrgPayout(
       return;
     }
     if (ref.kind === "none") {
+      // `updatedAt` pins the claim the lookup saw; a newer claim moved it, so its create is never undone.
       const reset = await prisma.organizationPayout.updateMany({
         where: {
           id: payout.id,
           status: PayoutStatus.PROCESSING,
           gatewayPayoutId: null,
+          updatedAt: payout.updatedAt,
         },
         data: { status: PayoutStatus.APPROVED },
       });

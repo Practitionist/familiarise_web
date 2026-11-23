@@ -773,37 +773,76 @@ export interface OrgPayoutProcessOutcome {
     | { kind: "BALANCE"; preflight: BalancePreflight };
 }
 
+type OrgPayoutDestination = {
+  fundAccountId: string;
+  amountPaise: number;
+  currency: string;
+};
+
+type OrgPayoutClaimResult = {
+  status: PayoutStatus;
+  submittedToGateway: false;
+  claimed: boolean;
+  destination?: OrgPayoutDestination;
+  refused?: { reason: string; failure: UnpaidOrgPayoutFailure };
+};
+
 /**
- * Pre-claim order: live-payouts flag, then (for a payout the claim could take)
- * the account checks, then the balance; then one Serializable transaction runs
- * the dispute and refund gates, the claim and the shortfall; then the send.
+ * Order: live-payouts flag; the balance, before any claim; then one Serializable
+ * transaction reads the account (a refusal fails the payout APPROVED→FAILED), runs
+ * the dispute and refund gates, claims and checks the shortfall; then the send.
  */
 export async function processOrgPayout(
   payoutId: string,
 ): Promise<OrgPayoutProcessOutcome> {
   const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
-  let destination: OrgPayoutDestination | null = null;
   let balanceWarning: BalancePreflight | null = null;
   if (liveEnabled) {
-    const pre = await runOrgPayoutPreClaimChecks(payoutId);
+    const pre = await readOrgPayoutBalanceBeforeClaim(payoutId);
     if (pre.kind === "stop") return pre.outcome;
-    destination = pre.destination;
     balanceWarning = pre.balanceWarning;
   }
   const warning = balanceWarning
     ? { preClaim: { kind: "BALANCE" as const, preflight: balanceWarning } }
     : {};
 
-  return withSerializableRetry(
+  const result = await withSerializableRetry(
     () =>
       prisma.$transaction(
-        async (tx) => {
+        async (tx): Promise<OrgPayoutClaimResult> => {
           if (!liveEnabled) {
             const status = await readOrgPayoutCurrentStatus(tx, payoutId);
             return {
               status,
               submittedToGateway: false,
               claimed: false,
+            };
+          }
+
+          // Read in the claim's own transaction, so a freeze, suspension or account change committed before the claim refuses it.
+          const resolved = await resolveOrgPayoutDestination(tx, payoutId);
+          if (resolved.kind === "unclaimable") {
+            return {
+              status: resolved.status,
+              submittedToGateway: false,
+              claimed: false,
+            };
+          }
+          if (resolved.kind === "refused") {
+            const failure = await failUnpaidOrgPayoutTx(
+              tx,
+              payoutId,
+              resolved.reason,
+              "FAILED",
+              "APPROVED",
+            );
+            return {
+              status: failure.status,
+              submittedToGateway: false,
+              claimed: false,
+              ...(failure.wasNoOp
+                ? {}
+                : { refused: { reason: resolved.reason, failure } }),
             };
           }
 
@@ -853,7 +892,7 @@ export async function processOrgPayout(
 
           if (await checkOrgPayoutShortfallBeforeDisbursement(tx, payout)) {
             return {
-              status: "FAILED" as PayoutStatus,
+              status: "FAILED",
               submittedToGateway: false,
               claimed: true,
             };
@@ -876,9 +915,10 @@ export async function processOrgPayout(
           });
 
           return {
-            status: "PROCESSING" as const,
+            status: "PROCESSING",
             submittedToGateway: false,
             claimed: true,
+            destination: resolved.destination,
           };
         },
         {
@@ -887,68 +927,115 @@ export async function processOrgPayout(
         },
       ),
     1,
-  ).then(async (result) => {
-    if (!destination || !result.claimed || result.status !== "PROCESSING") {
-      return {
-        status: result.status,
-        submittedToGateway: result.submittedToGateway,
-        claimed: result.claimed,
-        ...warning,
-      };
-    }
+  );
 
-    try {
-      await submitOrgPayoutToGateway(payoutId, destination);
+  if (result.refused) {
+    await deliverOrgPayoutFailureNotices(
+      result.refused.failure,
+      payoutId,
+      "FAILED",
+      result.refused.reason,
+    );
+    return {
+      status: result.status,
+      submittedToGateway: false,
+      claimed: false,
+      preClaim: { kind: "ACCOUNT_REFUSED", reason: result.refused.reason },
+    };
+  }
+
+  const { destination } = result;
+  if (!destination || !result.claimed || result.status !== "PROCESSING") {
+    return {
+      status: result.status,
+      submittedToGateway: result.submittedToGateway,
+      claimed: result.claimed,
+      ...warning,
+    };
+  }
+
+  try {
+    await submitOrgPayoutToGateway(payoutId, destination);
+    return {
+      status: "PROCESSING",
+      submittedToGateway: true,
+      claimed: true,
+      ...warning,
+    };
+  } catch (err) {
+    const cls = classifyGatewaySubmissionError(err);
+    if (cls === "PERMANENT_4XX") {
+      reportSentryError(err, { subsystem: "payments", expected: true });
+      await markPayoutFailedFromSubmission(
+        payoutId,
+        err instanceof Error ? err.message : String(err),
+      );
       return {
-        status: "PROCESSING" as const,
+        status: "FAILED",
         submittedToGateway: true,
         claimed: true,
         ...warning,
       };
-    } catch (err) {
-      const cls = classifyGatewaySubmissionError(err);
-      if (cls === "PERMANENT_4XX") {
-        reportSentryError(err, { subsystem: "payments", expected: true });
-        await markPayoutFailedFromSubmission(
-          payoutId,
-          err instanceof Error ? err.message : String(err),
-        );
-        return {
-          status: "FAILED" as PayoutStatus,
-          submittedToGateway: true,
-          claimed: true,
-          ...warning,
-        };
-      }
-      reportSentryError(err, { subsystem: "payments" });
-      throw err;
     }
-  });
+    reportSentryError(err, { subsystem: "payments" });
+    throw err;
+  }
 }
 
-type OrgPayoutDestination = {
-  fundAccountId: string;
-  amountPaise: number;
-  currency: string;
-};
+/** A payout the claim could take; another is left to the claim, which decides it. */
+function isClaimableOrgPayout(p: {
+  status: PayoutStatus;
+  platformHeldAt: Date | null;
+}): boolean {
+  return !p.platformHeldAt && PAYOUT_ALLOWED_FROM.PROCESSING.includes(p.status);
+}
 
-type OrgPayoutPreClaim =
-  | { kind: "stop"; outcome: OrgPayoutProcessOutcome }
-  | {
-      kind: "go";
-      destination: OrgPayoutDestination;
-      balanceWarning: BalancePreflight | null;
-    };
-
-/**
- * The send's account and balance checks, before the claim, so a payout is never
- * PROCESSING with nothing sent: a refusing account fails it APPROVED→FAILED
- * (nothing was sent, so its earnings return), a short balance leaves it APPROVED.
- */
-async function runOrgPayoutPreClaimChecks(
+/** The balance is read before the claim, so a short balance leaves the payout APPROVED, never PROCESSING with nothing sent. */
+async function readOrgPayoutBalanceBeforeClaim(
   payoutId: string,
-): Promise<OrgPayoutPreClaim> {
+): Promise<
+  | { kind: "stop"; outcome: OrgPayoutProcessOutcome }
+  | { kind: "go"; balanceWarning: BalancePreflight | null }
+> {
   const payout = await prisma.organizationPayout.findUnique({
+    where: { id: payoutId },
+    select: { status: true, platformHeldAt: true, amountPaise: true },
+  });
+  // A missing row is refused by the claim transaction's own read.
+  if (!payout) return { kind: "go", balanceWarning: null };
+  const unclaimed = {
+    status: payout.status,
+    submittedToGateway: false,
+    claimed: false,
+  };
+  if (!isClaimableOrgPayout(payout)) {
+    return { kind: "stop", outcome: unclaimed };
+  }
+  const preflight = await assertPayoutBalance(payout.amountPaise, {
+    report: false,
+  });
+  if (!preflight.ok) {
+    console.warn(
+      `[OrgPayoutService] Holding payout ${payoutId} — ${preflight.reason}`,
+    );
+    return {
+      kind: "stop",
+      outcome: { ...unclaimed, preClaim: { kind: "BALANCE", preflight } },
+    };
+  }
+  return { kind: "go", balanceWarning: preflight.reason ? preflight : null };
+}
+
+/** The fund account a claimable payout may be sent to, or the reason, naming the check, that it may not. */
+async function resolveOrgPayoutDestination(
+  tx: Tx,
+  payoutId: string,
+): Promise<
+  | { kind: "unclaimable"; status: PayoutStatus }
+  | { kind: "refused"; reason: string }
+  | { kind: "ok"; destination: OrgPayoutDestination }
+> {
+  const payout = await tx.organizationPayout.findUnique({
     where: { id: payoutId },
     select: {
       status: true,
@@ -971,88 +1058,22 @@ async function runOrgPayoutPreClaimChecks(
   if (!payout) {
     throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
   }
-  const unclaimed = (status: PayoutStatus) => ({
-    status,
-    submittedToGateway: false,
-    claimed: false,
-  });
-  if (
-    payout.platformHeldAt ||
-    !PAYOUT_ALLOWED_FROM.PROCESSING.includes(payout.status)
-  ) {
-    return { kind: "stop", outcome: unclaimed(payout.status) };
+  if (!isClaimableOrgPayout(payout)) {
+    return { kind: "unclaimable", status: payout.status };
   }
+  const refused = (reason: string) => ({ kind: "refused" as const, reason });
 
-  const resolved = await resolveOrgPayoutDestination(payout);
-  if ("refusal" in resolved) {
-    const failed = await markOrgPayoutFailedInternal(
-      payoutId,
-      resolved.refusal,
-      "FAILED",
-      "APPROVED",
-    );
-    return {
-      kind: "stop",
-      outcome: failed.wasNoOp
-        ? unclaimed(failed.status)
-        : {
-            ...unclaimed(failed.status),
-            preClaim: { kind: "ACCOUNT_REFUSED", reason: resolved.refusal },
-          },
-    };
-  }
-
-  const preflight = await assertPayoutBalance(payout.amountPaise, {
-    report: false,
-  });
-  if (!preflight.ok) {
-    console.warn(
-      `[OrgPayoutService] Holding payout ${payoutId} — ${preflight.reason}`,
-    );
-    return {
-      kind: "stop",
-      outcome: {
-        ...unclaimed(payout.status),
-        preClaim: { kind: "BALANCE", preflight },
-      },
-    };
-  }
-  return {
-    kind: "go",
-    destination: {
-      fundAccountId: resolved.fundAccountId,
-      amountPaise: payout.amountPaise,
-      currency: payout.currency,
-    },
-    balanceWarning: preflight.reason ? preflight : null,
-  };
-}
-
-type OrgPayoutAccountFields = {
-  status: string;
-  razorpayFundAccountId: string | null;
-  payoutsAllowedAfter: Date | null;
-  payoutsFrozenAt: Date | null;
-};
-
-/** The fund account a payout may be sent to, or the reason, naming the check, that it may not. */
-async function resolveOrgPayoutDestination(payout: {
-  organizationId: string;
-  paymentGateway: PaymentGateway;
-  createdAt: Date;
-  orgPayoutAccount: OrgPayoutAccountFields | null;
-}): Promise<{ fundAccountId: string } | { refusal: string }> {
   if (payout.paymentGateway !== "RAZORPAY") {
-    return {
-      refusal: `PAYOUT_GATEWAY_UNSUPPORTED: gateway ${payout.paymentGateway} has no payout rail; only RazorpayX disburses`,
-    };
+    return refused(
+      `PAYOUT_GATEWAY_UNSUPPORTED: gateway ${payout.paymentGateway} has no payout rail; only RazorpayX disburses`,
+    );
   }
 
   // Sent to the account snapshotted at mint; a pre-snapshot payout falls back
   // to the org's current account, which must also be out of cooling-off.
   const fallback = payout.orgPayoutAccount
     ? null
-    : await prisma.organizationPayoutAccount.findUnique({
+    : await tx.organizationPayoutAccount.findUnique({
         where: { organizationId: payout.organizationId },
         select: {
           status: true,
@@ -1063,43 +1084,47 @@ async function resolveOrgPayoutDestination(payout: {
       });
   const fallbackHold = fallback ? payoutAccountHold(fallback) : null;
   if (fallbackHold) {
-    return {
-      refusal: `PAYOUT_ACCOUNT_ON_HOLD: the organisation's current payout account is ${fallbackHold === "PAYOUT_ACCOUNT_FROZEN" ? "frozen" : "cooling off after a change"}`,
-    };
+    return refused(
+      `PAYOUT_ACCOUNT_ON_HOLD: the organisation's current payout account is ${fallbackHold === "PAYOUT_ACCOUNT_FROZEN" ? "frozen" : "cooling off after a change"}`,
+    );
   }
   const account = payout.orgPayoutAccount ?? fallback;
   const fundAccountId = account?.razorpayFundAccountId ?? null;
   if (!account || !fundAccountId) {
-    return {
-      refusal:
-        "PAYOUT_ACCOUNT_NO_FUND_ACCOUNT: the payout account recorded at mint is missing or has no RazorpayX fund account",
-    };
+    return refused(
+      "PAYOUT_ACCOUNT_NO_FUND_ACCOUNT: the payout account recorded at mint is missing or has no RazorpayX fund account",
+    );
   }
   if (account.payoutsFrozenAt) {
-    return {
-      refusal:
-        "PAYOUT_ACCOUNT_PAYOUTS_FROZEN: payouts are frozen on the payout account recorded at mint",
-    };
+    return refused(
+      "PAYOUT_ACCOUNT_PAYOUTS_FROZEN: payouts are frozen on the payout account recorded at mint",
+    );
   }
   if (account.status !== "VERIFIED") {
-    return {
-      refusal: `PAYOUT_ACCOUNT_NOT_VERIFIED: the payout account recorded at mint is ${account.status}`,
-    };
+    return refused(
+      `PAYOUT_ACCOUNT_NOT_VERIFIED: the payout account recorded at mint is ${account.status}`,
+    );
   }
   // The org account row is edited in place, so a destination changed after mint is a different destination.
   const changedAt = payout.orgPayoutAccount
     ? payoutAccountChangedAt(account)
     : null;
   if (changedAt !== null && changedAt > payout.createdAt.getTime()) {
-    return {
-      refusal:
-        "PAYOUT_ACCOUNT_CHANGED: the payout account changed after this payout was created; its earnings return to the next batch, which needs a fresh approval",
-    };
+    return refused(
+      "PAYOUT_ACCOUNT_CHANGED: the payout account changed after this payout was created; its earnings return to the next batch, which needs a fresh approval",
+    );
   }
-  return { fundAccountId };
+  return {
+    kind: "ok",
+    destination: {
+      fundAccountId,
+      amountPaise: payout.amountPaise,
+      currency: payout.currency,
+    },
+  };
 }
 
-/** Sends a claimed payout to the destination its pre-claim checks resolved. */
+/** Sends a claimed payout to the destination its claim transaction resolved. */
 async function submitOrgPayoutToGateway(
   payoutId: string,
   destination: OrgPayoutDestination,
@@ -1273,7 +1298,7 @@ export async function processPendingOrgPayouts(
 const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000;
 
 async function redriveSingleOrgPayoutRow(
-  p: { id: string; gatewayPayoutId: string | null },
+  p: { id: string; gatewayPayoutId: string | null; updatedAt: Date },
   result: OrgProcessingResult,
 ): Promise<void> {
   const { findRazorpayPayoutByReference } =
@@ -1292,8 +1317,14 @@ async function redriveSingleOrgPayoutRow(
       });
     } else if (lookup.kind === "none") {
       // A re-drive never sends: re-armed APPROVED, the next processOrgPayout re-runs every first-send gate.
+      // `updatedAt` pins the claim the lookup saw; a newer claim moved it, so its create is never undone.
       const reset = await prisma.organizationPayout.updateMany({
-        where: { id: p.id, status: "PROCESSING", gatewayPayoutId: null },
+        where: {
+          id: p.id,
+          status: "PROCESSING",
+          gatewayPayoutId: null,
+          updatedAt: p.updatedAt,
+        },
         data: { status: "APPROVED" },
       });
       if (reset.count > 0) result.advanced++;
@@ -1370,7 +1401,7 @@ async function redriveStaleProcessingOrgPayouts(
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
   const stale = await prisma.organizationPayout.findMany({
     where: staleProcessingOrgPayoutWhere(staleBefore),
-    select: { id: true, gatewayPayoutId: true },
+    select: { id: true, gatewayPayoutId: true, updatedAt: true },
     orderBy: { updatedAt: "asc" },
     take: limit,
   });
@@ -2010,56 +2041,67 @@ async function recordOrgPayoutFailureOutcome(
   });
 }
 
-/** `from` APPROVED is the pre-claim refusal: nothing was sent, and a platform-held payout is left alone. */
-async function markOrgPayoutFailedInternal(
+type UnpaidOrgPayoutFailure =
+  | Awaited<ReturnType<typeof settleUnpaidOrgPayoutTx>>
+  | {
+      wasNoOp: true;
+      status: PayoutStatus;
+      notifyStaged: StagedTrigger[];
+      notifyEmails: StagedRecipientEmail[];
+      notify: null;
+    };
+
+/**
+ * Fails an unpaid payout and returns its earnings inside the caller's transaction;
+ * `from` APPROVED is the refusal before a claim, and leaves a platform-held payout alone.
+ */
+async function failUnpaidOrgPayoutTx(
+  tx: Tx,
   payoutId: string,
   reason: string,
   kind: "FAILED" | "REVERSED",
-  from: "PROCESSING" | "APPROVED" = "PROCESSING",
-): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
-  const result = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        const claim = await tx.organizationPayout.updateMany({
-          where:
-            from === "APPROVED"
-              ? { id: payoutId, status: "APPROVED", platformHeldAt: null }
-              : { id: payoutId, status: "PROCESSING" },
-          data: {
-            status: "FAILED",
-            failureReason: reason.slice(0, 500),
-            failedAt: new Date(),
-          },
-        });
-        if (claim.count === 0) {
-          const current = await tx.organizationPayout.findUnique({
-            where: { id: payoutId },
-            select: { status: true },
-          });
-          if (!current) {
-            throw new PayoutValidationError(
-              `Payout ${payoutId} not found`,
-              404,
-            );
-          }
-          console.log(
-            `[OrgPayoutService] markOrgPayoutFailedInternal no-op: payout ${payoutId} status=${current.status}`,
-          );
-          return {
-            wasNoOp: true,
-            status: current.status,
-            notifyStaged: [],
-            notifyEmails: [] as StagedRecipientEmail[],
-            notify: null,
-          };
-        }
+  from: "PROCESSING" | "APPROVED",
+): Promise<UnpaidOrgPayoutFailure> {
+  const claim = await tx.organizationPayout.updateMany({
+    where:
+      from === "APPROVED"
+        ? { id: payoutId, status: "APPROVED", platformHeldAt: null }
+        : { id: payoutId, status: "PROCESSING" },
+    data: {
+      status: "FAILED",
+      failureReason: reason.slice(0, 500),
+      failedAt: new Date(),
+    },
+  });
+  if (claim.count === 0) {
+    const current = await tx.organizationPayout.findUnique({
+      where: { id: payoutId },
+      select: { status: true },
+    });
+    if (!current) {
+      throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+    }
+    console.log(
+      `[OrgPayoutService] failUnpaidOrgPayoutTx no-op: payout ${payoutId} status=${current.status}`,
+    );
+    return {
+      wasNoOp: true,
+      status: current.status,
+      notifyStaged: [],
+      notifyEmails: [],
+      notify: null,
+    };
+  }
+  return settleUnpaidOrgPayoutTx(tx, { payoutId, kind, reason });
+}
 
-        return settleUnpaidOrgPayoutTx(tx, { payoutId, kind, reason });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    ),
-  );
-
+/** After commit: the failed-payout bell and email staged by failUnpaidOrgPayoutTx. */
+async function deliverOrgPayoutFailureNotices(
+  result: UnpaidOrgPayoutFailure,
+  payoutId: string,
+  kind: "FAILED" | "REVERSED",
+  reason: string,
+): Promise<void> {
   await Promise.allSettled([
     attemptStagedBells(result.notifyStaged, kind),
     ...(result.notifyEmails.length > 0
@@ -2074,7 +2116,20 @@ async function markOrgPayoutFailedInternal(
         ? [emailOrgPayoutFailed(payoutId, kind, reason, result.notify)]
         : []),
   ]);
+}
 
+async function markOrgPayoutFailedInternal(
+  payoutId: string,
+  reason: string,
+  kind: "FAILED" | "REVERSED",
+): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
+  const result = await withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) => failUnpaidOrgPayoutTx(tx, payoutId, reason, kind, "PROCESSING"),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+  await deliverOrgPayoutFailureNotices(result, payoutId, kind, reason);
   return { wasNoOp: result.wasNoOp, status: result.status };
 }
 
