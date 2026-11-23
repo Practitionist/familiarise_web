@@ -264,8 +264,8 @@ export async function resolveEarningsAnchor(
 /**
  * Re-anchor every unreleased earning of the appointment's payments after its
  * live occurrences changed (first allocation, top-up, reschedule). PENDING rows
- * and rows held from PENDING, which stay HELD: a READY or PAID row has already
- * left the hold.
+ * and rows held from PENDING, which stay HELD; a READY or PAID row has already
+ * left the hold, and a subscription tranche keeps the date its cycle stamped.
  *
  * The capture instant is the earnings row's own `createdAt` — Payment carries
  * no capture timestamp and its `createdAt` is order creation, which can sit
@@ -293,12 +293,13 @@ export async function recomputeEarningsHold(
   const holdHours = holdHoursFor(
     appointment.appointmentType as AppointmentType,
   );
-  // #1766 — a NULL hold is an undelivered subscription tranche; only the
-  // completion path may stamp it, so a reschedule leaves it alone.
+  // A subscription tranche keeps its own date: only the completion path stamps
+  // it, and once stamped a later session never moves it.
   const wherePendingHold = {
     paymentId: { in: appointment.payment.map((p) => p.id) },
     ...UNRELEASED,
     holdUntil: { not: null },
+    cycleOrdinal: null,
   };
   const [pendingConsultant, pendingOrg] = await Promise.all([
     db.consultantEarnings.findMany({
