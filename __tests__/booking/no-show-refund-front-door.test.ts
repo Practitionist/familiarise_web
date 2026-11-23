@@ -138,6 +138,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
+import { SWEEP_START_DEADLINE_MS } from "../../lib/cron/run-deadline";
 import {
   CONSULTANT_USER,
   CONSULTEE_USER,
@@ -225,6 +226,20 @@ describe("consultant no-show refunds", () => {
 
     expect(result.refunded).toBe(30);
     expect(refundBookingPayment).toHaveBeenCalledTimes(30);
+  });
+
+  it("bounds each candidate's Stream reads by the run's start budget", async () => {
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+      noShowCandidate({ id: "pay-1", amount: 150000 }),
+    ]);
+    const startedAt = Date.now();
+
+    await detectConsultantNoShows({ startedAt });
+
+    expect(mockSettle).toHaveBeenCalledWith(expect.anything(), {
+      failures: expect.anything(),
+      deadlineAt: startedAt + SWEEP_START_DEADLINE_MS,
+    });
   });
 
   it("refunds through the front door, never the raw gateway path", async () => {

@@ -34,7 +34,10 @@ import {
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { startDeadline } from "@/lib/cron/run-deadline";
+import {
+  startDeadline,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
 import {
   createRunFailureReporter,
   type RunFailureReporter,
@@ -85,7 +88,10 @@ export async function detectConsultantNoShows(opts?: {
     opts?.maxCandidates && opts.maxCandidates > 0
       ? Math.floor(opts.maxCandidates)
       : MAX_CANDIDATES_PER_BITE;
-  const pastDeadline = startDeadline(opts?.startedAt);
+  const startedAt = opts?.startedAt ?? Date.now();
+  const pastDeadline = startDeadline(startedAt);
+  // A candidate started near that cutoff still finishes its Stream reads inside the ticker's abort.
+  const settleDeadlineAt = startedAt + SWEEP_START_DEADLINE_MS;
   // #476 — locked at the core so every entry shares one mutual exclusion.
   // Fail-closed: this is a money job (auto-refund), so per with-cron-lock.ts it
   // refuses to run without a real Redis lock rather than risk a silent unlocked
@@ -94,7 +100,12 @@ export async function detectConsultantNoShows(opts?: {
   return withCronLock(
     "detect-consultant-no-shows",
     { failMode: "closed" },
-    () => detectConsultantNoShowsUnlocked(maxCandidates, pastDeadline),
+    () =>
+      detectConsultantNoShowsUnlocked(
+        maxCandidates,
+        pastDeadline,
+        settleDeadlineAt,
+      ),
   );
 }
 
@@ -284,7 +295,12 @@ function judgedOccurrences(consultation: NoShowCandidate, graceCutoff: Date) {
 export async function settledJudgedAttendance(
   consultation: NoShowCandidate,
   graceCutoff: Date,
-  opts: { now?: Date; failures?: RunFailureReporter } = {},
+  opts: {
+    now?: Date;
+    failures?: RunFailureReporter;
+    /** Epoch ms by which every Stream read must answer; a read past it leaves the candidate unsettled. */
+    deadlineAt?: number;
+  } = {},
 ): Promise<Map<string, PresenceInterval[]> | null> {
   const intervals = new Map<string, PresenceInterval[]>();
   for (const occurrence of judgedOccurrences(consultation, graceCutoff)) {
@@ -638,6 +654,8 @@ interface NoShowTally {
   refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   failures: RunFailureReporter;
+  /** Every candidate's Stream reads must answer by the end of the run's start budget. */
+  settleDeadlineAt: number;
 }
 
 /** One candidate through the consultant-fault pass; failures land in `tally.errors`. */
@@ -651,6 +669,7 @@ async function handleNoShowCandidate(
     // Money moves only on Stream's settled record; an unsettled session is retried next run.
     const intervals = await settledJudgedAttendance(consultation, graceCutoff, {
       failures: tally.failures,
+      deadlineAt: tally.settleDeadlineAt,
     });
     if (!intervals) {
       tally.unsettled.push({ consultationId: consultation.id });
@@ -717,6 +736,7 @@ async function handleNoShowCandidate(
 async function detectConsultantNoShowsUnlocked(
   maxCandidates: number,
   pastDeadline: () => boolean,
+  settleDeadlineAt: number,
 ): Promise<NoShowResult> {
   const tally: NoShowTally = {
     detected: 0,
@@ -725,6 +745,7 @@ async function detectConsultantNoShowsUnlocked(
     refundsAlreadyOwed: [],
     errors: [],
     failures: createRunFailureReporter("bookings"),
+    settleDeadlineAt,
   };
   const { errors } = tally;
 
