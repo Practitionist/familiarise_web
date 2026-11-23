@@ -810,6 +810,8 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
         ),
       },
       bookingStatusHistory: { create: jest.fn(async () => ({})) },
+      // Consuming a request re-anchors the payout hold; these carry no earnings.
+      appointment: { findUnique: jest.fn(async () => null) },
     };
     return { tx, declined };
   }
@@ -910,6 +912,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
         ),
       },
       bookingStatusHistory: { create: jest.fn(async () => ({})) },
+      appointment: { findUnique: jest.fn(async () => null) },
     };
     return { tx, closedAs };
   }

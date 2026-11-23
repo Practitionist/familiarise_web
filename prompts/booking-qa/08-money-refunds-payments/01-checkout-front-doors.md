@@ -20,9 +20,9 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 
 **Expect:**
 
-- `Payment`: one row, `paymentStatus = SUCCEEDED`, `isMockPayment = true`, `capturedAt` set, `clientIdempotencyKey` not null, `amount` = what the checkout page showed as the total, `originalAmount` = list price before discounts, `taxAmount` recorded (write down whether ₹500 is GST-inclusive or GST is added on top), `platformFeeBps` set (record; default fee is 20 %).
+- `Payment`: one row, `paymentStatus = SUCCEEDED`, `isMockPayment = true`, `capturedAt` null (a mock, free or organisation-funded payment is `SUCCEEDED` at creation; null reads as `createdAt`), `clientIdempotencyKey` not null, `amount` = what the checkout page showed as the total, `originalAmount` = list price before discounts, `taxAmount` recorded (write down whether ₹500 is GST-inclusive or GST is added on top), `platformFeeBps` set (record; default fee is 20 %).
 - MQ-1: exactly one `PaymentLeg` (`CARD`), exactly one `LedgerTransaction` with `idempotencyKey = 'booking:<paymentId>'`, one `ConsumerInvoice` whose `totalPaise = amount` and whose CGST+SGST or IGST split matches B1's state code.
-- `ConsultantEarnings`: one row, `status = PENDING`, `grossAmount = originalAmount`, `platformFeePaise + consultantSharePaise = grossAmount`, `refundedShareAmount = 0`, `holdUntil = max(capturedAt, session end) + 24 h` (+7 days if H1 counts as a new expert: first paid earning younger than 30 days or lifetime share under ₹50,000; record which).
+- `ConsultantEarnings`: one row, `status = PENDING`, `grossAmount = originalAmount`, `platformFeePaise + consultantSharePaise = grossAmount`, `refundedShareAmount = 0`, `holdUntil = max(capturedAt or createdAt, session end) + 48 h` (+3 days if H1 counts as a new expert: first paid earning younger than 30 days or lifetime share under ₹10,000; record which).
 - No `Refund` row; `refundOwedKey` null.
 
 **Cross-check:** B1 Payments page lists one charge of the same amount with "View receipt"; H1 Earnings shows the booking under the bucket described as "Clears after your sessions and the hold"; staff `/dashboard/staff/payments/[paymentId]` shows the same amount, status and legs. Convert every timestamp to IST for B1 and H1.
@@ -71,7 +71,7 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 1. As B2 (London) start the seat checkout and stop before paying. R-04 + seat row (`AppointmentParticipant`).
 2. Complete with Mock Pay.
 
-**Expect:** step 1: `Payment` `PENDING` with `expiresAt ≈ now + 15 min` (12-min gateway window + 3-min capture grace, `SEAT_CHECKOUT_HOLD_MS`); seat `HELD`; capacity counter shows the seat taken. Step 2: payment `SUCCEEDED`, seat `CONFIRMED`, earnings `holdUntil = webinar end + 48 h`.
+**Expect:** step 1: `Payment` `PENDING` with `expiresAt ≈ now + 15 min` (12-min gateway window + 3-min capture grace, `SEAT_CHECKOUT_HOLD_MS`; the checkout response's `holdExpiresAt` is the 12-minute gateway window, `Payment.expiresAt` the 15-minute one); seat `HELD`; capacity counter shows the seat taken. Step 2: payment `SUCCEEDED`, seat `CONFIRMED`, earnings `holdUntil = webinar end + 48 h` (+3 days if H2 counts as a new expert: first paid earning younger than 30 days or lifetime share under ₹10,000; record which).
 
 **Cross-check:** H2's webinar card count, B2's appointments (time in London), B2's Payments row.
 
@@ -113,7 +113,7 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 
 **Steps:** read `Trial.paymentDueAt`, `Payment.expiresAt`, the occurrence `startsAt`, and the deadline sentence on `/checkout/plans/trial/[trialId]`.
 
-**Expect:** record all three times. `Payment.expiresAt` and `paymentDueAt` should agree; if they differ, report which one the page shows and which one `expire-unpaid-trials` uses (SW-18). Amount `10000` paise plus tax as shown.
+**Expect:** record all three times. `Payment.expiresAt` and `paymentDueAt` should agree to within a few seconds (two statements stamp them); if they differ, report which one the page shows and which one `expire-unpaid-trials` uses (SW-18). Amount `10000` paise plus tax as shown.
 
 **Probe further:** is the deadline shown in B1's zone? Does the page say what happens to the held time when the deadline passes?
 
@@ -146,7 +146,7 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 2. R-04; re-read the `DiscountCode` row.
 3. Cancel with ≥ 24 h notice (preview first, then confirm).
 
-**Expect:** `Payment.discountCodeId` set; `originalAmount` = list; `amount` = list − discount (capped by `maxDiscount`) plus tax as shown; `currentUses` +1 exactly once. The cancel quote and the `Refund.amountPaise` equal 100 % of `amount`, not `originalAmount`. Earnings: record whether `grossAmount` uses `originalAmount` (code: it does) and whether `consultantSharePaise` is cut by the discount; then report who bears the discount (platform or expert) and whether the earnings reversal on refund is proportional to what was refunded.
+**Expect:** `Payment.discountCodeId` set; `originalAmount` = list; `amount` = list − discount plus tax as shown, where the discount is capped by the code's `maxDiscount` and by the platform-funded floor (`max(0, floor(list × fee bps / 10 000) − ceil(charge ceiling × 3.54 %))`, where the charge ceiling is the list price, plus GST when the platform is GST-registered; record which regime is in force). Worked on a ₹500 plan at the 20 % fee with a 37 % code and no lower `maxDiscount`: unregistered, the gateway estimate is ₹17.70 and the cap ₹82.30, so the charge is ₹417.70; registered, the ceiling is ₹590, the estimate ₹20.89 and the cap ₹79.11; `currentUses` +1 exactly once. The cancel quote and the `Refund.amountPaise` equal 100 % of `amount`, not `originalAmount`. Earnings: record whether `grossAmount` uses `originalAmount` (code: it does) and whether `consultantSharePaise` is cut by the discount; then report who bears the discount (platform or expert) and whether the earnings reversal on refund is proportional to what was refunded.
 
 **Probe further:** apply an expired or used-up code: a typed refusal with copy that names the problem. Apply the code, go back, change the time, return: is the discount still applied once? Does `currentUses` move when the checkout is abandoned?
 
@@ -196,7 +196,7 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 2. Owner-approved: age the first payment's `expiresAt` 1 hour into the past; NEEDS-OWNER-RUN `abandoned-payments` (or wait for a tick, SW-02).
 3. Buy again.
 
-**Expect:** step 1 second attempt: typed refusal `PAYMENT_ALREADY_EXISTS` with human copy, no second row. Step 3: `200`, not `500`; the same `Payment.id` reused as `PENDING` with a **new** order id; a tombstone row holds the old order (`EXPIRED`, `appointmentId` null, description starting "Order replaced by a re-mint"). Record exact rows.
+**Expect:** step 1 second attempt: `200` with `reused: true` and "Resuming your in-progress checkout.", the same open payment, no second row. Step 3: `200`, not `500`; the same `Payment.id` reused as `PENDING` with a **new** order id; a tombstone row holds the old order (`EXPIRED`, `appointmentId` null, description starting "Order replaced by a re-mint"). Record exact rows.
 
 **Probe further:** what does B3's Payments page show for the tombstone (nothing, or a confusing failed charge)?
 

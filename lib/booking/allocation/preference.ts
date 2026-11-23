@@ -9,6 +9,7 @@ import {
   transitionRescheduleRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { restoreEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 
 /** Open, preference-bearing reschedules that released any of these slots. */
@@ -134,6 +135,8 @@ export async function resolveConsumedPreferenceRequests(
         where: { id: request.id },
         to: request._count.proposedTimes === 0 ? "ACCEPTED" : "DECLINED",
       });
+      // Placed times end the reallocation buffer: the hold follows the new sessions.
+      await restoreEarningsHold(tx, request.appointmentId);
     } catch (err) {
       // Losing the CAS means the initiator withdrew (or the sweep expired the
       // row) between the read above and here. That is a perfectly good ending

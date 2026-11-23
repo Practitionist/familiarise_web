@@ -15,6 +15,11 @@ export function payPagePath(paymentId: string): string {
   return `${PAY_PAGE_PREFIX}${encodeURIComponent(paymentId)}`;
 }
 
+/** The confirming step every gateway checkout returns to; it waits for the booking before describing it. */
+export function checkoutSuccessPath(orderId: string): string {
+  return `/checkout/checkout-success?payment_intent=${encodeURIComponent(orderId)}`;
+}
+
 /** The Payment id inside a {@link payPagePath} href; null for any other href. */
 export function paymentIdFromPayPath(
   href: string | null | undefined,
