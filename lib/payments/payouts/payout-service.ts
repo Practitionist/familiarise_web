@@ -1437,7 +1437,13 @@ async function failCatchUpTakenPayout(
     },
     { level: "warning" },
   );
-  return { payoutId, success: false, error };
+  // A row left APPROVED is a hold, so it does not use up the run's limit.
+  return {
+    payoutId,
+    success: false,
+    error,
+    ...(released ? {} : { skipped: true }),
+  };
 }
 
 async function claimConsultantPayoutForDisbursement(
@@ -1811,10 +1817,21 @@ async function processSinglePayout(
       );
     }
 
-    // A row staged by an earlier attempt resends that attempt's amount under the same key.
+    // A row staged by an earlier attempt resends that attempt's amount under the same key,
+    // but only once a read shows it still PROCESSING with no gateway id.
+    const staged = payout.netAmount ?? null;
     const payoutAmountAfterTDS =
-      payout.netAmount ??
-      (await planAndStageConsultantTds(payout, consultantTaxInfo));
+      staged === null
+        ? await planAndStageConsultantTds(payout, consultantTaxInfo)
+        : (await prisma.consultantPayout.count({
+              where: {
+                id: payout.id,
+                status: PayoutStatus.PROCESSING,
+                providerPayoutId: null,
+              },
+            })) > 0
+          ? staged
+          : null;
 
     if (payoutAmountAfterTDS === null) {
       console.warn(
