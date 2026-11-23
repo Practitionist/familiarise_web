@@ -39,7 +39,11 @@ import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { startDeadline, startDeadlineShare } from "@/lib/cron/run-deadline";
+import {
+  startDeadline,
+  startDeadlineShare,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
@@ -59,11 +63,9 @@ import {
 } from "@/lib/booking/entitlement";
 import {
   alertStaleNeedsHuman,
-  createStreamWitnessBudget,
   escalateAgedNeedsHuman,
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
-  type StreamWitnessBudget,
   readOutageWindows,
   staleNeedsHumanWhere,
   type OutcomeSlot,
@@ -73,7 +75,7 @@ import {
   createRunFailureReporter,
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
-import { reportSentryMessage } from "@/lib/observability/report";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
@@ -1131,14 +1133,18 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
 /** Decides one session and records what the bite's tail must settle. */
 async function decideOneSlot(
   slot: OutcomeSlot,
-  ctx: Omit<Parameters<typeof decideSlotOutcome>[1], "onFeedGap" | "witness">,
+  ctx: Omit<
+    Parameters<typeof decideSlotOutcome>[1],
+    "onUnreadable" | "failures" | "settleDeadlineAt"
+  >,
   run: SlotRun,
   settle: { wrappers: Set<string>; decidedHosts: Set<string> },
 ): Promise<void> {
   const decision = await decideSlotOutcome(slot, {
     ...ctx,
-    onFeedGap: () => run.feedGaps++,
-    witness: run.witness,
+    onUnreadable: (id) => run.unreadable.push(id),
+    failures: run.streamFailures,
+    settleDeadlineAt: run.settleDeadlineAt,
   });
   if (tallyDecision(run.tally, decision) && slot.appointment.subscriptionId) {
     settle.wrappers.add(slot.appointmentId);
@@ -1153,9 +1159,12 @@ async function decideOneSlot(
 /** What the slot pass carries across its bites; reported once per run. */
 interface SlotRun {
   tally: SlotTally;
-  feedGaps: number;
-  /** Bounds the Stream attendance reads across every bite of the run. */
-  witness: StreamWitnessBudget;
+  /** Sessions parked this run because Stream's record could not be read in time. */
+  unreadable: string[];
+  /** Stream read failures across every bite, reported once. */
+  streamFailures: RunFailureReporter;
+  /** Every session's Stream reads must answer by the end of the run's start budget. */
+  settleDeadlineAt: number;
   menteeFailures: RunFailureReporter;
 }
 
@@ -1256,13 +1265,15 @@ async function drainRounds(
     maxParents: number;
     maxSlotOutcomes: number;
     pastDeadline: () => boolean;
+    slotsPastDeadline: () => boolean;
   },
   slotRun: SlotRun,
   parents: ParentPassState[],
   allErrors: string[],
   classEnd: ClassEndSettlement,
 ): Promise<number> {
-  const { maxParents, maxSlotOutcomes, pastDeadline } = bites;
+  const { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline } =
+    bites;
   const slotSeen: string[] = [];
   let slotsOpen = true;
   let rounds = 0;
@@ -1273,12 +1284,13 @@ async function drainRounds(
       const bite = await completeIndividualSlots(
         maxSlotOutcomes,
         slotSeen,
-        pastDeadline,
+        slotsPastDeadline,
         slotRun,
       );
       allErrors.push(...bite.errors);
       slotSeen.push(...bite.read);
-      slotsOpen = bite.read.length === maxSlotOutcomes;
+      // Past its share the slot pass closes, so the parent passes get the rest; unread sessions wait for the next run.
+      slotsOpen = bite.read.length === maxSlotOutcomes && !slotsPastDeadline();
     }
     for (const pass of parents) {
       if (!startable(pass)) continue;
@@ -1322,6 +1334,10 @@ export async function autoCompleteAppointments(opts?: {
     pastDeadline: startDeadline(startedAt),
     // A class's commit holds every seat's stamps, so none starts after half the start budget.
     classesPastDeadline: startDeadlineShare(0.5, startedAt),
+    // Each session may spend several Stream reads settling, so sessions stop at half the budget too.
+    slotsPastDeadline: startDeadlineShare(0.5, startedAt),
+    // A session started near that cutoff still finishes its Stream reads inside the ticker's abort.
+    settleDeadlineAt: startedAt + SWEEP_START_DEADLINE_MS,
   };
   return withCronLock(
     "auto-complete-appointments",
@@ -1337,9 +1353,11 @@ async function autoCompleteAppointmentsUnlocked(
   deadlines: {
     pastDeadline: () => boolean;
     classesPastDeadline: () => boolean;
+    slotsPastDeadline: () => boolean;
+    settleDeadlineAt: number;
   },
 ): Promise<AutoCompleteResult> {
-  const { pastDeadline, classesPastDeadline } = deadlines;
+  const { pastDeadline, classesPastDeadline, slotsPastDeadline } = deadlines;
   const allErrors: string[] = [];
 
   console.log("🔄 Starting auto-complete appointments scan...");
@@ -1352,8 +1370,9 @@ async function autoCompleteAppointmentsUnlocked(
 
   const slotRun: SlotRun = {
     tally: { completed: 0, unverified: 0, voided: 0, deferred: 0 },
-    feedGaps: 0,
-    witness: createStreamWitnessBudget(),
+    unreadable: [],
+    streamFailures: createRunFailureReporter("stream"),
+    settleDeadlineAt: deadlines.settleDeadlineAt,
     menteeFailures: createRunFailureReporter("bookings"),
   };
   const parents: ParentPassState[] = PARENT_PASSES.map((pass) => ({
@@ -1367,7 +1386,7 @@ async function autoCompleteAppointmentsUnlocked(
   let rounds = 0;
   try {
     rounds = await drainRounds(
-      { maxParents, maxSlotOutcomes, pastDeadline },
+      { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline },
       slotRun,
       parents,
       allErrors,
@@ -1391,24 +1410,18 @@ async function autoCompleteAppointmentsUnlocked(
     }
   } finally {
     // Run-level reports survive a bite that throws.
-    // #1543 — silence must not mean "fine": Stream saw people we recorded nobody for.
-    if (slotRun.feedGaps > 0) {
-      reportSentryMessage("attendance feed gap", {
-        subsystem: "stream",
-        op: "auto-complete-appointments",
-        level: "warning",
-        extra: { sessions: slotRun.feedGaps },
+    if (slotRun.unreadable.length > 0) {
+      await reportStandingFinding({
+        key: "session-outcome-sweep:attendance-unreadable",
+        ids: slotRun.unreadable,
+        message: `${slotRun.unreadable.length} session(s) parked INCONCLUSIVE: Stream's participant record could not be read within 72 hours`,
+      }).catch((error: unknown) => {
+        allErrors.push(
+          `Failed to report unreadable sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
+        );
       });
     }
-    // Each failed read left an interval open, so its session parked UNVERIFIED.
-    if (slotRun.witness.failures > 0) {
-      reportSentryMessage("attendance witness unavailable", {
-        subsystem: "stream",
-        op: "auto-complete-appointments",
-        level: "warning",
-        extra: { reads: slotRun.witness.failures },
-      });
-    }
+    slotRun.streamFailures.flush();
     slotRun.menteeFailures.flush();
   }
 

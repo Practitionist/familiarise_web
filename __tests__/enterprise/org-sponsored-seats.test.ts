@@ -11,7 +11,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointmentParticipant: { count: jest.fn(), findMany: jest.fn() },
-    meetingAttendance: { findMany: jest.fn() },
+    meetingPresence: { findMany: jest.fn() },
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   },
 }));
@@ -26,7 +26,7 @@ import { isOrgFundedPaymentMethod } from "../../lib/payments/org-funded";
 
 const m = prisma as unknown as {
   appointmentParticipant: { count: jest.Mock; findMany: jest.Mock };
-  meetingAttendance: { findMany: jest.Mock };
+  meetingPresence: { findMany: jest.Mock };
 };
 
 it("lists only the sponsor's own funded seats, with member, title, date and attended, and no other attendee", async () => {
@@ -53,11 +53,19 @@ it("lists only the sponsor's own funded seats, with member, title, date and atte
       },
     },
   ]);
-  m.meetingAttendance.findMany.mockResolvedValue([
+  m.meetingPresence.findMany.mockResolvedValue([
     { userId: "u-1", occurrence: { appointmentId: "appt-1" } },
   ]);
 
   const { items } = await getOrgSponsoredGroupSeats("sponsor-org");
+  // "Attended" is read only from Stream's settled record of the call.
+  expect(m.meetingPresence.findMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: expect.objectContaining({
+        meeting: { attendanceSettledAt: { not: null } },
+      }),
+    }),
+  );
   expect(m.appointmentParticipant.findMany).toHaveBeenCalledWith(
     expect.objectContaining({ where }),
   );

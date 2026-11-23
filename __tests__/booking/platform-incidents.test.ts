@@ -156,7 +156,6 @@ const classify = (
     hostUserIds: ["host"],
     intervals,
     meeting: { endedAt: at(60), endedReason: "session_timeout" },
-    report: null,
     maintenanceWindows: windows,
   }).outcome;
 const learnerOnly = [{ userId: "l", joinedAt: at(0), leftAt: at(60) }];

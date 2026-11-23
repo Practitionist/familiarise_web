@@ -109,6 +109,8 @@ export const needsHumanItemSchema = z.object({
   endedReason: meetingEndReasonSchema.nullable(),
   /** Parked over 7 days; its booking's settlement is waiting on it. */
   aged: z.boolean(),
+  /** The session had a call and is inside the re-read window; a settled one answers its stored verdict. */
+  canRereadAttendance: z.boolean(),
   booking: z.object({
     type: z.nativeEnum(AppointmentsType),
     title: z.string(),

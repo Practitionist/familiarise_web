@@ -7,9 +7,7 @@
  * which runs as a bare tsx process and cannot load any of that.
  *
  * One list, two consumers — so the code that HANDLES an event and the script
- * that SUBSCRIBES to it can never drift. #1134 found them four apart: the live
- * hook carried six event types while the dispatcher handled ten, so
- * MeetingAttendance and every chat moderation flag were dead code.
+ * that SUBSCRIBES to it can never drift.
  */
 export const HANDLED_EVENT_TYPES = [
   // Recording events
@@ -20,9 +18,10 @@ export const HANDLED_EVENT_TYPES = [
   // Session events
   "call.session_ended",
   "call.ended",
-  // STR-4 — per-attendee presence (unblocks #471 no-show / #472 overrun)
+  // Room state only: a join after a rejoinable timeout reopens the room. Attendance comes from Stream's settled record.
   "call.session_participant_joined",
-  "call.session_participant_left",
+  // Stream's finality signal for one session's attendance; the settle step waits for it.
+  "call.stats_report_ready",
   // #1270 — `user.flagged` / `message.flagged` were removed deliberately, and
   // NOT replaced with a chat hook. Three reasons: the in-app report button
   // already writes the ModerationReport itself via POST /api/report, so the
@@ -42,6 +41,16 @@ export function isHandledEventType(t: string): t is HandledEventType {
 }
 
 export const DESIRED_EVENT_TYPES = [...HANDLED_EVENT_TYPES] as const;
+
+/** Stream subscribes to `call.stats_report_ready` but documents its payload `type` as `call.report_ready`; both mean the one handled event. */
+const STREAM_EVENT_TYPE_ALIASES: Readonly<Record<string, HandledEventType>> = {
+  "call.report_ready": "call.stats_report_ready",
+};
+
+/** The handled name for a delivered `type`, so an alias is stored, deduplicated and re-driven as the event it names. */
+export function canonicalStreamEventType(type: string): string {
+  return STREAM_EVENT_TYPE_ALIASES[type] ?? type;
+}
 
 export type DesiredEventType = (typeof DESIRED_EVENT_TYPES)[number];
 

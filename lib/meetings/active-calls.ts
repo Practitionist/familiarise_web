@@ -1,5 +1,4 @@
 import type { PrismaLike } from "@/lib/prisma";
-import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
 import {
   createRunFailureReporter,
   type RunFailureReporter,
@@ -73,51 +72,28 @@ async function readOngoingCallIds(failures: RunFailureReporter): Promise<{
 }
 
 /**
- * Counts sessions that may be live: an open room with a fresh open presence row, or
- * any call Stream lists as ongoing, even when its room is closed. Unconfirmable rooms count as active.
+ * Counts sessions that may be live: any call Stream lists as ongoing, even when
+ * its room is closed, plus every open room Stream could not confirm either way.
  */
 export async function countActiveCalls(
   db: PrismaLike,
-  now: Date,
 ): Promise<ActiveCallCount> {
   const rooms = await db.meeting.findMany({
     where: { endedAt: null },
-    select: {
-      streamCallId: true,
-      presences: {
-        where: {
-          leftAt: null,
-          joinedAt: { gte: new Date(now.getTime() - MAX_CALL_DURATION_MS) },
-        },
-        select: { id: true },
-        take: 1,
-      },
-    },
+    select: { streamCallId: true },
   });
-
-  const present = new Set(
-    rooms
-      .filter((r) => r.presences.length > 0)
-      .map((r) => sessionKey(r.streamCallId)),
-  );
-  const uncertain = new Set(
-    rooms
-      .filter((r) => r.presences.length === 0)
-      .map((r) => sessionKey(r.streamCallId))
-      .filter((key) => !present.has(key)),
-  );
+  const uncertain = new Set(rooms.map((r) => sessionKey(r.streamCallId)));
 
   const failures = createRunFailureReporter("stream");
   try {
     if (!isStreamConfigured()) throw new Error("Stream is not configured");
     const { ids, complete } = await readOngoingCallIds(failures);
     const ongoing = new Set([...ids].map(sessionKey));
-    const live = [...ongoing].filter((key) => !present.has(key)).length;
     const unverified = complete
       ? 0
       : [...uncertain].filter((key) => !ongoing.has(key)).length;
     return {
-      active: present.size + live + unverified,
+      active: ongoing.size + unverified,
       unverified,
       streamChecked: complete,
     };
@@ -129,7 +105,7 @@ export async function countActiveCalls(
       });
     }
     return {
-      active: present.size + uncertain.size,
+      active: uncertain.size,
       unverified: uncertain.size,
       streamChecked: false,
     };

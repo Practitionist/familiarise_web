@@ -117,10 +117,8 @@ sequenceDiagram
     alt Pre-Start Device Test (now < startsAt)
         DB->>DB: CAS classify endedReason = "ended_early", keep occurrence SCHEDULED
         DB->>DB: Stamp endedAt, rotate streamCallId = "occurrence-uuid-rBase36", next join rebuilds the room
-        DB->>DB: Close the old segment's open MeetingPresence (closedByEnd) & MeetingAttendance
     else Live Session End (now >= startsAt)
         DB->>DB: CAS set endedAt = now, endedReason = "call_ended", isRecording = false
-        DB->>DB: Close this segment's open MeetingPresence (leftAt = now, closedByEnd) & MeetingAttendance (lastLeftAt = now)
     end
     alt No Meeting matched
         EndAPI-->>Host: HTTP 404 { code: "MEETING_NOT_FOUND" }
@@ -135,9 +133,9 @@ sequenceDiagram
 
 1. **Pre-Start Device Check (`endedAt < startsAt`)**:
    - A consultant testing audio/camera at `startsAt - 12m` and clicking **End session for everyone** has **not** delivered the scheduled session.
-   - `recordMeetingEndedSynchronously` classifies the event as `"ended_early"`, keeps `AppointmentOccurrence.completionStatus = "SCHEDULED"`, and stamps `endedAt` with `endedReason = "ended_early"` and rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` id, closing the old segment's open presence and attendance rows in the same transaction. Because `ended_early` is rejoinable, the access gate lets both sides in, and the provisioner (`provisionAppointmentMeeting`) creates a clean call on a new id and clears `endedAt` and `endedReason`. Both consultant and consultee still see an active `Join` button on their dashboards and enter an un-ended room at start time.
+   - `recordMeetingEndedSynchronously` classifies the event as `"ended_early"`, keeps `AppointmentOccurrence.completionStatus = "SCHEDULED"`, and stamps `endedAt` with `endedReason = "ended_early"` and rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` id by compare-and-set; it writes no attendance (the settle step later reads both call ids from Stream). Because `ended_early` is rejoinable, the access gate lets both sides in, and the provisioner (`provisionAppointmentMeeting`) creates a clean call on a new id and clears `endedAt` and `endedReason`. Both consultant and consultee still see an active `Join` button on their dashboards and enter an un-ended room at start time.
 2. **Live Session Termination (`endedAt >= startsAt`)**:
-   - Atomically stamps `Meeting.endedAt = now`, `Meeting.endedReason = "call_ended"`, `Meeting.isRecording = false` via CAS (`where: { id: meeting.id, endedAt: meeting.endedAt }`), closes the segment's open `MeetingPresence` rows (marked `closedByEnd`, an assumption the outcome sweep checks against Stream's participant sessions) and open `MeetingAttendance` rows, and prevents attendee rejoin unless reopened by the host.
+   - Atomically stamps `Meeting.endedAt = now`, `Meeting.endedReason = "call_ended"`, `Meeting.isRecording = false` by compare-and-set on the call id and the end it read (`where: { id, streamCallId, endedAt, endedReason }`), re-deciding once against the row on a miss (`endSupersedes`). No end writes attendance: the outcome sweep reads Stream's settled record later (`settleOccurrenceAttendance`).
 3. **Explicit HTTP `500` Error Propagation**:
    - If `recordMeetingEndedSynchronously` rejects after `call.end()`, the route captures the exception via `reportSentryError` and returns HTTP `500` rather than silently succeeding with HTTP `200`.
 4. **Result Shape & Rate Limit**:
@@ -162,6 +160,8 @@ Once `call.end()` executes on `default:occurrence-<uuid>`, Stream permanently ma
        id: meeting.id,
        streamCallId: meeting.streamCallId,
        endedAt: meeting.endedAt,
+       // A room whose attendance settled meanwhile stays closed.
+       attendanceSettledAt: null,
      },
      data: {
        streamCallId: nextCallId,
@@ -177,9 +177,10 @@ Once `call.end()` executes on `default:occurrence-<uuid>`, Stream permanently ma
 
 Rotating `Meeting.streamCallId` from segment 1 (`occurrence-<uuid>`) to segment 2 (`occurrence-<uuid>-r<base36>`) requires **strictly asymmetric webhook resolution** across `lib/stream/session-handlers.ts` and `lib/stream/recording-handlers.ts`:
 
-- **Artifact & Presence Events (`call.recording_ready`, `call.recording_failed`, `call.session_participant_joined`, `call.session_participant_left`)**:
+- **Artifact Events (`call.recording_ready`, `call.recording_failed`)**:
   - Query exact `where: { streamCallId }` first, **then fall back to `where: { appointmentOccurrenceId }`** extracted via `parseOccurrenceIdFromCallId(call_cid)`.
-  - **Why**: Composite MP4 transcoding (`recording_ready`) and final participant leave duration events from segment 1 arrive asynchronously **after** segment 2 is already live. Falling back to `appointmentOccurrenceId` guarantees zero orphaned recordings and 100% accurate attendance durations.
+  - **Why**: Composite MP4 transcoding (`recording_ready`) from segment 1 arrives asynchronously **after** segment 2 is already live. Falling back to `appointmentOccurrenceId` guarantees zero orphaned recordings.
+- **The join event (`call.session_participant_joined`)**: strict `where: { streamCallId }`; it only clears a non-deliberate, rejoinable end older than the join, because Stream resumed that call. Attendance for every segment comes from Stream's settled record, which lists every call id of the occurrence.
 - **Termination Events (`call.ended`, `call.session_ended`)**:
   - Match **strictly and exclusively on `where: { streamCallId }`** with **zero fallback to `appointmentOccurrenceId`**.
   - **Why**: A delayed `call.ended` or 5-minute SFU inactivity `call.session_ended` webhook from closed segment 1 carries `call_cid = "default:occurrence-<uuid>"`. Because `Meeting.streamCallId` is now `"occurrence-<uuid>-r<base36>"`, strict equality misses cleanly (`null`) and drops the stale termination event without closing the live reopened room.

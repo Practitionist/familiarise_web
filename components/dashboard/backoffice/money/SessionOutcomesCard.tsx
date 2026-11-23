@@ -32,6 +32,7 @@ import {
   operatorEndKind,
 } from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { RereadAttendanceDialog } from "./RereadAttendanceDialog";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
 function whyParked(s: NeedsHumanItem): string {
@@ -54,6 +55,7 @@ const CAP = "min-w-0 max-w-[11rem]";
 /** Stacked cells keep the table inside the card at 1440 px; the door sits in the outcome cell. */
 function queueColumns(
   onSetOutcome: (s: NeedsHumanItem) => void,
+  onReread: (s: NeedsHumanItem) => void,
 ): ResponsiveColumn<NeedsHumanItem>[] {
   return [
     {
@@ -147,6 +149,20 @@ function queueColumns(
           >
             Set outcome
           </Button>
+          {s.canRereadAttendance && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="max-w-full"
+              aria-label={`Read from Stream again for ${s.booking.title || "booking"}, ${formatOperatorInstant(s.startsAt)}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReread(s);
+              }}
+            >
+              Read from Stream again
+            </Button>
+          )}
         </div>
       ),
     },
@@ -162,6 +178,7 @@ export function SessionOutcomesCard({
   onOpenBooking,
 }: Readonly<{ onOpenBooking: (appointmentId: string) => void }>) {
   const [target, setTarget] = useState<NeedsHumanItem | null>(null);
+  const [rereadTarget, setRereadTarget] = useState<NeedsHumanItem | null>(null);
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<NeedsHumanSort>(NEEDS_HUMAN_DEFAULT_SORT);
   const queue = useQuery({
@@ -211,7 +228,7 @@ export function SessionOutcomesCard({
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <ResponsiveTable<NeedsHumanItem>
-          columns={queueColumns(setTarget)}
+          columns={queueColumns(setTarget, setRereadTarget)}
           rows={queue.data?.items ?? []}
           getRowId={(s) => s.id}
           isLoading={queue.isLoading && !queue.data}
@@ -243,6 +260,14 @@ export function SessionOutcomesCard({
           initial={target.outcome ?? "INCONCLUSIVE"}
           invalidate={[QUEUE_KEY, ["booking-ops"]]}
           onClose={() => setTarget(null)}
+        />
+      )}
+      {rereadTarget && (
+        <RereadAttendanceDialog
+          key={rereadTarget.id}
+          occurrenceId={rereadTarget.id}
+          invalidate={[QUEUE_KEY]}
+          onClose={() => setRereadTarget(null)}
         />
       )}
     </Card>

@@ -466,6 +466,8 @@ export function DisputeDetailPage({
                 <p className="text-zinc-500">Attendance Telemetry</p>
                 <p className="font-medium">
                   {dispute.evidencePack.attendance.presentCount} record(s)
+                  {dispute.evidencePack.attendance.pendingSessions > 0 &&
+                    ` · ${dispute.evidencePack.attendance.pendingSessions} pending`}
                 </p>
               </div>
               <div>

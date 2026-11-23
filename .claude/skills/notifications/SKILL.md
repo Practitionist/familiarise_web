@@ -107,7 +107,7 @@ Novu Free is 10,000 workflow runs a month, counted across Development **and** Pr
 
 ## One-time operations (Novu)
 
-None are pending. The native-mute reset, the subscriber PII scrub, the Production sync, In-App HMAC and the outbox recount were all done on 2026-11-08 (go-live skill, step 13). A new Novu environment needs `npm run novu:sync -- --env <env>`, two clean `npm run novu:check -- --env <env>` runs five minutes apart, and In-App HMAC enabled on its in-app integration. The drift check does not read that setting, so verify HMAC by behaviour: an inbox session (`POST /v1/inbox/session`) with no `subscriberHash` or a wrong one must answer 400, and the correct `computeSubscriberHash` value 201.
+None are pending. The native-mute reset, the subscriber PII scrub, the Production sync, In-App HMAC and the outbox recount were all done on 2026-11-08 (go-live skill, step 14). A new Novu environment needs `npm run novu:sync -- --env <env>`, two clean `npm run novu:check -- --env <env>` runs five minutes apart, and In-App HMAC enabled on its in-app integration. The drift check does not read that setting, so verify HMAC by behaviour: an inbox session (`POST /v1/inbox/session`) with no `subscriberHash` or a wrong one must answer 400, and the correct `computeSubscriberHash` value 201.
 
 ## Vendor configuration is not in the code
 
