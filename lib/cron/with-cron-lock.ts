@@ -112,22 +112,23 @@ async function touchRedisHeartbeat(): Promise<void> {
   }
 }
 
-/** The checkpoint the job's latest finished run left, or null to start from the beginning. */
+/**
+ * The checkpoint the job's latest finished run that recorded one left, or null to start from the beginning.
+ * Runs that wrote no checkpoint key are skipped however many there are; a JSON null is the wrap marker.
+ */
 export async function readJobCheckpoint(
   jobName: string,
 ): Promise<string | null> {
-  const delegate = await getExecutionDelegate();
-  const rows = await delegate.findMany({
-    where: { jobName, status: { in: ["COMPLETED", "FAILED"] } },
-    orderBy: { startedAt: "desc" },
-    take: 5,
-    select: { result: true },
-  });
-  for (const row of rows) {
-    const found = checkpointOf(row.result);
-    if (found) return found.checkpoint;
-  }
-  return null;
+  const { default: prisma } = await import("@/lib/prisma");
+  // Prisma's JSON filters cannot test for a key, and a missing key differs from a JSON null only in SQL.
+  const rows = await prisma.$queryRaw<{ result: unknown }[]>`
+    SELECT "result" FROM "SystemJobExecution"
+    WHERE "jobName" = ${jobName}
+      AND "status" IN ('COMPLETED', 'FAILED')
+      AND jsonb_exists("result", 'checkpoint')
+    ORDER BY "startedAt" DESC
+    LIMIT 1`;
+  return checkpointOf(rows[0]?.result)?.checkpoint ?? null;
 }
 
 async function recordJobFinish(

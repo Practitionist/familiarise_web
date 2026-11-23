@@ -317,8 +317,7 @@ export function classifySessionOutcome(
 
   if (!hostEver) {
     // A host-absent verdict needs a waiting learner and no maintenance hold.
-    const held = sides.outages.some((o) => o.start < end && o.end > start);
-    return isVoid && !held
+    return isVoid && !outageOverlapsBooking(input)
       ? verdict("HOST_ABSENT", delivered, lost)
       : verdict("INCONCLUSIVE", delivered, lost);
   }
@@ -326,6 +325,13 @@ export function classifySessionOutcome(
   return platformLoss > hostLoss
     ? verdict("PLATFORM_OUTAGE", delivered, lost)
     : verdict("CUT_SHORT", delivered, lost);
+}
+
+/** A maintenance window, a declared incident or a drain end overlaps the booked time. */
+export function outageOverlapsBooking(input: SessionOutcomeInput): boolean {
+  const start = input.startsAt.getTime();
+  const end = input.endsAt.getTime();
+  return outageSegments(input).some((o) => o.start < end && o.end > start);
 }
 
 /** Maintenance windows, plus a drain that ended this call (an `outage` end reason). */

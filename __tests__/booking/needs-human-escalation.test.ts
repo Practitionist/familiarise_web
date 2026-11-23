@@ -27,7 +27,7 @@ jest.mock("../../lib/observability/report", () => ({
 import {
   agedNeedsHumanWhere,
   isAgedNeedsHuman,
-  NEEDS_HUMAN,
+  needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
 } from "@/lib/booking/misses";
 import { escalateAgedNeedsHuman } from "@/lib/booking/session-outcome-sweep";
@@ -41,7 +41,7 @@ it("ages from the verdict, or from the call's end when none was written", () => 
   expect(NEEDS_HUMAN_ESCALATE_DAYS).toBe(7);
   expect(agedNeedsHumanWhere(NOW)).toEqual({
     AND: [
-      NEEDS_HUMAN,
+      needsHumanWhere(NOW),
       {
         OR: [
           { outcomeAt: { lt: CUTOFF } },

@@ -358,7 +358,33 @@ describe("the retroactive void", () => {
         data: expect.objectContaining({
           completionStatus: "VOIDED",
           outcome: "PLATFORM_OUTAGE",
+          // A confirmed absence it replaces does not stay confirmed.
+          outcomeConfirmedAt: null,
         }),
+      }),
+    );
+  });
+
+  it("relabels a host-blamed void as the platform's miss and clears its confirmation", async () => {
+    db.refund.findFirst.mockResolvedValue(null);
+    db.appointmentOccurrence.updateMany.mockResolvedValue({ count: 1 });
+    db.incidentRemedy.createMany.mockResolvedValue({ count: 1 });
+    const voided = occ(
+      { webinarId: "w" },
+      { completionStatus: "VOIDED", outcome: "HOST_ABSENT" },
+    );
+
+    const out = await voidForIncident(voided, "inc-1", NOW);
+
+    expect(out.outcome).toBe("relabelled");
+    expect(db.appointmentOccurrence.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ outcome: "HOST_ABSENT" }),
+        data: {
+          outcome: "PLATFORM_OUTAGE",
+          outcomeAt: NOW,
+          outcomeConfirmedAt: null,
+        },
       }),
     );
   });

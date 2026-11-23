@@ -390,6 +390,8 @@ export async function voidForIncident(
           data: {
             outcome: "PLATFORM_OUTAGE",
             outcomeAt: now,
+            // The replaced verdict's confirmation does not carry over to the platform's miss.
+            outcomeConfirmedAt: null,
             voidedAt: now,
             completedAt: null,
           },
@@ -419,7 +421,11 @@ export async function voidForIncident(
             completionStatus: "VOIDED",
             outcome: occ.outcome,
           },
-          data: { outcome: "PLATFORM_OUTAGE", outcomeAt: now },
+          data: {
+            outcome: "PLATFORM_OUTAGE",
+            outcomeAt: now,
+            outcomeConfirmedAt: null,
+          },
         });
         if (count === 0)
           return { outcome: "lost" as const, classVoid, created: 0 };

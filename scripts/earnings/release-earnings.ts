@@ -14,7 +14,11 @@
  * the ticker every 15 minutes (`TARGET_EVERY_MINUTES` in lib/cron/schedule.ts).
  */
 
-import { AWAITING_HUMAN, EARNINGS_HOLDING_MISS } from "@/lib/booking/misses";
+import {
+  AWAITING_HUMAN,
+  EARNINGS_HOLDING_MISS,
+  UNCONFIRMED_LEARNER_ABSENT,
+} from "@/lib/booking/misses";
 import {
   EarningStatus,
   OccurrenceCompletionStatus,
@@ -103,6 +107,8 @@ export const RELEASABLE_PAYMENT = {
         AND: [
           { occurrences: { none: EARNINGS_HOLDING_MISS } },
           { occurrences: { none: AWAITING_HUMAN } },
+          // A learner-absent verdict pays the expert only once it is confirmed.
+          { occurrences: { none: UNCONFIRMED_LEARNER_ABSENT } },
         ],
       },
     },

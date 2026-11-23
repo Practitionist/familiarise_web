@@ -63,6 +63,7 @@ import {
 } from "@/lib/booking/entitlement";
 import {
   alertStaleNeedsHuman,
+  confirmClosedOutcomes,
   escalateAgedNeedsHuman,
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
@@ -76,7 +77,11 @@ import {
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
-import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
+import {
+  AWAITING_HUMAN,
+  UNSETTLED_MISS,
+  unconfirmedClosedVerdictWhere,
+} from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
@@ -228,7 +233,7 @@ function undecidedSlotWhere(bufferTime: Date) {
   } satisfies Prisma.AppointmentOccurrenceWhereInput;
 }
 
-/** Every pass and the needs-human alert; parents are probed as they stand, before any slot is decided. */
+/** Every pass, the window-close pass and the needs-human alert; parents are probed as they stand, before any slot is decided. */
 export async function hasAutoCompleteWork(
   db: PrismaLike,
   now: Date,
@@ -241,7 +246,11 @@ export async function hasAutoCompleteWork(
   if (outOfTime()) return true;
   const slot = await db.appointmentOccurrence.findFirst({
     where: {
-      OR: [undecidedSlotWhere(bufferTime), staleNeedsHumanWhere(now)],
+      OR: [
+        undecidedSlotWhere(bufferTime),
+        staleNeedsHumanWhere(now),
+        unconfirmedClosedVerdictWhere(now),
+      ],
     },
     select: { id: true },
   });
@@ -307,6 +316,8 @@ export interface AutoCompleteResult {
   classEndCreditSeatsEscalated: number;
   errors: string[];
   timestamp: string;
+  /** The window-close pass's resume cursor, kept by the run trail; absent when the pass was skipped. */
+  checkpoint?: string | null;
 }
 
 /**
@@ -1313,6 +1324,9 @@ async function drainRounds(
 // Locked at the core so every entry shares one mutual exclusion; fail-closed
 // because the class pass stamps refunds owed.
 //
+/** The window-close pass's share of the start budget, so a weak backlog never starves the drain. */
+const OUTCOME_CONFIRM_BUDGET_SHARE = 0.25;
+
 // `maxParents` and `maxSlotOutcomes` are bite sizes: the run loops bites until
 // every pass reads a short cohort or `startedAt` + SWEEP_START_DEADLINE_MS passes.
 export async function autoCompleteAppointments(opts?: {
@@ -1338,6 +1352,11 @@ export async function autoCompleteAppointments(opts?: {
     slotsPastDeadline: startDeadlineShare(0.5, startedAt),
     // A session started near that cutoff still finishes its Stream reads inside the ticker's abort.
     settleDeadlineAt: startedAt + SWEEP_START_DEADLINE_MS,
+    // From the request's start, like the shares above, so a slow start cannot push it into the drain's time.
+    confirmPastDeadline: startDeadlineShare(
+      OUTCOME_CONFIRM_BUDGET_SHARE,
+      startedAt,
+    ),
   };
   return withCronLock(
     "auto-complete-appointments",
@@ -1355,6 +1374,7 @@ async function autoCompleteAppointmentsUnlocked(
     classesPastDeadline: () => boolean;
     slotsPastDeadline: () => boolean;
     settleDeadlineAt: number;
+    confirmPastDeadline: () => boolean;
   },
 ): Promise<AutoCompleteResult> {
   const { pastDeadline, classesPastDeadline, slotsPastDeadline } = deadlines;
@@ -1384,7 +1404,18 @@ async function autoCompleteAppointmentsUnlocked(
   }));
   const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
   let rounds = 0;
+  let checkpoint: string | null | undefined;
   try {
+    // Before the drain, which can spend the whole budget, and before the alerts, so a confirmed verdict is not counted as waiting.
+    const confirms = await confirmClosedOutcomes(
+      new Date(),
+      deadlines.confirmPastDeadline,
+    );
+    checkpoint = confirms.checkpoint;
+    allErrors.push(...confirms.errors);
+    console.log(
+      `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
+    );
     rounds = await drainRounds(
       { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline },
       slotRun,
@@ -1458,6 +1489,8 @@ async function autoCompleteAppointmentsUnlocked(
     classEndCreditSeatsEscalated: classEnd.escalated,
     errors: allErrors,
     timestamp: new Date().toISOString(),
+    // The run trail keeps it for the window-close pass's next run; a skipped pass writes none.
+    ...(checkpoint !== undefined && { checkpoint }),
   };
 }
 

@@ -7,6 +7,9 @@
  */
 
 import { OccurrenceCompletionStatus, type Prisma } from "@prisma/client";
+import { z } from "zod";
+
+import { readJobCheckpoint } from "@/lib/cron/with-cron-lock";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import {
@@ -46,9 +49,13 @@ import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant, transitionParticipant } from "./participants";
 import {
   agedNeedsHumanWhere,
-  NEEDS_HUMAN,
+  isNegativeMoneyOutcome,
+  needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
+  unconfirmedClosedVerdictWhere,
+  type NegativeMoneyOutcome,
 } from "./misses";
+import { judgeOutcomeEvidence } from "./outcome-evidence";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -101,6 +108,19 @@ export type SlotDecision =
       moved: boolean;
     };
 
+/** Rows read per outage source; a read that returns this many may be incomplete. */
+export const OUTAGE_READ_CAP = 200;
+
+/** True when either outage source filled its cap, so an overlapping window may be missing. */
+export function outageReadCapped(outages: readonly OutageWindow[]): boolean {
+  const count = (source: OutageWindow["source"]) =>
+    outages.filter((o) => o.source === source).length;
+  return (
+    count("maintenance") >= OUTAGE_READ_CAP ||
+    count("incident") >= OUTAGE_READ_CAP
+  );
+}
+
 /** Platform-wide DEGRADED/OFFLINE windows and declared incidents that overlap [from, now]. */
 export async function readOutageWindows(
   db: Pick<Tx, "maintenanceWindow" | "platformIncident">,
@@ -118,13 +138,13 @@ export async function readOutageWindows(
         ],
       },
       select: { startedAt: true, endedAt: true },
-      take: 200,
+      take: OUTAGE_READ_CAP,
     }),
     db.platformIncident.findMany({
       where: { endsAt: { gt: from } },
       select: { startsAt: true, endsAt: true },
       orderBy: { startsAt: "asc" },
-      take: 200,
+      take: OUTAGE_READ_CAP,
     }),
   ]);
   return [
@@ -285,6 +305,8 @@ async function writeSlotOutcomeTransaction(
         data: {
           outcome: verdict.outcome,
           outcomeAt: now,
+          // A negative verdict is proposed; the window-close pass or ops confirm it.
+          outcomeConfirmedAt: null,
           deliveredMinutes: verdict.deliveredMinutes,
           lostMinutes: verdict.lostMinutes,
           ...(to === "VOIDED" && { voidedAt: now }),
@@ -669,7 +691,7 @@ export function staleNeedsHumanWhere(
   const cutoff = new Date(now.getTime() - NEEDS_HUMAN_ALERT_HOURS * 3_600_000);
   return {
     AND: [
-      NEEDS_HUMAN,
+      needsHumanWhere(now),
       // Queued since the verdict, or since the call ended when none was written.
       {
         OR: [
@@ -752,4 +774,201 @@ export async function alertStaleNeedsHuman(
     });
   }
   return stale;
+}
+
+/** Closed unconfirmed verdicts judged per page; the pass pages by keyset until its deadline, so weak rows cannot hide older ones. */
+const OUTCOME_CONFIRM_PAGE = 100;
+
+const CONFIRM_SELECT = {
+  id: true,
+  startsAt: true,
+  endsAt: true,
+  outcome: true,
+  outcomeAt: true,
+  meeting: {
+    select: {
+      endedAt: true,
+      endedReason: true,
+      attendanceSettledAt: true,
+      attendanceCorroboratedSessionIds: true,
+      presences: { select: { userId: true, joinedAt: true, leftAt: true } },
+    },
+  },
+  appointment: { select: SESSION_HOSTS_SELECT },
+} satisfies Prisma.AppointmentOccurrenceSelect;
+
+type ConfirmRow = Prisma.AppointmentOccurrenceGetPayload<{
+  select: typeof CONFIRM_SELECT;
+}>;
+
+/** Strong evidence on the stored snapshot; a room never settled has no announcement record, so it is weak. */
+function isStrongVerdict(
+  row: ConfirmRow,
+  outcome: NegativeMoneyOutcome,
+  outages: OutageWindow[],
+): boolean {
+  const { meeting } = row;
+  const evidence = judgeOutcomeEvidence(
+    {
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      hostUserIds: sessionHostUserIds(row.appointment),
+      intervals: meeting?.presences ?? [],
+      meeting: meeting
+        ? { endedAt: meeting.endedAt, endedReason: meeting.endedReason }
+        : null,
+      maintenanceWindows: outages,
+      everySessionAnnounced:
+        !!meeting?.attendanceSettledAt &&
+        meeting.attendanceCorroboratedSessionIds.length === 0,
+    },
+    outcome,
+  );
+  return evidence?.strong === true;
+}
+
+export interface OutcomeConfirmRun {
+  confirmed: number;
+  /** Judged weak this run: left unconfirmed on the needs-human list for ops. */
+  weak: number;
+  errors: string[];
+  /** Where the next run resumes, null once the scan reached the end and wraps, or absent when the pass was skipped and the stored cursor stands. */
+  checkpoint?: string | null;
+}
+
+/** The job whose run trail keeps the pass's cursor between runs. */
+const CONFIRM_CHECKPOINT_JOB = "auto-complete-appointments";
+
+const confirmCursorSchema = z
+  .string()
+  .regex(/^[^|]+\|[^|]+$/)
+  .transform((raw) => {
+    const [at, id] = raw.split("|");
+    return { outcomeAt: new Date(at), id };
+  })
+  .refine((k) => !Number.isNaN(k.outcomeAt.getTime()));
+
+const encodeCursor = (k: Keyset) => `${k.outcomeAt.toISOString()}|${k.id}`;
+
+/** A stored cursor the trail kept, or null to start from the newest verdict. */
+function decodeCursor(raw: string | null): Keyset | null {
+  const parsed = confirmCursorSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+type Keyset = { outcomeAt: Date; id: string };
+
+/** The pass's filter past the last row of the previous page, in its (outcomeAt desc, id asc) order. */
+function afterKeyset(
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  after: Keyset | null,
+): Prisma.AppointmentOccurrenceWhereInput {
+  if (!after) return where;
+  return {
+    AND: [
+      where,
+      {
+        OR: [
+          { outcomeAt: { lt: after.outcomeAt } },
+          { outcomeAt: after.outcomeAt, id: { gt: after.id } },
+        ],
+      },
+    ],
+  };
+}
+
+/** Judges one page and stamps its strong verdicts; false when the page's outage read was capped. */
+async function confirmPage(
+  rows: ConfirmRow[],
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  now: Date,
+  run: OutcomeConfirmRun,
+): Promise<boolean> {
+  const outages = await readOutageWindows(
+    prisma,
+    new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
+  );
+  // A capped outage read may have dropped an overlapping window, so nothing is confirmed on it.
+  if (outageReadCapped(outages)) {
+    run.weak += rows.length;
+    run.errors.push(
+      `Outage read hit its ${OUTAGE_READ_CAP}-row cap; closed verdicts left unconfirmed`,
+    );
+    return false;
+  }
+  const strong = new Map<NegativeMoneyOutcome, string[]>();
+  for (const row of rows) {
+    if (!isNegativeMoneyOutcome(row.outcome)) continue;
+    if (isStrongVerdict(row, row.outcome, outages)) {
+      strong.set(row.outcome, [...(strong.get(row.outcome) ?? []), row.id]);
+    } else {
+      run.weak++;
+    }
+  }
+  // A relabel or confirm since the read changes the outcome or the stamp, so the CAS skips it.
+  const counts = await Promise.all(
+    [...strong].map(([outcome, ids]) =>
+      prisma.appointmentOccurrence.updateMany({
+        where: { AND: [where, { id: { in: ids }, outcome }] },
+        data: { outcomeConfirmedAt: now },
+      }),
+    ),
+  );
+  run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
+  return true;
+}
+
+/**
+ * Confirms each negative verdict whose report window closed on strong evidence,
+ * newest first, by CAS from an unconfirmed stamp; a weak one stays for ops.
+ */
+export async function confirmClosedOutcomes(
+  now: Date,
+  pastDeadline: () => boolean,
+): Promise<OutcomeConfirmRun> {
+  const run: OutcomeConfirmRun = { confirmed: 0, weak: 0, errors: [] };
+  // Past its share before it starts, the pass reads nothing and leaves the stored cursor in place.
+  if (pastDeadline()) return run;
+  const where = unconfirmedClosedVerdictWhere(now);
+  // Resumes where the last run stopped, so a weak backlog cannot hide older verdicts run after run.
+  let after: Keyset | null;
+  try {
+    after = decodeCursor(await readJobCheckpoint(CONFIRM_CHECKPOINT_JOB));
+  } catch (error) {
+    // Without the stored cursor nothing is read, and the stored one stands for the next run.
+    run.errors.push(
+      `Failed to read the closed-verdict cursor: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return run;
+  }
+  try {
+    while (!pastDeadline()) {
+      // "query", not a join: a join reads nested timestamps in the session zone.
+      const rows: ConfirmRow[] = await prisma.appointmentOccurrence.findMany({
+        relationLoadStrategy: "query",
+        where: afterKeyset(where, after),
+        select: CONFIRM_SELECT,
+        orderBy: [{ outcomeAt: "desc" }, { id: "asc" }],
+        take: OUTCOME_CONFIRM_PAGE,
+      });
+      const last = rows.at(-1);
+      if (!last?.outcomeAt) {
+        after = null;
+        break;
+      }
+      const judged = await confirmPage(rows, where, now, run);
+      // A capped page stays unconfirmed, but the cursor moves past it so it cannot stall the scan.
+      after =
+        rows.length < OUTCOME_CONFIRM_PAGE
+          ? null
+          : { outcomeAt: last.outcomeAt, id: last.id };
+      if (!judged || !after) break;
+    }
+  } catch (error) {
+    run.errors.push(
+      `Failed to confirm closed session outcomes: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  run.checkpoint = after ? encodeCursor(after) : null;
+  return run;
 }

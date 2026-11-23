@@ -5560,12 +5560,14 @@ model AppointmentOccurrence {
 
   // #1569 — the end + 1 h sweep is the one writer of these. A void is a miss like a
   // host cancel: the row keeps its ordinal history and the make-up machine owes it.
-  voidedAt         DateTime?          @db.Timestamptz
-  outcome          OccurrenceOutcome?
-  outcomeAt        DateTime?          @db.Timestamptz
-  deliveredMinutes Int?
-  lostMinutes      Int?
-  presences        MeetingPresence[]
+  voidedAt           DateTime?          @db.Timestamptz
+  outcome            OccurrenceOutcome?
+  outcomeAt          DateTime?          @db.Timestamptz
+  /// A negative verdict (host or learner absent, cut short) confirmed by the window pass or ops; set once from null.
+  outcomeConfirmedAt DateTime?          @db.Timestamptz
+  deliveredMinutes   Int?
+  lostMinutes        Int?
+  presences          MeetingPresence[]
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -5638,13 +5640,15 @@ model Meeting {
   extensionsUsed  Int @default(0)
 
   /// When Stream's final participant record was stored as this room's MeetingPresence rows; set once, by compare-and-set.
-  attendanceSettledAt         DateTime? @db.Timestamptz
+  attendanceSettledAt              DateTime? @db.Timestamptz
   /// Stream sessions of this occurrence whose stats report Stream announced ready (`call.stats_report_ready`); attendance settles only after them.
-  streamReportReadySessionIds String[]  @default([])
+  streamReportReadySessionIds      String[]  @default([])
+  /// Sessions the settled read accepted without Stream's ready announcement; written with attendanceSettledAt.
+  attendanceCorroboratedSessionIds String[]  @default([])
   /// The latest Stream session the room-state webhooks (join, session end, call end) saw on the room's call.
-  lastStreamSessionId         String?
+  lastStreamSessionId              String?
   /// The latest participant join a webhook reported on the room's call; a non-deliberate end older than it never stamps.
-  lastJoinedAt                DateTime? @db.Timestamptz
+  lastJoinedAt                     DateTime? @db.Timestamptz
 
   /// Set after a maintenance channel freeze succeeds; cleared after unfreeze succeeds.
   maintenanceChannelFrozenAt    DateTime?          @db.Timestamptz

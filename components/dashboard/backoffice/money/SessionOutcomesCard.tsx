@@ -25,6 +25,10 @@ import {
   type NeedsHumanItem,
   type NeedsHumanSort,
 } from "@/lib/backoffice/needs-human-queue";
+import {
+  isNegativeMoneyOutcome,
+  type NegativeMoneyOutcome,
+} from "@/lib/booking/misses";
 import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
 import { OperatorTime } from "@/lib/time/operator-time";
 import {
@@ -32,6 +36,7 @@ import {
   operatorEndKind,
 } from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { ConfirmOutcomeDialog } from "./ConfirmOutcomeDialog";
 import { RereadAttendanceDialog } from "./RereadAttendanceDialog";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
@@ -48,14 +53,43 @@ function toQueueSort(sort: TableSort): NeedsHumanSort | null {
 
 const QUEUE_KEY = ["sessions-needs-human"] as const;
 
+type ConfirmTarget = { id: string; outcome: NegativeMoneyOutcome };
+
 // One line in the table; a phone card wraps the time rather than clip it.
 const NOWRAP = "md:whitespace-nowrap";
 const CAP = "min-w-0 max-w-[11rem]";
+
+/** Offered only for a negative verdict nobody has confirmed yet. */
+function ConfirmButton({
+  s,
+  onConfirm,
+}: Readonly<{
+  s: NeedsHumanItem;
+  onConfirm: (target: ConfirmTarget) => void;
+}>) {
+  const { outcome } = s;
+  if (!s.canConfirm || !isNegativeMoneyOutcome(outcome)) return null;
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="max-w-full"
+      aria-label={`Confirm outcome for ${s.booking.title || "booking"}, ${formatOperatorInstant(s.startsAt)}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onConfirm({ id: s.id, outcome });
+      }}
+    >
+      Confirm
+    </Button>
+  );
+}
 
 /** Stacked cells keep the table inside the card at 1440 px; the door sits in the outcome cell. */
 function queueColumns(
   onSetOutcome: (s: NeedsHumanItem) => void,
   onReread: (s: NeedsHumanItem) => void,
+  onConfirm: (target: ConfirmTarget) => void,
 ): ResponsiveColumn<NeedsHumanItem>[] {
   return [
     {
@@ -163,6 +197,7 @@ function queueColumns(
               Read from Stream again
             </Button>
           )}
+          <ConfirmButton s={s} onConfirm={onConfirm} />
         </div>
       ),
     },
@@ -179,6 +214,9 @@ export function SessionOutcomesCard({
 }: Readonly<{ onOpenBooking: (appointmentId: string) => void }>) {
   const [target, setTarget] = useState<NeedsHumanItem | null>(null);
   const [rereadTarget, setRereadTarget] = useState<NeedsHumanItem | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(
+    null,
+  );
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<NeedsHumanSort>(NEEDS_HUMAN_DEFAULT_SORT);
   const queue = useQuery({
@@ -228,7 +266,7 @@ export function SessionOutcomesCard({
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <ResponsiveTable<NeedsHumanItem>
-          columns={queueColumns(setTarget, setRereadTarget)}
+          columns={queueColumns(setTarget, setRereadTarget, setConfirmTarget)}
           rows={queue.data?.items ?? []}
           getRowId={(s) => s.id}
           isLoading={queue.isLoading && !queue.data}
@@ -268,6 +306,15 @@ export function SessionOutcomesCard({
           occurrenceId={rereadTarget.id}
           invalidate={[QUEUE_KEY]}
           onClose={() => setRereadTarget(null)}
+        />
+      )}
+      {confirmTarget && (
+        <ConfirmOutcomeDialog
+          key={confirmTarget.id}
+          occurrenceId={confirmTarget.id}
+          outcome={confirmTarget.outcome}
+          invalidate={[QUEUE_KEY, ["booking-ops"]]}
+          onClose={() => setConfirmTarget(null)}
         />
       )}
     </Card>
