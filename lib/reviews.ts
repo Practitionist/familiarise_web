@@ -1,12 +1,12 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import {
+  ATTENDANCE_SETTLE_DELAY_MS,
   ATTENDANCE_SETTLE_WAIT_MS,
   attendanceReadableAt,
   SETTLE_MEETING_SELECT,
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
 import { liveParticipant } from "@/lib/booking/participants";
-import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
 import {
   isPublicExpertProfile,
   publicProfileFacts,
@@ -158,7 +158,7 @@ export const ON_DEMAND_SETTLE_BUDGET_MS = 8_000;
 
 /**
  * Stores Stream's record for this learner's recently ended sessions that the
- * sweep has not settled yet, so the rating prompt appears soon after a call.
+ * sweep has not settled yet, so the rating prompt appears once the record is readable (six hours after the room end).
  * `occurrenceId` names the session a request is about; otherwise the newest
  * readable room is taken. A session Stream cannot answer for yet is left for a later page load.
  */
@@ -175,9 +175,9 @@ export async function settleRecentAttendance(
         ...(scope.appointmentId ? { appointmentId: scope.appointmentId } : {}),
         ...(scope.occurrenceId ? { id: scope.occurrenceId } : {}),
         deletedAt: null,
-        // Inside the base rejoin grace no room is readable; an extension is checked below.
+        // No room is readable within six hours of its booked end; an extension is checked below.
         endsAt: {
-          lt: new Date(now.getTime() - REJOIN_GRACE_MS),
+          lt: new Date(now.getTime() - ATTENDANCE_SETTLE_DELAY_MS),
           gt: new Date(now.getTime() - ATTENDANCE_SETTLE_WAIT_MS),
         },
         appointment: { participants: { some: { userId } } },
@@ -185,16 +185,15 @@ export async function settleRecentAttendance(
     },
     select: {
       ...SETTLE_MEETING_SELECT,
-      occurrence: { select: { id: true, startsAt: true, endsAt: true } },
+      occurrence: { select: { id: true, endsAt: true } },
     },
     orderBy: { occurrence: { endsAt: "desc" } },
     take: ON_DEMAND_CANDIDATES,
   });
-  // A room still inside its extended rejoin grace never takes the one slot.
+  // A room extended past the booked end and not yet readable never takes the one slot.
   const readable = rooms
     .map(({ occurrence, ...meeting }) => ({
       occurrenceId: occurrence.id,
-      startsAt: occurrence.startsAt,
       endsAt: occurrence.endsAt,
       meeting,
     }))

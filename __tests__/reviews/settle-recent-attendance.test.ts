@@ -20,9 +20,8 @@ import {
   settleRecentAttendance,
 } from "@/lib/reviews";
 
-it("reads one ended room past its rejoin grace and settles it", async () => {
-  const now = new Date("2026-11-23T07:00:00Z");
-  const startsAt = new Date("2026-11-23T04:30:00Z");
+it("reads one room ended six hours ago and settles it", async () => {
+  const now = new Date("2026-11-23T12:00:00Z");
   const endsAt = new Date("2026-11-23T05:30:00Z");
   const meeting = {
     id: "m-1",
@@ -31,7 +30,7 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
     attendanceSettledAt: null,
   };
   findMany.mockResolvedValue([
-    { ...meeting, occurrence: { id: "occ-1", startsAt, endsAt } },
+    { ...meeting, occurrence: { id: "occ-1", endsAt } },
   ]);
 
   const before = Date.now();
@@ -44,7 +43,7 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
     attendanceSettledAt: null,
     occurrence: {
       appointmentId: "apt-1",
-      endsAt: { lt: new Date("2026-11-23T06:30:00Z") },
+      endsAt: { lt: new Date("2026-11-23T06:00:00Z") },
       appointment: { participants: { some: { userId: "learner-1" } } },
     },
   });
@@ -53,12 +52,7 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
     unknown,
     { now: Date; deadlineAt: number },
   ];
-  expect(target).toEqual({
-    occurrenceId: "occ-1",
-    startsAt,
-    endsAt,
-    meeting,
-  });
+  expect(target).toEqual({ occurrenceId: "occ-1", endsAt, meeting });
   expect(opts.now).toBe(now);
   expect(opts.deadlineAt).toBeGreaterThanOrEqual(
     before + ON_DEMAND_SETTLE_BUDGET_MS,
@@ -68,16 +62,16 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
   );
 });
 
-it("passes over a room still inside its extended rejoin grace, and scopes to a named session", async () => {
+it("passes over an extended room not yet readable, and scopes to a named session", async () => {
   settle.mockClear();
-  const now = new Date("2026-11-23T07:00:00Z");
+  const now = new Date("2026-11-23T12:00:00Z");
   const extended = {
     id: "m-new",
     streamCallId: "occurrence-new",
-    // Booked end 06:20 plus 15 minutes: readable only from 07:05.
+    // Booked end 05:50 plus 15 minutes: readable only from 12:05.
     extendedSeconds: 900,
     attendanceSettledAt: null,
-    occurrence: { id: "occ-new", endsAt: new Date("2026-11-23T06:20:00Z") },
+    occurrence: { id: "occ-new", endsAt: new Date("2026-11-23T05:50:00Z") },
   };
   const ready = {
     id: "m-old",

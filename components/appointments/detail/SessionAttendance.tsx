@@ -5,7 +5,7 @@ import { useState } from "react";
 
 interface Attendance {
   bookedMinutes: number;
-  /** False until Stream's record of the call is stored, about an hour after it ends. */
+  /** False until Stream's record of the call is stored, about six hours after it ends. */
   settled: boolean;
   seats: { userId: string; name: string | null; presentMinutes: number }[];
 }
@@ -40,7 +40,7 @@ export function SessionAttendance({
       {query.isError && <p>Attendance could not be loaded.</p>}
       {query.data?.seats.length === 0 && <p>No learners hold this session.</p>}
       {query.data && !query.data.settled && query.data.seats.length > 0 && (
-        <p>Attendance appears about an hour after the session ends.</p>
+        <p>Attendance appears about six hours after the session ends.</p>
       )}
       <ul className="mt-1 space-y-0.5">
         {query.data?.settled &&

@@ -19,7 +19,10 @@ import {
   COMPLETION_FOR_OUTCOME,
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
-import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
+import {
+  readOutageWindows,
+  readRoomEnd,
+} from "@/lib/booking/session-outcome-sweep";
 import {
   SESSION_HOSTS_SELECT,
   sessionHostUserIds,
@@ -317,9 +320,7 @@ export async function rereadSessionAttendance(args: {
       id: true,
       startsAt: true,
       endsAt: true,
-      meeting: {
-        select: { ...SETTLE_MEETING_SELECT, endedAt: true, endedReason: true },
-      },
+      meeting: { select: SETTLE_MEETING_SELECT },
       appointment: { select: SESSION_HOSTS_SELECT },
     },
   });
@@ -337,25 +338,18 @@ export async function rereadSessionAttendance(args: {
     );
   }
   const settled = await settleOccurrenceAttendance(
-    {
-      occurrenceId: occ.id,
-      startsAt: occ.startsAt,
-      endsAt: occ.endsAt,
-      meeting: occ.meeting,
-    },
+    { occurrenceId: occ.id, endsAt: occ.endsAt, meeting: occ.meeting },
     { now },
   );
   if (settled.kind !== "settled")
     return { result: settled.kind, verdict: null };
+  const room = await readRoomEnd(occ.meeting.id);
   const verdict = classifySessionOutcome({
     startsAt: occ.startsAt,
     endsAt: occ.endsAt,
     hostUserIds: sessionHostUserIds(occ.appointment),
     intervals: settled.intervals,
-    meeting: {
-      endedAt: occ.meeting.endedAt,
-      endedReason: occ.meeting.endedReason,
-    },
+    meeting: room && { endedAt: room.endedAt, endedReason: room.endedReason },
     maintenanceWindows: await readOutageWindows(prisma, occ.startsAt),
   });
   return {

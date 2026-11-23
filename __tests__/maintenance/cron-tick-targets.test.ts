@@ -120,7 +120,7 @@ describe("cron-tick targetRequest", () => {
   // #1775 — the two money-gating session-outcome jobs are ON the ticker. They
   // were not, and the docs recorded that as deliberate ("not
   // latency-sensitive"). The code does not support that: one releases an
-  // earnings hold and opens the feedback window an hour after a session ends,
+  // earnings hold and opens the feedback window once a session's record settles,
   // the other issues a 100% refund, and their only other driver is a `cron:`
   // schedule ADR 22 measured at ~100 minutes. Twenty-five and ten because each
   // candidate costs a Stream call-report round trip.

@@ -148,6 +148,69 @@ import {
 } from "../../app/api/user/reviews/[id]/route";
 import { GET as getReviewableSessionsRoute } from "../../app/api/user/reviews/reviewable-sessions/route";
 
+/** A dispute row as the route's select returns it, for one booked session. */
+const disputeRow = (occurrence: Record<string, unknown>) => ({
+  id: "disp-1",
+  disputeId: "rzp_disp_1",
+  amountPaise: 150000,
+  currency: "INR",
+  status: "NEEDS_RESPONSE",
+  reason: "Service not rendered",
+  paymentGateway: "RAZORPAY",
+  paymentId: "pay-1",
+  dueBy: new Date("2026-10-12T00:00:00Z"),
+  isChargeRefundable: true,
+  evidence: null,
+  evidenceSubmittedAt: null,
+  createdAt: new Date("2026-10-10T00:00:00Z"),
+  updatedAt: new Date("2026-10-10T00:00:00Z"),
+  payment: {
+    id: "pay-1",
+    paymentIntent: "pi_1",
+    paymentStatus: "SUCCEEDED",
+    amount: 150000,
+    currency: "INR",
+    paymentMethod: "CARD",
+    createdAt: new Date("2026-10-01T09:00:00Z"),
+    user: { id: "user-1", name: "Customer One", email: "c1@example.com" },
+    appointment: {
+      id: "appt-1",
+      appointmentType: "CONSULTATION",
+      createdAt: new Date("2026-10-01T09:00:00Z"),
+      occurrences: [occurrence],
+      supportThreads: [],
+      supportCases: [
+        {
+          id: "case-1",
+          status: "OPEN",
+          category: "billing",
+          referenceNumber: "FAM-2026-000001",
+          priority: "HIGH",
+          createdAt: new Date("2026-10-02T09:00:00Z"),
+        },
+      ],
+    },
+  },
+});
+
+/** GET the dispute detail route for that row. */
+async function getDispute(occurrence: Record<string, unknown>) {
+  mockDispute.findUnique.mockResolvedValue(disputeRow(occurrence));
+  const req = new NextRequest("http://localhost/api/admin/disputes/disp-1");
+  return getAdminDisputeRoute(req, {
+    params: Promise.resolve({ disputeId: "disp-1" }),
+  });
+}
+
+const PAST_SESSION = {
+  id: "occ-1",
+  startsAt: new Date("2026-10-01T10:00:00Z"),
+  endsAt: new Date("2026-10-01T11:00:00Z"),
+  completionStatus: "UNVERIFIED",
+  outcome: null,
+  presences: [],
+};
+
 describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -363,63 +426,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
 
-    mockDispute.findUnique.mockResolvedValue({
-      id: "disp-1",
-      disputeId: "rzp_disp_1",
-      amountPaise: 150000,
-      currency: "INR",
-      status: "NEEDS_RESPONSE",
-      reason: "Service not rendered",
-      paymentGateway: "RAZORPAY",
-      paymentId: "pay-1",
-      dueBy: new Date("2026-10-12T00:00:00Z"),
-      isChargeRefundable: true,
-      evidence: null,
-      evidenceSubmittedAt: null,
-      createdAt: new Date("2026-10-10T00:00:00Z"),
-      updatedAt: new Date("2026-10-10T00:00:00Z"),
-      payment: {
-        id: "pay-1",
-        paymentIntent: "pi_1",
-        paymentStatus: "SUCCEEDED",
-        amount: 150000,
-        currency: "INR",
-        paymentMethod: "CARD",
-        createdAt: new Date("2026-10-01T09:00:00Z"),
-        user: { id: "user-1", name: "Customer One", email: "c1@example.com" },
-        appointment: {
-          id: "appt-1",
-          appointmentType: "CONSULTATION",
-          createdAt: new Date("2026-10-01T09:00:00Z"),
-          occurrences: [
-            {
-              id: "occ-1",
-              startsAt: new Date("2026-10-01T10:00:00Z"),
-              endsAt: new Date("2026-10-01T11:00:00Z"),
-              completionStatus: "UNVERIFIED",
-              outcome: null,
-              presences: [],
-            },
-          ],
-          supportThreads: [],
-          supportCases: [
-            {
-              id: "case-1",
-              status: "OPEN",
-              category: "billing",
-              referenceNumber: "FAM-2026-000001",
-              priority: "HIGH",
-              createdAt: new Date("2026-10-02T09:00:00Z"),
-            },
-          ],
-        },
-      },
-    });
-
-    const req = new NextRequest("http://localhost/api/admin/disputes/disp-1");
-    const res = await getAdminDisputeRoute(req, {
-      params: Promise.resolve({ disputeId: "disp-1" }),
-    });
+    const res = await getDispute(PAST_SESSION);
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.evidencePack).toBeDefined();
@@ -440,63 +447,9 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
 
-    mockDispute.findUnique.mockResolvedValue({
-      id: "disp-1",
-      disputeId: "rzp_disp_1",
-      amountPaise: 150000,
-      currency: "INR",
-      status: "NEEDS_RESPONSE",
-      reason: "Service not rendered",
-      paymentGateway: "RAZORPAY",
-      paymentId: "pay-1",
-      dueBy: new Date("2026-10-12T00:00:00Z"),
-      isChargeRefundable: true,
-      evidence: null,
-      evidenceSubmittedAt: null,
-      createdAt: new Date("2026-10-10T00:00:00Z"),
-      updatedAt: new Date("2026-10-10T00:00:00Z"),
-      payment: {
-        id: "pay-1",
-        paymentIntent: "pi_1",
-        paymentStatus: "SUCCEEDED",
-        amount: 150000,
-        currency: "INR",
-        paymentMethod: "CARD",
-        createdAt: new Date("2026-10-01T09:00:00Z"),
-        user: { id: "user-1", name: "Customer One", email: "c1@example.com" },
-        appointment: {
-          id: "appt-1",
-          appointmentType: "CONSULTATION",
-          createdAt: new Date("2026-10-01T09:00:00Z"),
-          occurrences: [
-            {
-              id: "occ-1",
-              startsAt: new Date("2026-10-01T10:00:00Z"),
-              endsAt: new Date("2026-10-01T11:00:00Z"),
-              completionStatus: "UNVERIFIED",
-              outcome: null,
-              meeting: { attendanceSettledAt: null },
-              presences: [],
-            },
-          ],
-          supportThreads: [],
-          supportCases: [
-            {
-              id: "case-1",
-              status: "OPEN",
-              category: "billing",
-              referenceNumber: "FAM-2026-000001",
-              priority: "HIGH",
-              createdAt: new Date("2026-10-02T09:00:00Z"),
-            },
-          ],
-        },
-      },
-    });
-
-    const req = new NextRequest("http://localhost/api/admin/disputes/disp-1");
-    const res = await getAdminDisputeRoute(req, {
-      params: Promise.resolve({ disputeId: "disp-1" }),
+    const res = await getDispute({
+      ...PAST_SESSION,
+      meeting: { attendanceSettledAt: null },
     });
     const body = await res.json();
     expect(res.status).toBe(200);

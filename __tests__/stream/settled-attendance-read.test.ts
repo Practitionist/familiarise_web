@@ -92,15 +92,11 @@ const stay = (user: string, from: string, to: string): Row => ({
 /** Every session's report announced ready, as Stream does once its data is final. */
 const READY: {
   readySessionIds: string[];
-  bookedStartsAt: Date;
   lastKnownSessionId: string | null;
-  fallback: boolean;
   currentCallReserved: boolean;
 } = {
   readySessionIds: ["s1", "s2", "s3"],
-  bookedStartsAt: new Date("2026-11-23T04:30:00Z"),
   lastKnownSessionId: null,
-  fallback: false,
   currentCallReserved: false,
 };
 
@@ -200,15 +196,13 @@ it("an occurrence no call of which ever had a session is no-session, not an empt
   expect(await read({ readySessionIds: [] })).toEqual({ kind: "no-session" });
 });
 
-const DAY = 86_400_000;
-
 it.each([
   [1, "not-final"],
   [91, "expired"],
 ])(
   "a 404 on participant detail for a session that ended %i day(s) ago is %s",
   async (days, kind) => {
-    const endedAt = new Date(Date.now() - days * DAY).toISOString();
+    const endedAt = new Date(Date.now() - days * 86_400_000).toISOString();
     stream.sessions = new Map([
       [
         "default:occurrence-occ-1",
@@ -220,12 +214,7 @@ it.each([
       ],
     ]);
     stream.failParticipants = { status: 404 };
-    expect(
-      await read({
-        readySessionIds: ["s1", "s3"],
-        bookedStartsAt: new Date(Date.parse(endedAt) - DAY / 24),
-      }),
-    ).toEqual({ kind });
+    expect(await read({ readySessionIds: ["s1", "s3"] })).toEqual({ kind });
   },
 );
 
@@ -258,16 +247,12 @@ it("a read past its deadline is unavailable and stops asking Stream", async () =
   expect(Date.now() - started).toBeLessThan(2_000);
 });
 
-it("a session whose report is not announced is not final until the fallback, and then only when our webhooks corroborate the list", async () => {
+it("a session whose report is not announced is read only when our webhooks corroborate the list", async () => {
   const unannounced = { readySessionIds: ["s1", "s3"] };
   expect(await read(unannounced)).toEqual({ kind: "not-final" });
-  expect(await read({ ...unannounced, fallback: true })).toEqual({
-    kind: "not-final",
-  });
-  expect(
-    (await read({ ...unannounced, fallback: true, lastKnownSessionId: "s2" }))
-      .kind,
-  ).toBe("read");
+  expect((await read({ ...unannounced, lastKnownSessionId: "s2" })).kind).toBe(
+    "read",
+  );
 });
 
 it("a session announced or seen elsewhere that stats do not list keeps the record not final", async () => {
@@ -289,10 +274,7 @@ it("an expired session whose detail comes back as an empty list, with its total 
   stream.totals.set("occurrence-occ-1/s1", 1);
   stream.rows.set("occurrence-occ-1-r2/s3", []);
   stream.totals.set("occurrence-occ-1-r2/s3", 1);
-  expect(
-    await read({
-      readySessionIds: ["s1", "s3"],
-      bookedStartsAt: new Date(Date.parse(old) - DAY / 24),
-    }),
-  ).toEqual({ kind: "expired" });
+  expect(await read({ readySessionIds: ["s1", "s3"] })).toEqual({
+    kind: "expired",
+  });
 });

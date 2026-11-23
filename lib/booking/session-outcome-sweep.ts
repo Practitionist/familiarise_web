@@ -154,7 +154,8 @@ type RoomEnd = {
 /** The room's end as classified (read after the settle) and the call id the settle read (loaded before it). */
 type RoomFence = { end: RoomEnd; settledCallId: string };
 
-const readRoomEnd = (meetingId: string): Promise<RoomEnd | null> =>
+/** The room's end as it stands now: read after a settle, so an end that committed during the Stream reads is the one judged. */
+export const readRoomEnd = (meetingId: string): Promise<RoomEnd | null> =>
   prisma.meeting.findUnique({
     where: { id: meetingId },
     select: { endedAt: true, endedReason: true, attendanceSettledAt: true },
@@ -200,12 +201,7 @@ async function slotEvidence(
     return { kind: "intervals", intervals: [] };
   }
   const settled = await settleOccurrenceAttendance(
-    {
-      occurrenceId: slot.id,
-      startsAt: slot.startsAt,
-      endsAt: slot.endsAt,
-      meeting,
-    },
+    { occurrenceId: slot.id, endsAt: slot.endsAt, meeting },
     { now: ctx.now, failures: ctx.failures, deadlineAt: ctx.settleDeadlineAt },
   );
   if (settled.kind === "settled") {

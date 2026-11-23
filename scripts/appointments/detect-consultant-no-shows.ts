@@ -293,7 +293,6 @@ export async function settledJudgedAttendance(
     const settled = await settleOccurrenceAttendance(
       {
         occurrenceId: occurrence.id,
-        startsAt: occurrence.startsAt,
         endsAt: occurrence.endsAt,
         meeting: occurrence.meeting,
       },

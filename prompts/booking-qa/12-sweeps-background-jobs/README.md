@@ -24,7 +24,7 @@ Journey cases elsewhere already assert the main outcome of several sweeps (CO-36
 | `expire-stale-requests` | same | 15 min | yes | Expire unanswered requests and refund approved requests that were never scheduled (plus parked consultations, stale released sessions, waitlists, nudges) | SW-09…SW-14, SW-16, SW-17 |
 | `reschedule-proposals` | `expire-reschedule-proposals` | 15 min | no | Lapse reschedule proposals nobody answered and restore the original time | SW-15 |
 | `expire-unpaid-trials` | same | 15 min | yes | Expire unpaid trials and refund paid trials nobody answered | SW-18, SW-19 |
-| `auto-complete-appointments` | same | 30 min | no | Move finished sessions to completed after they end (end + 1 h); stamps class-end refunds | SW-20, SW-22, SW-24 |
+| `auto-complete-appointments` | same | 30 min | no | Move finished sessions to completed once Stream's record is read (room end + 6 h; a session with no call from end + 1 h); stamps class-end refunds | SW-20, SW-22, SW-24 |
 | `detect-consultant-no-shows` | same | 30 min | yes | Cancel and refund sessions the consultant never joined (120-min grace) | SW-21 |
 | `appointment-reminders` | `send-appointment-reminders` | 15 min | no | Send the 24-hour, 1-hour and 15-minute session reminders | SW-23 |
 | `retry-auto-refunds` | same | 15 min | yes | Re-drive auto-refunds the capture webhook could not complete (and every booking door's refund-owed marker) | SW-25 (detail MO-55…MO-58) |
