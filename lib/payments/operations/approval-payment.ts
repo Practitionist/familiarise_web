@@ -987,7 +987,7 @@ const MINT_LABEL: Record<
  * Build metadata for webhook processing
  * This metadata will be passed to handlePaymentSuccess() when payment completes
  */
-function buildApprovalMetadata(
+export function buildApprovalMetadata(
   params: CreateApprovalPaymentParams,
   pricing: { taxAmount: number },
 ): Record<string, string> {

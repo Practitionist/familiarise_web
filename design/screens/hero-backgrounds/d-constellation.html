@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hero background: D, constellation of nodes and lines</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #000;
+        font-family: Sora, system-ui, sans-serif;
+      }
+      .hero {
+        position: relative;
+        min-height: 95vh;
+        display: flex;
+        align-items: center;
+        overflow: hidden;
+        background: #000;
+      }
+      .layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .content {
+        position: relative;
+        z-index: 10;
+        max-width: 56rem;
+        margin: 0 auto;
+        padding: 5rem 1rem;
+        text-align: center;
+      }
+      .badge {
+        display: inline-flex;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+        color: #a1a1aa;
+        font-size: 0.875rem;
+        margin-bottom: 2rem;
+      }
+      h1 {
+        color: #fff;
+        font-weight: 700;
+        font-size: clamp(2.5rem, 6vw, 4.5rem);
+        line-height: 1.15;
+        letter-spacing: -0.025em;
+        margin: 0 0 1.5rem;
+      }
+      .silver {
+        background: linear-gradient(
+          90deg,
+          #71717a,
+          #a1a1aa,
+          #d4d4d8,
+          #a1a1aa,
+          #71717a
+        );
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .muted {
+        color: #a1a1aa;
+      }
+      p.sub {
+        color: #a1a1aa;
+        font-size: 1.2rem;
+        line-height: 1.6;
+        max-width: 42rem;
+        margin: 0 auto 2.5rem;
+      }
+      .ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        justify-content: center;
+      }
+      .btn {
+        height: 3.5rem;
+        padding: 0 2rem;
+        border-radius: 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        font-weight: 500;
+      }
+      .primary {
+        background: #fff;
+        color: #000;
+      }
+      .secondary {
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Hero background option D, constellation of nodes and lines. Same values as the option's pull request; open this file in a browser to view it. -->
+    <section class="hero">
+      <svg
+        class="layer"
+        style="width: 100%; height: 100%"
+        viewBox="0 0 1440 900"
+        preserveAspectRatio="xMidYMid slice"
+      >
+        <g stroke="rgba(255,255,255,0.14)" stroke-width="1" fill="none">
+          <path d="M90 140 L260 230 L420 120 L560 260" />
+          <path d="M260 230 L200 420 L340 560 L180 720" />
+          <path d="M1350 150 L1180 240 L1040 130 L900 250" />
+          <path d="M1180 240 L1250 430 L1100 580 L1270 740" />
+          <path d="M340 560 L520 800 L760 860 L960 790 L1100 580" />
+          <path d="M420 120 L720 60 L1040 130" />
+        </g>
+        <g fill="rgba(255,255,255,0.35)">
+          <circle cx="90" cy="140" r="2.5" />
+          <circle cx="260" cy="230" r="3.5" />
+          <circle cx="420" cy="120" r="2.5" />
+          <circle cx="560" cy="260" r="2" />
+          <circle cx="200" cy="420" r="3" />
+          <circle cx="340" cy="560" r="2.5" />
+          <circle cx="180" cy="720" r="2" />
+          <circle cx="1350" cy="150" r="2.5" />
+          <circle cx="1180" cy="240" r="3.5" />
+          <circle cx="1040" cy="130" r="2.5" />
+          <circle cx="900" cy="250" r="2" />
+          <circle cx="1250" cy="430" r="3" />
+          <circle cx="1100" cy="580" r="2.5" />
+          <circle cx="1270" cy="740" r="2" />
+          <circle cx="520" cy="800" r="2" />
+          <circle cx="760" cy="860" r="2.5" />
+          <circle cx="960" cy="790" r="2" />
+          <circle cx="720" cy="60" r="2.5" />
+        </g>
+      </svg>
+      <div
+        class="layer"
+        style="
+          background: radial-gradient(
+            ellipse 45% 40% at 50% 45%,
+            rgba(0, 0, 0, 0.85),
+            transparent 75%
+          );
+        "
+      ></div>
+      <div class="content">
+        <div class="badge">
+          &#10022; Every expert is vetted before they take a booking
+        </div>
+        <h1>
+          Learn live from <span class="silver">people who do the work</span
+          ><br /><span class="muted">in your field</span>
+        </h1>
+        <p class="sub">
+          Join live classes and webinars, or book tutoring and private sessions
+          with working professionals. Book, pay and learn in one place.
+        </p>
+        <div class="ctas">
+          <span class="btn primary">Find Your Expert &rarr;</span
+          ><span class="btn secondary">Become an Expert &rarr;</span>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>
