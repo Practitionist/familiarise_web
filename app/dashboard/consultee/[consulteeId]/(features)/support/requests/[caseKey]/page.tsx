@@ -6,9 +6,12 @@ export default async function SupportRequestPage({
   searchParams,
 }: Readonly<{
   params: Promise<{ consulteeId: string; caseKey: string }>;
-  searchParams: Promise<{ intent?: string | string[] }>;
+  searchParams: Promise<{
+    intent?: string | string[];
+    occurrence?: string | string[];
+  }>;
 }>) {
-  const [{ consulteeId, caseKey }, { intent }] = await Promise.all([
+  const [{ consulteeId, caseKey }, { intent, occurrence }] = await Promise.all([
     params,
     searchParams,
   ]);
@@ -18,6 +21,7 @@ export default async function SupportRequestPage({
       profileId={consulteeId}
       caseKey={caseKey}
       intent={intent}
+      occurrence={occurrence}
     />
   );
 }

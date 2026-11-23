@@ -5,6 +5,13 @@ import {
   createOrReuseSupportCase,
   patchSupportCaseLifecycle,
 } from "../../../lib/support/case-service";
+import { runSupportTurn } from "../../../lib/support/service";
+import {
+  HOUR_MS,
+  seedConsultee,
+  seedHost,
+  seedOneToOne,
+} from "../booking/harness";
 import {
   caseVersion,
   intakeFor,
@@ -81,6 +88,54 @@ describe("intake races on one open scope", () => {
     });
     expect(cases).toHaveLength(1);
     expect(cases[0].messages).toHaveLength(1);
+  });
+});
+
+describe("a no-show report on a past session", () => {
+  it("opens the session's own case beside an open booking thread and keeps the terminal's reason", async () => {
+    const host = await seedHost();
+    const learner = await seedConsultee();
+    const endsAt = new Date(Date.now() - 2 * HOUR_MS);
+    const booking = await seedOneToOne(
+      "consultation",
+      host,
+      learner,
+      { startsAt: new Date(endsAt.getTime() - HOUR_MS), endsAt },
+      {
+        status: "COMPLETED",
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+    );
+    const thread = await seedCase(learner.userId, {
+      category: "PAYMENT_STATUS",
+      appointmentId: booking.appointmentId,
+    });
+
+    await runSupportTurn(booking.appointmentId, learner.userId, {
+      category: "NO_SHOW",
+    });
+    const result = await runSupportTurn(booking.appointmentId, learner.userId, {
+      chosenOptionId: "expert",
+    });
+
+    const report = await prisma.supportCase.findFirstOrThrow({
+      where: { requesterUserId: learner.userId, category: "NO_SHOW" },
+    });
+    expect(result?.threadId).toBe(report.id);
+    expect(report).toMatchObject({
+      appointmentOccurrenceId: booking.occurrenceId,
+      scopeKey: `OCCURRENCE:${booking.occurrenceId}`,
+      flowReason: "provider_no_show",
+      activeChannel: "HUMAN",
+    });
+    const other = await prisma.supportCase.findUniqueOrThrow({
+      where: { id: thread.id },
+    });
+    expect(other).toMatchObject({
+      category: "PAYMENT_STATUS",
+      flowReason: null,
+    });
   });
 });
 

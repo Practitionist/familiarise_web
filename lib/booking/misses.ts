@@ -5,6 +5,8 @@
 
 import type { OccurrenceOutcome, Prisma } from "@prisma/client";
 
+import { classifiedReasons, REPORT_EFFECT } from "./outcome-reports";
+
 /** A cancelled session must be made up, and HELD, within this many days. */
 export const MAKEUP_WINDOW_DAYS = 14;
 
@@ -91,6 +93,14 @@ export const UNCONFIRMED_LEARNER_ABSENT = {
   appointment: { subscriptionId: null },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+/** A verdict the sweep applied (COMPLETED or VOIDED) that nobody has confirmed. */
+const APPLIED_UNCONFIRMED = {
+  deletedAt: null,
+  isTentative: false,
+  completionStatus: { in: ["COMPLETED", "VOIDED"] },
+  outcomeConfirmedAt: null,
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 /** An applied negative verdict whose report window closed unconfirmed: the window-close pass judges it, ops decide a weak one. */
 export function unconfirmedClosedVerdictWhere(
   now: Date,
@@ -99,16 +109,56 @@ export function unconfirmedClosedVerdictWhere(
     now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000,
   );
   return {
-    deletedAt: null,
-    isTentative: false,
-    completionStatus: { in: ["COMPLETED", "VOIDED"] },
+    ...APPLIED_UNCONFIRMED,
     outcome: { in: [...NEGATIVE_MONEY_OUTCOMES] },
-    outcomeConfirmedAt: null,
     outcomeAt: { lt: closedBefore },
   };
 }
 
-/** The ops needs-human list: the above, a paid trial that was voided (D4), and a closed unconfirmed verdict. */
+/** When a verdict written at `outcomeAt` stops taking reports. */
+export const reportWindowClosesAt = (outcomeAt: Date): Date =>
+  new Date(outcomeAt.getTime() + OUTCOME_REPORT_WINDOW_HOURS * 3_600_000);
+
+/** A linked case whose reason could move this verdict; who filed it and when is judged on the row read. */
+const reportCaseWhere = (
+  reasons: string[],
+): Prisma.SupportCaseListRelationFilter => ({
+  some: {
+    deletedAt: null,
+    ownershipScope: { not: "ORG_OPERATIONS" },
+    flowReason: { in: reasons },
+  },
+});
+
+/** The window-close pass's candidates: a closed unconfirmed verdict, or one an agreeing report may apply early. */
+export function confirmableVerdictWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    OR: [
+      unconfirmedClosedVerdictWhere(now),
+      ...NEGATIVE_MONEY_OUTCOMES.filter(
+        (outcome) => REPORT_EFFECT[outcome].agree.length > 0,
+      ).map((outcome) => ({
+        ...APPLIED_UNCONFIRMED,
+        outcome,
+        outcomeAt: { not: null },
+        supportCases: reportCaseWhere([...REPORT_EFFECT[outcome].agree]),
+      })),
+    ],
+  };
+}
+
+/** An applied unconfirmed verdict with a dispute or agreement filed against it: ops see both statements. */
+export const REPORTED_VERDICT = {
+  ...APPLIED_UNCONFIRMED,
+  OR: NEGATIVE_MONEY_OUTCOMES.map((outcome) => ({
+    outcome,
+    supportCases: reportCaseWhere(classifiedReasons(outcome)),
+  })),
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** The ops needs-human list: the above, a paid trial that was voided (D4), a closed unconfirmed verdict and a reported one. */
 export function needsHumanWhere(
   now: Date,
 ): Prisma.AppointmentOccurrenceWhereInput {
@@ -123,6 +173,7 @@ export function needsHumanWhere(
         appointment: { trial: { paymentId: { not: null } } },
       },
       unconfirmedClosedVerdictWhere(now),
+      REPORTED_VERDICT,
     ],
   };
 }

@@ -80,8 +80,10 @@ function verdict(id: string, overrides: Row = {}, meeting: Row = {}): Row {
       presences: [{ userId: "hannah", joinedAt: at(0), leftAt: at(60) }],
       ...meeting,
     },
+    supportCases: [],
     appointment: {
       subscriptionId: null,
+      participants: [{ userId: "priya" }],
       consultation: {
         consultationPlan: { consultantProfile: { userId: "hannah" } },
       },
@@ -152,6 +154,7 @@ describe("the window-close pass", () => {
     expect(run).toEqual({
       confirmed: 1,
       weak: 2,
+      disputed: 0,
       errors: [],
       checkpoint: null,
     });
@@ -261,6 +264,105 @@ describe("the window-close pass", () => {
     expect(run.errors).toHaveLength(1);
     expect(occurrences.findMany).not.toHaveBeenCalled();
     expect(run).not.toHaveProperty("checkpoint");
+  });
+});
+
+/** A linked case in the shape the pass's select returns. */
+const filed = (flowReason: string, requesterUserId: string): Row => ({
+  id: `case-${flowReason}`,
+  flowReason,
+  requesterUserId,
+  ownershipScope: "PERSONAL",
+  createdAt: hoursAgo(49),
+  deletedAt: null,
+});
+
+/** Priya waited the hour and Hannah never came: a strong host absence. */
+const hostAbsent = (id: string, overrides: Row = {}, meeting: Row = {}) =>
+  verdict(
+    id,
+    { completionStatus: "VOIDED", outcome: "HOST_ABSENT", ...overrides },
+    {
+      presences: [{ userId: "priya", joinedAt: at(0), leftAt: at(60) }],
+      ...meeting,
+    },
+  );
+
+describe("participant reports", () => {
+  it("does not stamp a closed, strong verdict the accused party disputed, and lists it for ops", async () => {
+    occurrences.rows.push(
+      verdict("a", { supportCases: [filed("attendee_attended", "priya")] }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 0, weak: 0, disputed: 1 });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+    expect(matchesWhere(row("a"), needsHumanWhere(NOW))).toBe(true);
+  });
+
+  it("stamps a strong verdict at once when the harmed party agrees inside the window", async () => {
+    occurrences.rows.push(
+      hostAbsent("a", {
+        outcomeAt: hoursAgo(10),
+        supportCases: [
+          { ...filed("provider_no_show", "priya"), createdAt: hoursAgo(9) },
+        ],
+      }),
+    );
+    // In the window it is on the list until the pass applies it.
+    expect(matchesWhere(row("a"), needsHumanWhere(NOW))).toBe(true);
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("a").outcomeConfirmedAt).toEqual(NOW);
+    expect(matchesWhere(row("a"), needsHumanWhere(NOW))).toBe(false);
+  });
+
+  it("does not stamp an open window on an agreement the wrong side filed", async () => {
+    occurrences.rows.push(
+      hostAbsent("a", {
+        outcomeAt: hoursAgo(10),
+        supportCases: [
+          { ...filed("provider_no_show", "hannah"), createdAt: hoursAgo(9) },
+        ],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 0, weak: 0, disputed: 0 });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("does not stamp a weak verdict the harmed party agrees with", async () => {
+    occurrences.rows.push(
+      hostAbsent(
+        "a",
+        {
+          outcomeAt: hoursAgo(10),
+          supportCases: [
+            { ...filed("provider_no_show", "priya"), createdAt: hoursAgo(9) },
+          ],
+        },
+        { attendanceCorroboratedSessionIds: ["s-2"] },
+      ),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 0, weak: 1 });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("changes nothing on a neutral report, closed or open", async () => {
+    occurrences.rows.push(
+      verdict("closed", {
+        supportCases: [filed("attendee_no_show", "hannah")],
+      }),
+      verdict("open", {
+        outcomeAt: hoursAgo(10),
+        supportCases: [filed("attendee_no_show", "hannah")],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 1, weak: 0, disputed: 0 });
+    expect(row("closed").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("open").outcomeConfirmedAt).toBeNull();
+    expect(matchesWhere(row("open"), needsHumanWhere(NOW))).toBe(false);
   });
 });
 

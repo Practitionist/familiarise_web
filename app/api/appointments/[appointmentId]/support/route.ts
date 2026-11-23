@@ -16,12 +16,10 @@ import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
 import { CaseConflictError } from "@/lib/support/case-transitions";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
-import { AppointmentIdParams } from "@/schemas/support";
-import { SupportThreadCategoryEnum } from "@/schemas/enums";
+import { AppointmentIdParams, SupportTurnSchema } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { stripCallbackTags } from "@/lib/validation/phone";
 import { applyRateLimit, supportTurnLimiter } from "@/lib/rate-limit";
 import {
   authorizeAppointment,
@@ -30,8 +28,6 @@ import {
 import { isPresenterAuthoredMessage } from "@/lib/support/case-message-actor";
 
 const SUPPORT_ROUTE = "appointments.support";
-
-const CATEGORY = SupportThreadCategoryEnum;
 
 const FlowMessageMetadataSchema = z.object({
   nodeId: z.string().optional(),
@@ -45,28 +41,6 @@ const FlowMessageMetadataSchema = z.object({
     )
     .optional(),
 });
-
-const turnSchema = z
-  .object({
-    clientTurnId: z.string().min(1).max(128).optional(),
-    category: CATEGORY.optional(),
-    chosenOptionId: z.string().max(200).optional(),
-    userMessage: z
-      .string()
-      .transform((s) => stripCallbackTags(s).trim())
-      .pipe(z.string().max(2000))
-      .optional(),
-    urgent: z.boolean().optional(),
-    /** "This didn't fix it" on a resolved human conversation; carries a message. */
-    reopen: z.boolean().optional(),
-  })
-  .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
-    message: "A turn needs a category, a chosen option, or a message",
-  })
-  .refine((v) => !v.reopen || v.userMessage, {
-    message: "Tell us what still isn't fixed",
-    path: ["userMessage"],
-  });
 
 export async function GET(
   _req: NextRequest,
@@ -243,7 +217,9 @@ export async function POST(
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;
 
-    const parsed = turnSchema.safeParse(await req.json().catch(() => ({})));
+    const parsed = SupportTurnSchema.safeParse(
+      await req.json().catch(() => ({})),
+    );
     if (!parsed.success) {
       return supportError({
         status: 400,
@@ -270,6 +246,34 @@ export async function POST(
           action: "turn",
           appointmentId,
           attemptedCategory: parsed.data.category,
+        },
+      });
+    }
+
+    // A report is about a session of this booking that has already ended.
+    const occurrenceId = parsed.data.appointmentOccurrenceId;
+    if (
+      occurrenceId &&
+      !(await prisma.appointmentOccurrence.findFirst({
+        where: {
+          id: occurrenceId,
+          appointmentId,
+          deletedAt: null,
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+          endsAt: { lte: new Date() },
+        },
+        select: { id: true },
+      }))
+    ) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        message: "That session isn't one of this booking's finished sessions.",
+        context: {
+          route: "appointments.support",
+          action: "turn",
+          appointmentId,
+          occurrenceId,
         },
       });
     }

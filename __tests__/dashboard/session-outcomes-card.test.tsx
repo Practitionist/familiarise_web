@@ -39,6 +39,7 @@ const item: NeedsHumanItem = {
   aged: true,
   canRereadAttendance: true,
   canConfirm: false,
+  reports: [],
   booking: {
     type: "CONSULTATION",
     title: "Career chat",
@@ -233,4 +234,30 @@ it("offers no Confirm on a row the reader did not mark confirmable", async () =>
   expect(
     screen.queryByRole("button", { name: /^Confirm outcome for/ }),
   ).not.toBeInTheDocument();
+});
+
+it("badges a reported verdict by what the report does, linking each badge to its case", async () => {
+  const reported: NeedsHumanItem = {
+    ...item,
+    completionStatus: "VOIDED",
+    outcome: "HOST_ABSENT",
+    reports: [
+      { caseId: "case-expert", side: "HOST", reason: "provider_attended" },
+      { caseId: "case-learner", side: "LEARNER", reason: "provider_no_show" },
+    ],
+  };
+  fetchMock.mockImplementation(async () => ({
+    ok: true,
+    json: async () => ({ items: [reported], total: 1, page: 1, pageSize: 20 }),
+  }));
+  renderCard();
+  const disputed = (await screen.findAllByText("Disputed by the expert"))[0];
+  expect(disputed.closest("a")).toHaveAttribute(
+    "href",
+    "/dashboard/admin/support/c_case-expert",
+  );
+  expect(screen.getAllByText("Learner agrees")[0].closest("a")).toHaveAttribute(
+    "href",
+    "/dashboard/admin/support/c_case-learner",
+  );
 });

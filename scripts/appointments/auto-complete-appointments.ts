@@ -80,7 +80,7 @@ import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import {
   AWAITING_HUMAN,
   UNSETTLED_MISS,
-  unconfirmedClosedVerdictWhere,
+  confirmableVerdictWhere,
 } from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
@@ -249,7 +249,7 @@ export async function hasAutoCompleteWork(
       OR: [
         undecidedSlotWhere(bufferTime),
         staleNeedsHumanWhere(now),
-        unconfirmedClosedVerdictWhere(now),
+        confirmableVerdictWhere(now),
       ],
     },
     select: { id: true },
@@ -1414,7 +1414,7 @@ async function autoCompleteAppointmentsUnlocked(
     checkpoint = confirms.checkpoint;
     allErrors.push(...confirms.errors);
     console.log(
-      `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
+      `   Negative verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} weak and ${confirms.disputed} disputed left for ops`,
     );
     rounds = await drainRounds(
       { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline },

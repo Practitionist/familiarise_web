@@ -21,9 +21,18 @@ import {
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
 import {
+  OUTCOME_REPORT_FIELDS,
   readOutageWindows,
   readRoomEnd,
+  REPORT_PARTIES_SELECT,
+  reportParties,
 } from "@/lib/booking/session-outcome-sweep";
+import {
+  CLASSIFIED_REPORT_REASONS,
+  countedEffect,
+  reasonSide,
+} from "@/lib/booking/outcome-reports";
+import { SupportFlowReasonEnum } from "@/schemas/enums";
 import {
   SESSION_HOSTS_SELECT,
   sessionHostUserIds,
@@ -38,6 +47,7 @@ import {
   isAgedNeedsHuman,
   isNegativeMoneyOutcome,
   needsHumanWhere,
+  reportWindowClosesAt,
 } from "@/lib/booking/misses";
 import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
@@ -55,6 +65,7 @@ import {
   NEEDS_HUMAN_DEFAULT_SORT,
   NEEDS_HUMAN_PAGE_SIZE,
   type NeedsHumanPage,
+  type NeedsHumanReport,
   type NeedsHumanSort,
 } from "./needs-human-queue";
 import { OpsRefusal } from "./ops-refusal-error";
@@ -466,11 +477,72 @@ function needsHumanOrderBy(
 const personOf = (u: HeadlineUser | null) =>
   u ? { id: u.id, name: u.name, email: u.email } : null;
 
+/** The counted disputes and agreements on each negative verdict of the page; no read when there is none. */
+async function readPageReports(
+  rows: {
+    id: string;
+    endsAt: Date;
+    outcome: OccurrenceOutcome | null;
+    outcomeAt: Date | null;
+  }[],
+): Promise<Map<string, NeedsHumanReport[]>> {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ids = rows
+    .filter((r) => isNegativeMoneyOutcome(r.outcome) && r.outcomeAt)
+    .map((r) => r.id);
+  const out = new Map<string, NeedsHumanReport[]>();
+  if (ids.length === 0) return out;
+  // The case's own timestamps are top-level, so a join reads them as stored.
+  const cases = await prisma.supportCase.findMany({
+    relationLoadStrategy: "join",
+    where: {
+      appointmentOccurrenceId: { in: ids },
+      deletedAt: null,
+      flowReason: { in: CLASSIFIED_REPORT_REASONS },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      ...OUTCOME_REPORT_FIELDS,
+      appointmentOccurrenceId: true,
+      occurrence: {
+        select: { appointment: { select: REPORT_PARTIES_SELECT } },
+      },
+    },
+  });
+  for (const c of cases) {
+    const row = c.appointmentOccurrenceId
+      ? byId.get(c.appointmentOccurrenceId)
+      : undefined;
+    if (
+      !row?.outcomeAt ||
+      !c.occurrence ||
+      !isNegativeMoneyOutcome(row.outcome)
+    )
+      continue;
+    const effect = countedEffect(c, {
+      outcome: row.outcome,
+      endsAt: row.endsAt,
+      windowClosesAt: reportWindowClosesAt(row.outcomeAt),
+      ...reportParties(c.occurrence.appointment),
+    });
+    const side = reasonSide(c.flowReason);
+    const reason = SupportFlowReasonEnum.safeParse(c.flowReason);
+    if (!effect || !side || !reason.success) continue;
+    out.set(row.id, [
+      ...(out.get(row.id) ?? []),
+      { caseId: c.id, side, reason: reason.data },
+    ]);
+  }
+  return out;
+}
+
 /**
  * Sessions only a human can decide: an INCONCLUSIVE verdict, a consultation
  * host no-show the detector declined, a call the maintenance drain cut, a
- * paid trial that was voided (D4), and a negative verdict whose window closed unconfirmed. None of them moves money on its own. One
- * page in three statements: the list, its count and one batched user read.
+ * paid trial that was voided (D4), a negative verdict whose window closed
+ * unconfirmed, and one a participant reported on. None of them moves money on
+ * its own. One page in three statements: the list, its count and one batched
+ * user read, plus one report read when the page holds a negative verdict.
  */
 export async function readSessionsNeedingHuman({
   page = 1,
@@ -494,13 +566,15 @@ export async function readSessionsNeedingHuman({
     prisma.appointmentOccurrence.count({ where }),
   ]);
   const userIds = headlineUserIds(rows.map((r) => r.appointment));
-  const users =
+  const [users, reports] = await Promise.all([
     userIds.length > 0
-      ? await prisma.user.findMany({
+      ? prisma.user.findMany({
           where: { id: { in: userIds } },
           select: { id: true, name: true, email: true, image: true },
         })
-      : [];
+      : [],
+    readPageReports(rows),
+  ]);
   const usersById = new Map(users.map((u) => [u.id, u]));
   const items = rows.map((row) => {
     const headline = appointmentHeadline(row.appointment, usersById);
@@ -524,6 +598,7 @@ export async function readSessionsNeedingHuman({
         isNegativeMoneyOutcome(row.outcome) &&
         row.outcomeConfirmedAt === null &&
         row.completionStatus !== "UNVERIFIED",
+      reports: reports.get(row.id) ?? [],
       booking: {
         type: row.appointment.appointmentType,
         title: headline.title,

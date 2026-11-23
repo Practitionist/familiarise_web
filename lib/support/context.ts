@@ -170,6 +170,7 @@ export async function buildSupportContext(
 
   const nowMs = Date.now();
   const runs = liveOccurrencesOf(appt.occurrences).map((row) => ({
+    id: row.id,
     startsAt: new Date(row.startsAt),
     endsAt: new Date(row.endsAt),
   }));
@@ -264,6 +265,7 @@ export async function buildSupportContext(
     stage,
     startsAt,
     endsAt,
+    lastEndedOccurrenceId: lastEndedRun?.id ?? null,
     refundPctIfCancelledNow,
     paymentId: appt.payment[0]?.id ?? null,
     // moneyResultExtensions has already converted the BigInt column → number paise.

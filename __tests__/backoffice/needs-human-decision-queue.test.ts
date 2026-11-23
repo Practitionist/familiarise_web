@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 
 const mockFindMany = jest.fn();
 const mockCount = jest.fn(async (_args: unknown) => 41);
+const mockCases = jest.fn(async (_args: unknown): Promise<unknown[]> => []);
 const mockUsers = jest.fn(async (_args: unknown) => [
   { id: "u-expert", name: "Asha", email: "a@x.test", image: null },
   { id: "u-learner", name: null, email: "r@x.test", image: null },
@@ -25,6 +26,7 @@ jest.mock("../../lib/prisma", () => ({
       count: (args: unknown) => mockCount(args),
     },
     user: { findMany: (args: unknown) => mockUsers(args) },
+    supportCase: { findMany: (args: unknown) => mockCases(args) },
   },
 }));
 // The overturn door in the same module takes the appointment lock; this suite never does.
@@ -38,6 +40,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 }));
 
 import { needsHumanWhere } from "../../lib/booking/misses";
+import { matchesWhere } from "../fixtures/mem-db";
 import { readSessionsNeedingHuman } from "../../lib/backoffice/session-outcomes";
 import {
   needsHumanQuerySchema,
@@ -146,6 +149,8 @@ it("reads one page in three statements over the predicate at its time, oldest fi
     where: needsHumanWhere(NOW),
   });
   expect(page).toMatchObject({ total: 41, page: 1, pageSize: 20 });
+  // No negative verdict on the page, so no report read.
+  expect(mockCases).not.toHaveBeenCalled();
 });
 
 it("cuts the second page at the boundary and sorts a nullable column with nulls last", async () => {
@@ -259,4 +264,73 @@ it("offers Confirm only on an applied negative verdict nobody confirmed", async 
   ]);
   const { items } = await readSessionsNeedingHuman({ now: NOW });
   expect(items.map((i) => i.canConfirm)).toEqual([true, false, false, false]);
+});
+
+it("lists a reported verdict and names each counted report by side, leaving out one that does not count", async () => {
+  const voided = {
+    ...rows[0],
+    id: "occ-void",
+    completionStatus: "VOIDED",
+    outcome: "HOST_ABSENT",
+    outcomeAt: new Date("2026-11-16T12:00:00Z"),
+  };
+  expect(
+    matchesWhere(
+      {
+        ...voided,
+        deletedAt: null,
+        isTentative: false,
+        supportCases: [
+          {
+            deletedAt: null,
+            ownershipScope: "PERSONAL",
+            flowReason: "provider_attended",
+          },
+        ],
+      },
+      needsHumanWhere(NOW),
+    ),
+  ).toBe(true);
+  mockFindMany.mockResolvedValue([voided]);
+  const parties = {
+    appointment: {
+      ...noPlans,
+      consultation: {
+        consultationPlan: { consultantProfile: { userId: "u-expert" } },
+      },
+      participants: [{ userId: "u-learner" }],
+    },
+  };
+  const filed = new Date("2026-11-16T15:00:00Z");
+  // The shape the report read's select returns.
+  mockCases.mockResolvedValue([
+    {
+      id: "case-expert",
+      flowReason: "provider_attended",
+      requesterUserId: "u-expert",
+      ownershipScope: "PERSONAL",
+      createdAt: filed,
+      deletedAt: null,
+      appointmentOccurrenceId: "occ-void",
+      occurrence: parties,
+    },
+    // A learner cannot file the expert's dispute.
+    {
+      id: "case-wrong-side",
+      flowReason: "provider_join_issue",
+      requesterUserId: "u-learner",
+      ownershipScope: "PERSONAL",
+      createdAt: filed,
+      deletedAt: null,
+      appointmentOccurrenceId: "occ-void",
+      occurrence: parties,
+    },
+  ]);
+  const { items } = await readSessionsNeedingHuman({ now: NOW });
+  expect(mockCases.mock.calls[0][0]).toMatchObject({
+    where: { appointmentOccurrenceId: { in: ["occ-void"] } },
+  });
+  expect(items[0].reports).toEqual([
+    { caseId: "case-expert", side: "HOST", reason: "provider_attended" },
+  ]);
 });

@@ -112,6 +112,7 @@ beforeEach(() => {
     stage: "UPCOMING",
     startsAt: now,
     endsAt: new Date(now.getTime() + 3_600_000),
+    lastEndedOccurrenceId: null,
     refundPctIfCancelledNow: 100,
     paymentId: "payment",
     paymentAmountPaise: 20000,

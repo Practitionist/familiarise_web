@@ -46,16 +46,23 @@ import {
 } from "./session-outcome";
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
-import { liveParticipant, transitionParticipant } from "./participants";
+import {
+  liveLearnerSeat,
+  liveParticipant,
+  transitionParticipant,
+} from "./participants";
 import {
   agedNeedsHumanWhere,
+  confirmableVerdictWhere,
   isNegativeMoneyOutcome,
   needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
-  unconfirmedClosedVerdictWhere,
+  OUTCOME_REPORT_WINDOW_HOURS,
+  reportWindowClosesAt,
   type NegativeMoneyOutcome,
 } from "./misses";
 import { judgeOutcomeEvidence } from "./outcome-evidence";
+import { CLASSIFIED_REPORT_REASONS, judgeReports } from "./outcome-reports";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -779,6 +786,37 @@ export async function alertStaleNeedsHuman(
 /** Closed unconfirmed verdicts judged per page; the pass pages by keyset until its deadline, so weak rows cannot hide older ones. */
 const OUTCOME_CONFIRM_PAGE = 100;
 
+/** Select on `Appointment`: who may report on each side of its sessions. */
+export const REPORT_PARTIES_SELECT = {
+  ...SESSION_HOSTS_SELECT,
+  participants: { where: liveLearnerSeat(), select: { userId: true } },
+} satisfies Prisma.AppointmentSelect;
+
+type ReportPartiesRow = Prisma.AppointmentGetPayload<{
+  select: typeof REPORT_PARTIES_SELECT;
+}>;
+
+/** The host side, and the learner seat holders who are not hosts. */
+export function reportParties(row: ReportPartiesRow) {
+  const hostUserIds = sessionHostUserIds(row);
+  return {
+    hostUserIds,
+    learnerUserIds: row.participants
+      .map((p) => p.userId)
+      .filter((id) => !hostUserIds.includes(id)),
+  };
+}
+
+/** The fields of a linked support case that `judgeReports` reads. */
+export const OUTCOME_REPORT_FIELDS = {
+  id: true,
+  flowReason: true,
+  requesterUserId: true,
+  ownershipScope: true,
+  createdAt: true,
+  deletedAt: true,
+} satisfies Prisma.SupportCaseSelect;
+
 const CONFIRM_SELECT = {
   id: true,
   startsAt: true,
@@ -794,7 +832,11 @@ const CONFIRM_SELECT = {
       presences: { select: { userId: true, joinedAt: true, leftAt: true } },
     },
   },
-  appointment: { select: SESSION_HOSTS_SELECT },
+  supportCases: {
+    where: { deletedAt: null, flowReason: { in: CLASSIFIED_REPORT_REASONS } },
+    select: OUTCOME_REPORT_FIELDS,
+  },
+  appointment: { select: REPORT_PARTIES_SELECT },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
 type ConfirmRow = Prisma.AppointmentOccurrenceGetPayload<{
@@ -831,6 +873,8 @@ export interface OutcomeConfirmRun {
   confirmed: number;
   /** Judged weak this run: left unconfirmed on the needs-human list for ops. */
   weak: number;
+  /** Disputed by the accused party: left unconfirmed on the needs-human list for ops. */
+  disputed: number;
   errors: string[];
   /** Where the next run resumes, null once the scan reached the end and wraps, or absent when the pass was skipped and the stored cursor stands. */
   checkpoint?: string | null;
@@ -877,7 +921,21 @@ function afterKeyset(
   };
 }
 
-/** Judges one page and stamps its strong verdicts; false when the page's outage read was capped. */
+/** Whether the participants' reports block this verdict, apply it now, or leave it to the window. */
+function judgeRowReports(
+  row: ConfirmRow,
+  outcome: NegativeMoneyOutcome,
+  outcomeAt: Date,
+) {
+  return judgeReports(row.supportCases, {
+    outcome,
+    endsAt: row.endsAt,
+    windowClosesAt: reportWindowClosesAt(outcomeAt),
+    ...reportParties(row.appointment),
+  });
+}
+
+/** Judges one page and stamps its strong verdicts that are closed or agreed and not disputed; false when the page's outage read was capped. */
 async function confirmPage(
   rows: ConfirmRow[],
   where: Prisma.AppointmentOccurrenceWhereInput,
@@ -896,9 +954,19 @@ async function confirmPage(
     );
     return false;
   }
+  const closedBefore = now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000;
   const strong = new Map<NegativeMoneyOutcome, string[]>();
   for (const row of rows) {
-    if (!isNegativeMoneyOutcome(row.outcome)) continue;
+    if (!isNegativeMoneyOutcome(row.outcome) || !row.outcomeAt) continue;
+    const reports = judgeRowReports(row, row.outcome, row.outcomeAt);
+    if (reports === "disputed") {
+      run.disputed++;
+      continue;
+    }
+    // An open window applies early only on an agreeing report.
+    if (row.outcomeAt.getTime() >= closedBefore && reports !== "agreed") {
+      continue;
+    }
     if (isStrongVerdict(row, row.outcome, outages)) {
       strong.set(row.outcome, [...(strong.get(row.outcome) ?? []), row.id]);
     } else {
@@ -919,17 +987,23 @@ async function confirmPage(
 }
 
 /**
- * Confirms each negative verdict whose report window closed on strong evidence,
- * newest first, by CAS from an unconfirmed stamp; a weak one stays for ops.
+ * Confirms each negative verdict on strong evidence once its report window
+ * closed or the harmed party agreed, newest first, by CAS from an unconfirmed
+ * stamp; a weak or disputed one stays for ops.
  */
 export async function confirmClosedOutcomes(
   now: Date,
   pastDeadline: () => boolean,
 ): Promise<OutcomeConfirmRun> {
-  const run: OutcomeConfirmRun = { confirmed: 0, weak: 0, errors: [] };
+  const run: OutcomeConfirmRun = {
+    confirmed: 0,
+    weak: 0,
+    disputed: 0,
+    errors: [],
+  };
   // Past its share before it starts, the pass reads nothing and leaves the stored cursor in place.
   if (pastDeadline()) return run;
-  const where = unconfirmedClosedVerdictWhere(now);
+  const where = confirmableVerdictWhere(now);
   // Resumes where the last run stopped, so a weak backlog cannot hide older verdicts run after run.
   let after: Keyset | null;
   try {

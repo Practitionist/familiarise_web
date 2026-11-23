@@ -67,6 +67,8 @@ export interface SupportRequestViewProps {
   paymentsBase?: string;
   /** A thread category to start the flow on ("Problem with this charge"). */
   intent?: string;
+  /** The session a retrospective report is about (`?occurrence=`). */
+  occurrence?: string;
   articles: Record<CaseTopic, ArticleLink[]>;
 }
 
@@ -176,7 +178,10 @@ function SessionRequest({
   appointmentId,
   props,
 }: Readonly<{ appointmentId: string; props: SupportRequestViewProps }>) {
-  const t = useSupportThread(appointmentId, { seedCategory: props.intent });
+  const t = useSupportThread(appointmentId, {
+    seedCategory: props.intent,
+    occurrenceId: props.occurrence,
+  });
   const day = useDay();
   const booking = t.data?.booking ?? null;
   const category = t.thread?.category ?? props.intent;

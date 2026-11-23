@@ -46,12 +46,16 @@ jest.mock("../../lib/api/appointment-access", () => ({
   authorizeAppointment: jest.fn(),
 }));
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    supportCase: { findFirst: jest.fn(), findUnique: jest.fn() },
-  },
-}));
+jest.mock("../../lib/prisma", () => {
+  const { memTable } = jest.requireActual("../fixtures/mem-db");
+  return {
+    __esModule: true,
+    default: {
+      supportCase: { findFirst: jest.fn(), findUnique: jest.fn() },
+      appointmentOccurrence: memTable([], "occ"),
+    },
+  };
+});
 
 jest.mock("../../lib/support/service", () => ({
   __esModule: true,
@@ -76,6 +80,9 @@ import { applyRateLimit } from "../../lib/rate-limit";
 import prisma from "../../lib/prisma";
 import { buildSupportContext } from "../../lib/support/context";
 import { runSupportTurn } from "../../lib/support/service";
+import { supportTurnBody } from "../../components/support/useSupportThread";
+import { SupportTurnSchema } from "../../schemas/support";
+import type { memTable } from "../fixtures/mem-db";
 import {
   GET,
   POST,
@@ -257,6 +264,75 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     const json = await res.json();
     expect(json.code).toBe("VALIDATION_FAILED");
     expect(mockedRunTurn).not.toHaveBeenCalled();
+  });
+
+  describe("the session a report is about", () => {
+    const occurrences = prisma.appointmentOccurrence as unknown as ReturnType<
+      typeof memTable
+    >;
+    const hourFromNow = (h: number) => new Date(Date.now() + h * 3_600_000);
+    beforeEach(() => {
+      occurrences.rows.splice(0, occurrences.rows.length);
+      occurrences.rows.push(
+        ...[
+          ["occ-ended", SLUG, hourFromNow(-2)],
+          ["occ-foreign", "other-appt", hourFromNow(-2)],
+          ["occ-future", SLUG, hourFromNow(2)],
+        ].map(([id, appointmentId, endsAt]) => ({
+          id,
+          appointmentId,
+          endsAt,
+          deletedAt: null,
+          completionStatus: "COMPLETED",
+        })),
+      );
+      mockedRunTurn.mockResolvedValue({ messages: [], actions: [] });
+    });
+
+    it("the intent turn the thread sends names the page's session and parses through the route's schema", () => {
+      const sent = supportTurnBody(
+        { category: "NO_SHOW", chosenLabel: "No-show", clientTurnId: "t-1" },
+        "occ-ended",
+      );
+      expect(SupportTurnSchema.parse(sent)).toEqual({
+        category: "NO_SHOW",
+        clientTurnId: "t-1",
+        appointmentOccurrenceId: "occ-ended",
+      });
+      // A follow-up turn carries no session: only the intent turn picks the case.
+      expect(
+        supportTurnBody({ chosenOptionId: "expert" }, "occ-ended"),
+      ).toEqual({ chosenOptionId: "expert" });
+    });
+
+    it("passes an ended session of this booking through to the turn", async () => {
+      const res = await POST(
+        req("POST", {
+          category: "NO_SHOW",
+          appointmentOccurrenceId: "occ-ended",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(200);
+      expect(mockedRunTurn).toHaveBeenCalledWith(
+        SLUG,
+        "u1",
+        expect.objectContaining({ appointmentOccurrenceId: "occ-ended" }),
+      );
+    });
+
+    it.each(["occ-foreign", "occ-future", "occ-missing"])(
+      "refuses %s with 400 without running the turn",
+      async (appointmentOccurrenceId) => {
+        const res = await POST(
+          req("POST", { category: "NO_SHOW", appointmentOccurrenceId }),
+          { params: Promise.resolve({ appointmentId: SLUG }) },
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()).code).toBe("VALIDATION_FAILED");
+        expect(mockedRunTurn).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it("NOT_FOUND envelope when the resolver cannot find the appointment", async () => {

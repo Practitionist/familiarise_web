@@ -36,6 +36,7 @@ function ctx(overrides: Partial<SupportContext> = {}): SupportContext {
     stage: "UPCOMING",
     startsAt: new Date("2026-08-01T10:00:00Z"),
     endsAt: new Date("2026-08-01T11:00:00Z"),
+    lastEndedOccurrenceId: null,
     refundPctIfCancelledNow: 100,
     paymentId: "pay1",
     paymentAmountPaise: 1000_00,

@@ -47,6 +47,8 @@ export interface SupportContext {
   startsAt: Date | null;
   /** That slot's end (drives the recording-ready 48h window). */
   endsAt: Date | null;
+  /** The last live session that has ended; a no-show report is about it unless the turn names one. */
+  lastEndedOccurrenceId: string | null;
   /** Policy refund % were the user to cancel now (reuse computeRefundPct). */
   refundPctIfCancelledNow: number | null;
   paymentId: string | null;

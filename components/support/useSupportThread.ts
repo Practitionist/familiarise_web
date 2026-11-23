@@ -108,6 +108,16 @@ export interface TurnVars {
   chosenLabel?: string;
 }
 
+/** The POST body of one turn; an intent turn names the session it is about, when the page was opened for one. */
+export function supportTurnBody(
+  { chosenLabel: _chosenLabel, ...body }: TurnVars,
+  occurrenceId: string | undefined,
+) {
+  return body.category && occurrenceId
+    ? { ...body, appointmentOccurrenceId: occurrenceId }
+    : body;
+}
+
 /** Ids for locally-rendered bubbles; never collide with the server's uuids. */
 let localSeq = 0;
 const nextLocalId = () => `local-${++localSeq}`;
@@ -211,6 +221,7 @@ export function useSupportThread(
   appointmentId: string,
   {
     seedCategory,
+    occurrenceId,
     enabled = true,
   }: {
     /**
@@ -220,6 +231,8 @@ export function useSupportThread(
      * the intent is gated out.
      */
     seedCategory?: string;
+    /** The session a retrospective report is about (`?occurrence=`); the server defaults to the last ended one. */
+    occurrenceId?: string;
     enabled?: boolean;
   } = {},
 ) {
@@ -261,10 +274,8 @@ export function useSupportThread(
   };
 
   const turn = useMutation({
-    mutationFn: async ({
-      chosenLabel: _chosenLabel,
-      ...body
-    }: TurnVars): Promise<TurnResult> => {
+    mutationFn: async (vars: TurnVars): Promise<TurnResult> => {
+      const body = supportTurnBody(vars, occurrenceId);
       const current = qc.getQueryData<ThreadData>(queryKey)?.thread;
       if (
         current?.activeChannel === "HUMAN" &&

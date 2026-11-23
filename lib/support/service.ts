@@ -32,12 +32,16 @@ import { escalationPriority, issueTypeForReason } from "./priority";
 import {
   appendSupportCaseTurn,
   createOrReuseSupportCase,
+  type CreateSupportCaseInput,
   latestCaseDecisionTx,
   openCaseConflict,
   stageSupportCaseIntakeTx,
 } from "./case-service";
 import { assertCaseTransition, CaseConflictError } from "./case-transitions";
-import { SupportThreadCategoryEnum } from "@/schemas/enums";
+import {
+  SupportFlowReasonEnum,
+  SupportThreadCategoryEnum,
+} from "@/schemas/enums";
 import { z } from "zod";
 import { recordFlowOutcome } from "./deflection";
 import { slaDeadlinesFor, userRepliedPatch } from "./sla";
@@ -55,6 +59,8 @@ export interface RunTurnInput {
   urgent?: boolean;
   /** "This didn't fix it" on a resolved human conversation. */
   reopen?: boolean;
+  /** The ended session a NO_SHOW report is about; the route has checked it. Defaults to the last ended one. */
+  appointmentOccurrenceId?: string;
   /**
    * Caller reached this appointment only via the org-operator party branch.
    * Restricted to org-party categories while permitting human escalation inside them.
@@ -146,45 +152,36 @@ export async function runSupportTurn(
   const intakeId = input.clientTurnId
     ? `appointment-${createHash("sha256").update(input.clientTurnId).digest("hex")}`
     : `appointment-${crypto.randomUUID()}`;
-  const previous = await prisma.supportCase.findFirst({
-    where: {
-      appointmentId,
-      requesterUserId: userId,
-      submitterUserId: userId,
-      organizationId: threadOrgId,
-      ownershipScope: input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL",
-      closedAt: null,
-      deletedAt: null,
-    },
-    orderBy: { createdAt: "desc" },
-  });
-  // A new intent on a resolved human conversation starts its own request.
-  const reusable =
-    previous &&
-    !(
-      input.category &&
-      previous.activeChannel === "HUMAN" &&
-      previous.status === "RESOLVED"
-    )
-      ? previous
-      : null;
-  const thread =
-    reusable ??
-    (
-      await createOrReuseSupportCase({
-        clientIntakeId: intakeId,
-        requesterUserId: userId,
-        submitterUserId: userId,
-        appointmentId,
-        organizationId: threadOrgId,
-        ownershipScope: input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL",
-        category: input.category ?? "OTHER",
-        title: "Appointment support",
-        description: "Appointment help requested",
-        initialSender: "SYSTEM",
-        activeChannel: "SELF_SERVE",
-      })
-    ).supportCase;
+  const intake = {
+    clientIntakeId: intakeId,
+    requesterUserId: userId,
+    submitterUserId: userId,
+    appointmentId,
+    organizationId: threadOrgId,
+    ownershipScope: input.isOrgParty
+      ? ("ORG_OPERATIONS" as const)
+      : ("PERSONAL" as const),
+    title: "Appointment support",
+    description: "Appointment help requested",
+    initialSender: "SYSTEM" as const,
+    activeChannel: "SELF_SERVE" as const,
+  } satisfies CreateSupportCaseInput;
+  // A no-show report is its session's own case, never another open thread on the booking.
+  const noShow = input.category === "NO_SHOW" && !input.isOrgParty;
+  const noShowCtx = noShow
+    ? await buildSupportContext("pending", appointmentId, userId, "NO_SHOW")
+    : null;
+  if (noShow && !noShowCtx) return null;
+  const thread = noShowCtx
+    ? (
+        await createOrReuseSupportCase({
+          ...intake,
+          category: "NO_SHOW",
+          appointmentOccurrenceId:
+            input.appointmentOccurrenceId ?? noShowCtx.lastEndedOccurrenceId,
+        })
+      ).supportCase
+    : await openBookingThread(intake, input.category);
   if (
     input.clientTurnId &&
     (await prisma.supportCaseMessage.findUnique({
@@ -203,12 +200,14 @@ export async function runSupportTurn(
   );
 
   // Explicit intent selection re-scopes the thread to that category's entry node.
-  const ctx = await buildSupportContext(
-    thread.id,
-    appointmentId,
-    userId,
-    input.category ?? storedCategory,
-  );
+  const ctx = noShowCtx
+    ? { ...noShowCtx, threadId: thread.id }
+    : await buildSupportContext(
+        thread.id,
+        appointmentId,
+        userId,
+        input.category ?? storedCategory,
+      );
   if (!ctx) return null;
 
   // Switching intent restarts the flow at its entry node.
@@ -420,6 +419,7 @@ export async function runSupportTurn(
         },
       });
       if (moved.count === 0) return false;
+      await recordFlowReasonTx(tx, thread.id, category, turn.reason);
       const userSaid = input.userMessage ?? turn.chosenLabel;
       const outgoing = [
         ...(userSaid
@@ -504,6 +504,54 @@ export async function runSupportTurn(
     reason: turn.reason,
     outcomeId: recorded,
   };
+}
+
+/** The newest open thread on the booking, else a new one; a new intent on a resolved human conversation starts its own. */
+async function openBookingThread(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  category: SupportThreadCategory | undefined,
+): Promise<SupportCase> {
+  const previous = await prisma.supportCase.findFirst({
+    where: {
+      appointmentId: intake.appointmentId,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
+      closedAt: null,
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (
+    previous &&
+    !(
+      category &&
+      previous.activeChannel === "HUMAN" &&
+      previous.status === "RESOLVED"
+    )
+  )
+    return previous;
+  const { supportCase } = await createOrReuseSupportCase({
+    ...intake,
+    category: category ?? "OTHER",
+  });
+  return supportCase;
+}
+
+/** A NO_SHOW terminal's reason, kept once by CAS from null so a later answer cannot turn a report around. */
+async function recordFlowReasonTx(
+  tx: Tx,
+  caseId: string,
+  category: SupportThreadCategory,
+  reason: string | undefined,
+): Promise<void> {
+  const parsed = SupportFlowReasonEnum.safeParse(reason);
+  if (category !== "NO_SHOW" || !parsed.success) return;
+  await tx.supportCase.updateMany({
+    where: { id: caseId, flowReason: null },
+    data: { flowReason: parsed.data },
+  });
 }
 
 /** Only a resolved case can carry a decision; open statuses skip the read. */
@@ -777,6 +825,7 @@ async function escalate(
         },
       });
       if (!moved.count) return null;
+      await recordFlowReasonTx(tx, threadId, category, turn.reason);
       const outgoing = [
         ...[turn.chosenLabel, userMessage]
           .filter((body): body is string => Boolean(body))
