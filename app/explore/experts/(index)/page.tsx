@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { FeaturedExperts } from "../components/FeaturedExperts";
+import { FieldCardsRow } from "../components/FieldCardsRow";
 import ExpertsInteractiveContent from "../ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
@@ -124,6 +125,8 @@ export default async function ExploreExperts() {
   return (
     <main className="min-h-screen bg-background">
       <HeroSection stats={buildExpertHeroStats(metadata.consultantMetadata)} />
+
+      <FieldCardsRow fields={metadata.consultantMetadata.consultantsByDomain} />
 
       <FeaturedExperts experts={featuredExperts} isLoading={false} />
 

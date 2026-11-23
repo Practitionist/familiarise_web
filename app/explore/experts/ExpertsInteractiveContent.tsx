@@ -18,6 +18,7 @@ import StickyFilterBar from "./components/StickyFilterBar";
 import StaticTopRows from "./components/StaticTopRows";
 import ExpertResults from "./components/ExpertResults";
 import ExpertDetailsSheet from "./components/ExpertDetailsSheet";
+import { FieldGuideBanner } from "./components/FieldGuideBanner";
 import type { SortOption } from "./components/SearchBar";
 
 interface ExpertsInteractiveContentProps {
@@ -122,6 +123,13 @@ export default function ExpertsInteractiveContent({
     [updateFilters],
   );
 
+  const selectedFieldName = useMemo(
+    () =>
+      metadata?.domains.find((domain) => domain.id === filters.domain)?.name ??
+      null,
+    [metadata, filters.domain],
+  );
+
   const resultSummary = useMemo(() => {
     const total = metadata?.consultantMetadata.totalConsultants;
     // The global total is only honest when NO filter is active. Every filter,
@@ -199,6 +207,10 @@ export default function ExpertsInteractiveContent({
             onClearAll={clearAll}
             resultSummary={resultSummary}
           />
+
+          {selectedFieldName && (
+            <FieldGuideBanner fieldName={selectedFieldName} />
+          )}
 
           {/* Single-column results: ConsultantCard is a two-column card
               (profile + plan tabs) that collapses badly inside a narrow
