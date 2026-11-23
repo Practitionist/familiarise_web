@@ -26,14 +26,27 @@ export interface GstTurnoverCheck {
 }
 
 /**
- * Real (non-mock) succeeded payments sold in the current financial year: by capture
- * time, else creation time for rails confirmed at checkout. A re-mint resets capturedAt.
+ * Checkout flags these real sales as mock too; a flagged CARD row is a development mock.
+ * LICENSE is absent: the alarm runs only while unregistered, when checkout refuses every org rail.
+ */
+const CHECKOUT_CONFIRMED_SALE_METHODS = ["WALLET", "INVOICE", "CREDITS"];
+
+/**
+ * Succeeded sales in the current financial year: by capture time, else creation
+ * time for rails confirmed at checkout. A re-mint resets capturedAt.
  */
 function financialYearPaymentWhere(financialYearStart: Date) {
   return {
     paymentStatus: "SUCCEEDED",
     deletedAt: null,
-    isMockPayment: false,
+    AND: [
+      {
+        OR: [
+          { isMockPayment: false },
+          { paymentMethod: { in: CHECKOUT_CONFIRMED_SALE_METHODS } },
+        ],
+      },
+    ],
     OR: [
       { capturedAt: { gte: financialYearStart } },
       { capturedAt: null, createdAt: { gte: financialYearStart } },
