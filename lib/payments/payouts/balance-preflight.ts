@@ -35,35 +35,44 @@ export type BalancePreflight = {
  */
 export async function assertPayoutBalance(
   totalPaise: number,
+  opts: { report?: boolean } = {},
 ): Promise<BalancePreflight> {
   if (!ENABLE_LIVE_PAYOUTS || !isRazorpayPayoutsConfigured()) {
     return { ok: true, balancePaise: null };
   }
 
   const balancePaise = await getRazorpayPayoutsService().getAccountBalance();
+  let preflight: BalancePreflight;
   if (balancePaise === null) {
     const reason =
       "RazorpayX balance unknown (read failed or returned an unexpected shape) — " +
       "proceeding on queue_if_low_balance, but the pre-batch balance guard is blind";
-    void recordSystemErrorSafe({
-      organizationId: null,
-      category: "PAYOUT",
-      summary: `RAZORPAYX_BALANCE_UNKNOWN — ${reason}`,
-      err: new Error(reason),
-      context: { totalPaise },
-    });
-    return { ok: true, balancePaise: null, reason }; // unknown → fail open, loudly
-  }
-  if (balancePaise < totalPaise) {
+    preflight = { ok: true, balancePaise: null, reason }; // unknown → fail open, loudly
+  } else if (balancePaise < totalPaise) {
     const reason = `RazorpayX balance ${balancePaise} < required ${totalPaise} paise`;
-    void recordSystemErrorSafe({
-      organizationId: null,
-      category: "PAYOUT",
-      summary: `RAZORPAYX_BALANCE_INSUFFICIENT — ${reason}`,
-      err: new Error(reason),
-      context: { balancePaise, totalPaise },
-    });
-    return { ok: false, balancePaise, reason };
+    preflight = { ok: false, balancePaise, reason };
+  } else {
+    return { ok: true, balancePaise };
   }
-  return { ok: true, balancePaise };
+  // A per-row caller passes report:false and reports once per run itself.
+  if (opts.report !== false) reportPayoutBalance(preflight, { totalPaise });
+  return preflight;
+}
+
+/** Records an unknown or short balance; a preflight with no reason records nothing. */
+export function reportPayoutBalance(
+  preflight: BalancePreflight,
+  context: Record<string, unknown>,
+): void {
+  if (!preflight.reason) return;
+  const code = preflight.ok
+    ? "RAZORPAYX_BALANCE_UNKNOWN"
+    : "RAZORPAYX_BALANCE_INSUFFICIENT";
+  void recordSystemErrorSafe({
+    organizationId: null,
+    category: "PAYOUT",
+    summary: `${code} — ${preflight.reason}`,
+    err: new Error(preflight.reason),
+    context: { ...context, balancePaise: preflight.balancePaise },
+  });
 }
