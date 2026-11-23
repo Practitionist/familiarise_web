@@ -2,7 +2,7 @@
 name: razorpay-db-schema
 description: Inspects and extends this repo's Prisma money and Razorpay schema (Payment, PaymentLeg, Refund, Dispute, WebhookEvent, ConsultantPayout, OrganizationPayout, PayoutAccount, OrganizationPayoutAccount, Invoice, BillingSubscription). Use when adding or modifying Razorpay-related fields, indexes, or migrations in prisma/schema.prisma.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: white
 ---
 

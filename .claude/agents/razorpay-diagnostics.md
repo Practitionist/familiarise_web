@@ -2,7 +2,7 @@
 name: razorpay-diagnostics
 description: Diagnoses Razorpay and RazorpayX integration issues in this repo — checks environment variables, boot guards, webhook signature/dedup configuration, API credentials, and drift checks. Use when the user reports payment/payout/webhook issues or wants a health check.
 tools: Glob, Grep, Read, Bash, BashOutput, WebFetch, TodoWrite
-model: inherit
+model: sonnet
 color: red
 ---
 

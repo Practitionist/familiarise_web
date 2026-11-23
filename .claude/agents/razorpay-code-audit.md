@@ -2,7 +2,7 @@
 name: razorpay-code-audit
 description: Audits this repo's Razorpay and RazorpayX integration code for security vulnerabilities, webhook verification/idempotency gaps, CAS-in-WHERE concurrency hazards, PG_POOL_MAX=1 transaction deadlocks, and production readiness. Use when reviewing billing/payment/payout code or preparing for production launch.
 tools: Glob, Grep, Read, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: orange
 ---
 
