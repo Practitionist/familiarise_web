@@ -213,7 +213,9 @@ function mockPrismaDouble() {
           throw new Error(`Prisma double: no to-many filter ${table}.${key}`);
         const target = link.value as Row | null;
         if (cond === null) return target === null;
-        return target !== null && matches(link.rel.table, target, cond);
+        return (
+          target !== null && matches(link.rel.table, target, cond as Where)
+        );
       }
       return fieldMatches(row[key], cond);
     });
