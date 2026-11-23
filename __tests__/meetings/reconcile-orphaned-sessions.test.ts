@@ -1,9 +1,7 @@
 /** @jest-environment node */
 const mockMeetingFindMany = jest.fn();
 const mockMeetingUpdateMany = jest.fn();
-const mockPresenceUpdateMany = jest.fn();
 const mockCallGet = jest.fn();
-const mockTransaction = jest.fn();
 let mockCheckpoint: string | null = null;
 
 jest.mock("../../lib/prisma", () => ({
@@ -11,16 +9,8 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     meeting: {
       findMany: (...a: unknown[]) => mockMeetingFindMany(...a),
-      updateMany: () => {
-        throw new Error("Global Prisma write inside transaction");
-      },
+      updateMany: (...a: unknown[]) => mockMeetingUpdateMany(...a),
     },
-    meetingPresence: {
-      updateMany: () => {
-        throw new Error("Global Prisma write inside transaction");
-      },
-    },
-    $transaction: (...a: unknown[]) => mockTransaction(...a),
   },
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -57,6 +47,8 @@ const meeting = (id: string) => ({
   id,
   streamCallId: `call-${id}`,
   extendedSeconds: 0,
+  lastStreamSessionId: "s-early",
+  lastJoinedAt: null,
   occurrence: { endsAt: new Date("2026-10-01T11:00:00Z") },
 });
 beforeEach(() => {
@@ -65,43 +57,67 @@ beforeEach(() => {
   mockMeetingFindMany.mockReset();
   mockCallGet.mockResolvedValue({ call: { ended_at: endedAt.toISOString() } });
   mockMeetingUpdateMany.mockResolvedValue({ count: 1 });
-  mockPresenceUpdateMany.mockResolvedValue({ count: 2 });
-  mockTransaction.mockImplementation((run) =>
-    run({
-      meeting: { updateMany: mockMeetingUpdateMany },
-      meetingPresence: { updateMany: mockPresenceUpdateMany },
-    }),
-  );
 });
 afterEach(() => {
   jest.useRealTimers();
 });
 
-it("atomically closes the meeting and its segment presences through the transaction client", async () => {
+it("closes the room on the call id it asked Stream about, and nothing else", async () => {
   mockMeetingFindMany.mockResolvedValueOnce([meeting("a")]);
   const result = await reconcileOrphanedSessions();
-  expect(mockTransaction).toHaveBeenCalledTimes(1);
   expect(mockMeetingFindMany).toHaveBeenCalledWith(
     expect.objectContaining({ take: BATCH_SIZE, orderBy: { id: "asc" } }),
   );
+  // The close holds only while the room still has the session and join it read before asking Stream.
   expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
-    where: { id: "a", endedAt: null },
+    where: {
+      id: "a",
+      streamCallId: "call-a",
+      endedAt: null,
+      lastStreamSessionId: "s-early",
+      lastJoinedAt: null,
+    },
     data: { endedAt, endedReason: "reconciled" },
   });
-  expect(mockPresenceUpdateMany).toHaveBeenCalledWith(
-    expect.objectContaining({
-      where: expect.objectContaining({
-        meetingId: "a",
-        OR: [{ streamCallId: "call-a" }, { streamCallId: null }],
-      }),
-      data: { leftAt: endedAt, closedByEnd: true },
-    }),
-  );
   expect(result).toMatchObject({
     reconciled: 1,
     checkpoint: null,
     hasMore: false,
   });
+});
+
+it("records the session Stream names on the call with the end it reconciles", async () => {
+  mockMeetingFindMany.mockResolvedValueOnce([meeting("a")]);
+  mockCallGet.mockResolvedValueOnce({
+    call: { session: { id: "s-late", ended_at: endedAt.toISOString() } },
+  });
+  await reconcileOrphanedSessions();
+  expect(mockMeetingUpdateMany).toHaveBeenCalledTimes(1);
+  expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
+    where: {
+      id: "a",
+      streamCallId: "call-a",
+      endedAt: null,
+      lastStreamSessionId: "s-early",
+      lastJoinedAt: null,
+    },
+    data: {
+      endedAt,
+      endedReason: "reconciled",
+      lastStreamSessionId: "s-late",
+    },
+  });
+});
+
+it("leaves the room open when a join landed during the lookup, for the next run to recheck", async () => {
+  mockMeetingFindMany.mockResolvedValueOnce([meeting("a")]);
+  // An idle session Stream still runs: no participants, no end.
+  mockCallGet.mockResolvedValueOnce({
+    call: { session: { id: "s-live", participants: [] } },
+  });
+  mockMeetingUpdateMany.mockResolvedValueOnce({ count: 0 });
+  await reconcileOrphanedSessions();
+  expect(mockMeetingUpdateMany).toHaveBeenCalledTimes(1);
 });
 
 it("persists rotation past an unchanged active head and reaches the tail on the next invocation", async () => {
@@ -174,7 +190,7 @@ it("stops admitting reads after its short start budget without checkpointing an 
   });
 });
 
-it("skips an extended live room and never closes presences after losing the meeting CAS", async () => {
+it("skips an extended live room whose room end has not passed", async () => {
   mockMeetingFindMany.mockResolvedValueOnce([
     {
       ...meeting("extended"),
@@ -183,9 +199,7 @@ it("skips an extended live room and never closes presences after losing the meet
     },
     meeting("lost"),
   ]);
-  mockMeetingUpdateMany.mockResolvedValueOnce({ count: 0 });
   const result = await reconcileOrphanedSessions();
   expect(result.processed).toBe(1);
   expect(mockCallGet).toHaveBeenCalledTimes(1);
-  expect(mockPresenceUpdateMany).not.toHaveBeenCalled();
 });

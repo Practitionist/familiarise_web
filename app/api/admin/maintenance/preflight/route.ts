@@ -24,8 +24,8 @@ export async function GET() {
     pendingPayouts,
     openDisputes,
   ] = await Promise.all([
-    // Presence and Stream decide; a moved schedule says nothing about who is in the room.
-    countActiveCalls(prisma, now),
+    // Stream decides; a moved schedule says nothing about who is in the room.
+    countActiveCalls(prisma),
     prisma.payment.count({ where: { paymentStatus: "PENDING" } }),
     prisma.appointmentOccurrence.count({
       where: {

@@ -1,14 +1,20 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import {
   DISPUTE_RESPONSE_LEAD_MS,
   PENDING_AGE_LIMITS_MS,
 } from "@/lib/cron/pending-ages";
+import { BOOKING_TITLE_SELECT, bookingTitleOf } from "@/lib/data/booking-title";
 import type { PendingAges } from "@/lib/observability/betterstack-telemetry";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   DEAD_LETTER_BELL_WHERE,
   DEAD_LETTER_EMAIL_WHERE,
+  PARKED_CAPTURE_WHERE,
+  parkedCaptureOrder,
+  parkedCaptureSince,
 } from "@/lib/backoffice/queue-predicates";
 import {
   DUNNABLE_ORG_STATUSES,
@@ -20,7 +26,16 @@ import {
 export const ATTENTION_ROW_CAP = 25;
 const LAST_ERROR_MAX_CHARS = 200;
 
-export type AttentionQueueKey = keyof PendingAges;
+/** Queues listed with no Better Stack gauge: nothing clears them but an operator, so each is due at once. */
+const UNGAUGED_LIMITS_MS = { refundedLiveBookings: 0 } as const;
+
+export type AttentionQueueKey =
+  keyof PendingAges | keyof typeof UNGAUGED_LIMITS_MS;
+
+const LIMITS_MS: Readonly<Record<AttentionQueueKey, number>> = {
+  ...PENDING_AGE_LIMITS_MS,
+  ...UNGAUGED_LIMITS_MS,
+};
 
 export interface AttentionLink {
   label: string;
@@ -130,6 +145,107 @@ const RESPONSE_DUE_DISPUTE_STATUSES = [
 ] as const;
 const RETRYING = ["PENDING", "RETRY"] as const;
 
+/**
+ * Paid bookings with a session still SCHEDULED and the payer's seat not ended, whose SUCCEEDED
+ * refunds cover the payment, at least one made outside the app: every app door stamps `metadata.source`.
+ */
+const REFUNDED_LIVE_BOOKINGS = Prisma.sql`
+  SELECT p.id, max(r."createdAt") AS "refundedAt",
+    (sum(r."amountPaise") FILTER (WHERE (r.metadata ->> 'source') IS NULL))::bigint AS "outsidePaise"
+  FROM "Payment" p
+  JOIN "Refund" r ON r."paymentId" = p.id
+    AND r.status = 'SUCCEEDED' AND r."deletedAt" IS NULL
+  WHERE p."paymentStatus" = 'SUCCEEDED' AND p."deletedAt" IS NULL AND p.amount > 0
+    AND p.id IN (
+      SELECT i."paymentId" FROM "Refund" i
+      WHERE i.status = 'SUCCEEDED' AND i."deletedAt" IS NULL
+        AND (i.metadata ->> 'source') IS NULL)
+    AND EXISTS (
+      SELECT 1 FROM "Appointment" a
+      JOIN "AppointmentOccurrence" o ON o."appointmentId" = a.id
+      WHERE a.id = p."appointmentId" AND a."deletedAt" IS NULL
+        AND o."deletedAt" IS NULL AND o."completionStatus" = 'SCHEDULED')
+    AND NOT EXISTS (
+      SELECT 1 FROM "AppointmentParticipant" s
+      WHERE s."appointmentId" = p."appointmentId" AND s."userId" = p."userId"
+        AND s.status IN ('CANCELLED', 'REFUNDED'))
+  GROUP BY p.id
+  HAVING sum(r."amountPaise") >= p.amount`;
+
+const refundedLiveRowsSchema = z.array(
+  z.object({
+    id: z.string(),
+    refundedAt: z.date(),
+    outsidePaise: z.bigint().transform(Number),
+  }),
+);
+const countRowSchema = z.tuple([z.object({ total: z.number() })]);
+
+/** The payments a window of the selection names, with the buyer and the booking's title. */
+const findRefundedLivePayments = (ids: string[]) =>
+  prisma.payment.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      amount: true,
+      appointmentId: true,
+      user: { select: { name: true } },
+      appointment: { select: BOOKING_TITLE_SELECT },
+    },
+    relationLoadStrategy: "join",
+  });
+
+type RefundedLivePayment = Awaited<
+  ReturnType<typeof findRefundedLivePayments>
+>[number];
+
+/** One window of the selection, then the payments it names. */
+async function readRefundedLiveBookings(
+  order: Prisma.SortOrder,
+  take: number,
+): Promise<
+  { payment: RefundedLivePayment; refundedAt: Date; outsidePaise: number }[]
+> {
+  const dir = Prisma.raw(order === "asc" ? "ASC" : "DESC");
+  const selected = refundedLiveRowsSchema.parse(
+    await prisma.$queryRaw(
+      Prisma.sql`${REFUNDED_LIVE_BOOKINGS} ORDER BY "refundedAt" ${dir}, p.id ${dir} LIMIT ${take}`,
+    ),
+  );
+  if (selected.length === 0) return [];
+  const payments = new Map(
+    (await findRefundedLivePayments(selected.map((s) => s.id))).map((p) => [
+      p.id,
+      p,
+    ]),
+  );
+  return selected.flatMap((s) => {
+    const payment = payments.get(s.id);
+    return payment
+      ? [{ payment, refundedAt: s.refundedAt, outsidePaise: s.outsidePaise }]
+      : [];
+  });
+}
+
+const SEAT_TYPES = new Set<string>(["WEBINAR", "CLASS"]);
+
+/** What happened and what to do: a seat ends with the host, any other booking through the platform cancel. */
+function refundedLiveSentence(
+  p: RefundedLivePayment,
+  outsidePaise: number,
+): string {
+  const who = p.user.name?.trim() || "A buyer";
+  const booking = p.appointment ? bookingTitleOf(p.appointment) : "a booking";
+  const total = formatCurrencyAmount(p.amount, "INR");
+  const refunded =
+    outsidePaise >= p.amount
+      ? `${who} was refunded ${total} in full outside the app for ${booking}`
+      : `${who} was refunded ${total} in full for ${booking}, ${formatCurrencyAmount(outsidePaise, "INR")} of it outside the app`;
+  return p.appointment && SEAT_TYPES.has(p.appointment.appointmentType)
+    ? `${refunded}, and their seat is still confirmed. If the seat should end, ask the host to remove them; no further refund is due.`
+    : `${refunded}, and the booking is still live. If it should end, cancel it from the booking's Ops actions; no further refund is due.`;
+}
+
 /** Each queue the gauges watch, in the order the page lists them; reads are bounded and read-only. */
 const SOURCES: readonly AttentionSource[] = [
   {
@@ -175,6 +291,98 @@ const SOURCES: readonly AttentionSource[] = [
             },
           };
         }),
+        total,
+      );
+    },
+  },
+  {
+    key: "parkedCaptures",
+    label: "Captures parked for manual recovery",
+    money: true,
+    note: "A payment with a refund owed, pending or paid, or an open or lost dispute, is not listed here.",
+    read: async (now) => {
+      const where = PARKED_CAPTURE_WHERE;
+      const { rows, total } = await windowOf(
+        (order, take) =>
+          prisma.payment.findMany({
+            where,
+            orderBy: parkedCaptureOrder(order),
+            take,
+            select: {
+              id: true,
+              appointmentId: true,
+              description: true,
+              capturedAt: true,
+              createdAt: true,
+            },
+          }),
+        () => prisma.payment.count({ where }),
+      );
+      return splitWindow(
+        rows.map((p) => ({
+          key: p.createdAt.getTime(),
+          item: {
+            id: p.id,
+            state: p.appointmentId
+              ? "Parked, booking exists"
+              : "Parked, no booking",
+            ageMs: now.getTime() - parkedCaptureSince(p).getTime(),
+            attempts: null,
+            lastError: lastError(p.description),
+            links: [
+              {
+                label: "Payment",
+                path: `payments/${encodeURIComponent(p.id)}`,
+              },
+              tracePayment(p.id),
+            ],
+          },
+        })),
+        total,
+      );
+    },
+  },
+  {
+    key: "refundedLiveBookings",
+    label: "Fully refunded, booking still live",
+    money: true,
+    note: "A payment refunded in full only from the app is not listed here, and a booking leaves the list once it is cancelled or its sessions are over.",
+    read: async (now) => {
+      const { rows, total } = await windowOf(
+        readRefundedLiveBookings,
+        async () =>
+          countRowSchema.parse(
+            await prisma.$queryRaw(
+              Prisma.sql`SELECT count(*)::int AS total FROM (${REFUNDED_LIVE_BOOKINGS}) q`,
+            ),
+          )[0].total,
+      );
+      return splitWindow(
+        rows.map(({ payment: p, refundedAt, outsidePaise }) => ({
+          key: refundedAt.getTime(),
+          item: {
+            id: p.id,
+            state: refundedLiveSentence(p, outsidePaise),
+            ageMs: now.getTime() - refundedAt.getTime(),
+            attempts: null,
+            lastError: null,
+            links: [
+              ...(p.appointmentId
+                ? [
+                    {
+                      label: "Booking",
+                      path: `appointments?open=${encodeURIComponent(p.appointmentId)}`,
+                    },
+                  ]
+                : []),
+              {
+                label: "Payment",
+                path: `payments/${encodeURIComponent(p.id)}`,
+              },
+              tracePayment(p.id),
+            ],
+          },
+        })),
         total,
       );
     },
@@ -530,15 +738,16 @@ const SOURCES: readonly AttentionSource[] = [
 
 /**
  * The stuck items of every watched queue, read-only and in sequence for
- * `PG_POOL_MAX=1`: eight statements while each table fits the cap, two more
- * (newest rows and a count) for each table that overflows it.
+ * `PG_POOL_MAX=1`: ten statements while each table fits the cap, two more
+ * (newest rows and a count) for each table that overflows it, and one more for
+ * each window of refunded live bookings that names a payment.
  */
 export async function readNeedsAttention(
   now = new Date(),
 ): Promise<AttentionQueue[]> {
   const queues: AttentionQueue[] = [];
   for (const source of SOURCES) {
-    const limitMs = PENDING_AGE_LIMITS_MS[source.key];
+    const limitMs = LIMITS_MS[source.key];
     let items: AttentionItems | null;
     try {
       items = await source.read(now, limitMs);

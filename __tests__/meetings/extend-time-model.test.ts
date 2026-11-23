@@ -221,7 +221,6 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
         endedAt: new Date(BOOKED_END.getTime() + MIN),
         endedReason: "session_timeout",
       },
-      report: null,
       maintenanceWindows: [],
     });
     expect(verdict).toMatchObject({ outcome: "HELD", lostMinutes: 0 });

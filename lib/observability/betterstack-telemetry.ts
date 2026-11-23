@@ -33,6 +33,7 @@ export const pendingAgesSchema = z
     webhookEvents: count,
     emailRetries: count,
     notificationRetries: count,
+    parkedCaptures: count,
   })
   .strict();
 export type PendingAges = z.infer<typeof pendingAgesSchema>;

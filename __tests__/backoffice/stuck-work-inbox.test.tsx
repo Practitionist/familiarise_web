@@ -54,10 +54,12 @@ const mockDb = {
   },
   notificationOutbox: mockEmpty(),
 };
+// The refunded-live-bookings selection, empty here.
+const mockQueryRaw = jest.fn(async () => []);
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   get default() {
-    return mockDb;
+    return { ...mockDb, $queryRaw: mockQueryRaw };
   },
 }));
 
@@ -65,7 +67,9 @@ import { NeedsAttentionInbox } from "@/components/dashboard/backoffice/NeedsAtte
 import { readNeedsAttention } from "@/lib/backoffice/needs-attention";
 
 it("shows each queue's total, its newest items beside the oldest, and disputes against the deadline", async () => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   const queues = await readNeedsAttention(mockNow);
+  expect(warn).not.toHaveBeenCalled();
   const emails = queues.find((q) => q.key === "emailRetries")?.items;
   expect(emails?.total).toBe(60);
   expect(emails?.oldest.map((e) => e.id)).toEqual(
@@ -77,9 +81,9 @@ it("shows each queue's total, its newest items beside the oldest, and disputes a
 
   const statements = Object.values(mockDb).reduce(
     (n, m) => n + m.findMany.mock.calls.length + m.count.mock.calls.length,
-    0,
+    mockQueryRaw.mock.calls.length,
   );
-  expect(statements).toBe(10);
+  expect(statements).toBe(12);
 
   render(<NeedsAttentionInbox queues={queues} basePath="/dashboard/admin" />);
   expect(screen.getByText("10 more in between")).toBeTruthy();
@@ -88,4 +92,5 @@ it("shows each queue's total, its newest items beside the oldest, and disputes a
   ).toBeTruthy();
   expect(screen.getByText("overdue by 42 d 0 h")).toBeTruthy();
   expect(screen.getByText("due in 5 h 0 min")).toBeTruthy();
+  expect(screen.getAllByText(/^Listed when at any age\./)).toHaveLength(2);
 });

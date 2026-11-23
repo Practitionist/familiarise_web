@@ -14,7 +14,6 @@ import {
 } from "@/lib/observability/run-failures";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
-import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
 
 export interface ReconciliationResult {
   processed: number;
@@ -52,6 +51,8 @@ interface OrphanedSessionRow {
   id: string;
   streamCallId: string;
   extendedSeconds: number;
+  lastStreamSessionId: string | null;
+  lastJoinedAt: Date | null;
   occurrence: {
     endsAt: Date | string;
   };
@@ -64,7 +65,12 @@ async function resolveOrphanedSessionEnd(
   session: OrphanedSessionRow,
   result: ReconciliationResult,
   failures: RunFailureReporter,
-): Promise<{ endedAt: Date; endedReason: MeetingEndReason } | null> {
+): Promise<{
+  endedAt: Date;
+  endedReason: MeetingEndReason;
+  /** The call's latest session as Stream names it, recorded with the end. */
+  sessionId?: string;
+} | null> {
   const fallbackEndedAt = roomEndOf(session);
   if (!isStreamConfigured()) {
     result.streamNotFound++;
@@ -83,20 +89,23 @@ async function resolveOrphanedSessionEnd(
       failures,
     );
 
+    const callSession = response.call.session;
+    const sessionId = callSession?.id || undefined;
     if (response.call.ended_at) {
       result.reconciled++;
       return {
         endedAt: new Date(response.call.ended_at),
         endedReason: "reconciled",
+        sessionId,
       };
     }
 
-    const callSession = response.call.session;
     if (callSession?.ended_at) {
       result.reconciled++;
       return {
         endedAt: new Date(callSession.ended_at),
         endedReason: "reconciled",
+        sessionId,
       };
     }
     if ((callSession?.participants?.length ?? 0) > 0) {
@@ -107,7 +116,11 @@ async function resolveOrphanedSessionEnd(
     }
 
     result.reconciled++;
-    return { endedAt: fallbackEndedAt, endedReason: "reconciled_no_end" };
+    return {
+      endedAt: fallbackEndedAt,
+      endedReason: "reconciled_no_end",
+      sessionId,
+    };
   } catch (streamError) {
     if (!isExpectedStreamError(streamError)) {
       throw streamError;
@@ -136,26 +149,30 @@ async function reconcileSingleOrphanedSession(
   try {
     const resolved = await resolveOrphanedSessionEnd(session, result, failures);
     if (!resolved) return;
-    const { endedAt, endedReason } = resolved;
+    const { endedAt, endedReason, sessionId } = resolved;
 
-    const closeMeetingAndPresence = async (
-      db: Pick<typeof prisma, "meeting" | "meetingPresence">,
-    ) => {
-      const updated = await db.meeting.updateMany({
-        where: { id: session.id, endedAt: null },
-        data: { endedAt, endedReason },
-      });
-
-      if (updated.count !== 0) {
-        await closeSegmentPresences(db, {
-          meetingId: session.id,
-          streamCallId: session.streamCallId,
-          endedAt,
-        });
-      }
-    };
-
-    await prisma.$transaction((tx) => closeMeetingAndPresence(tx));
+    // The call id it asked Stream about: a room reopened on a new call since is not this one.
+    // A join or a session recorded since the lookup means the room may be live again: leave it for the next run.
+    const closed = await prisma.meeting.updateMany({
+      where: {
+        id: session.id,
+        streamCallId: session.streamCallId,
+        endedAt: null,
+        lastStreamSessionId: session.lastStreamSessionId,
+        lastJoinedAt: session.lastJoinedAt,
+      },
+      data: {
+        endedAt,
+        endedReason,
+        ...(sessionId && { lastStreamSessionId: sessionId }),
+      },
+    });
+    if (closed.count === 0) {
+      result.details.push(
+        `Session ${session.id} (call: ${session.streamCallId}): rejoined during the lookup`,
+      );
+      return;
+    }
 
     result.details.push(
       `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,
@@ -221,6 +238,8 @@ async function reconcileOrphanedSessionsUnlocked(
         id: true,
         streamCallId: true,
         extendedSeconds: true,
+        lastStreamSessionId: true,
+        lastJoinedAt: true,
         occurrence: { select: { endsAt: true } },
       },
       orderBy: { id: "asc" },

@@ -130,18 +130,20 @@ export async function getOrgSponsoredGroupSeats(
     }),
   ]);
 
-  // Attended = the seat was marked ATTENDED, or the member joined one of the
-  // session's calls. Read only for these members on these sessions.
+  // Attended = the seat was marked ATTENDED, or Stream's settled record of one
+  // of the session's calls shows the member. Read only for these members on these sessions.
   const joined =
     seats.length === 0
       ? []
-      : await prisma.meetingAttendance.findMany({
+      : await prisma.meetingPresence.findMany({
           where: {
+            meeting: { attendanceSettledAt: { not: null } },
             OR: seats.map((s) => ({
               userId: s.userId,
               occurrence: { appointmentId: s.appointmentId },
             })),
           },
+          distinct: ["appointmentOccurrenceId", "userId"],
           select: {
             userId: true,
             occurrence: { select: { appointmentId: true } },

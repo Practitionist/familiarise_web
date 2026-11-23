@@ -22,7 +22,6 @@ const run = (
     hostUserIds,
     intervals,
     meeting,
-    report: null,
     maintenanceWindows: [],
   });
 
@@ -88,21 +87,5 @@ describe("classifySessionOutcome (#1569 D1)", () => {
     expect(run(60, [seg("l", 0, 60)], undefined, []).outcome).toBe(
       "INCONCLUSIVE",
     );
-  });
-
-  it("parks INCONCLUSIVE when Stream saw more people than our rows", () => {
-    const v = classifySessionOutcome({
-      startsAt: at(0),
-      endsAt: at(60),
-      hostUserIds: ["host"],
-      intervals: [seg("l", 0, 60)],
-      meeting: { endedAt: at(60), endedReason: "call_ended" },
-      report: { unique: 2 },
-      maintenanceWindows: [],
-    });
-    expect(v).toMatchObject({
-      outcome: "INCONCLUSIVE",
-      completionStatus: "UNVERIFIED",
-    });
   });
 });

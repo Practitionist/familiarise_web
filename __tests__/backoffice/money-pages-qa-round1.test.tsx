@@ -150,7 +150,12 @@ function disputeDetail(overrides: Record<string, unknown> = {}) {
         createdAt: "2026-11-01T00:00:00Z",
       },
       occurrences: { total: 0, completedCount: 0, outcomes: [] },
-      attendance: { presentCount: 0, recordsFound: false, summary: "None." },
+      attendance: {
+        presentCount: 0,
+        recordsFound: false,
+        pendingSessions: 0,
+        summary: "None.",
+      },
       supportHistory: { ticketCount: 0, openCount: 0, threads: [] },
     },
     ...overrides,

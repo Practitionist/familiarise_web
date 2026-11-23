@@ -212,7 +212,7 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     captureException.mockReturnValueOnce("0123456789abcdef0123456789abcdef");
     handleCheckout.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError(
-        "Invalid `prisma.appointment.findFirst()` invocation: Transaction API error: Transaction already closed: A query cannot be executed on an expired transaction.",
+        "Invalid `prisma.appointment.findFirst()` invocation: Transaction API error: Transaction already closed: A query cannot be executed on a committed transaction.",
         { code: "P2028", clientVersion: "test" },
       ),
     );

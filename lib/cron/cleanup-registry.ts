@@ -704,7 +704,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           detected: r.detected,
           refunded: r.refunded,
-          contradicted: r.contradicted,
+          unsettled: r.unsettled,
         }),
         items: (r) => ({ processed: r.detected }),
         failureMessage: "Failed to detect consultant no-shows",
