@@ -38,6 +38,8 @@ export type SettledAttendanceRead =
       intervals: SettledStreamInterval[];
       /** The latest `ended_at` session stats report for any session of the occurrence. */
       lastSessionEndedAt: Date | null;
+      /** Sessions read without their ready announcement, on our webhooks' or the call's word alone. */
+      corroboratedSessionIds: string[];
     }
   | { kind: "no-session" }
   | { kind: "not-final" }
@@ -311,6 +313,7 @@ export async function readSettledAttendance(args: {
       args.lastKnownSessionId !== null ||
       calls.some((call) => call.currentSessionId !== null);
     const intervals: SettledStreamInterval[] = [];
+    const corroboratedSessionIds: string[] = [];
     let lastSessionEndedAt: Date | null = null;
     for (const [callId, listed] of listedByCall) {
       for (const session of listed) {
@@ -323,8 +326,9 @@ export async function readSettledAttendance(args: {
         }
         // Without its ready announcement a session is read only when our webhooks or the
         // call itself name a session that stats list (checked above).
-        if (!ready.has(session.call_session_id) && !corroborated) {
-          return { kind: "not-final" };
+        if (!ready.has(session.call_session_id)) {
+          if (!corroborated) return { kind: "not-final" };
+          corroboratedSessionIds.push(session.call_session_id);
         }
         intervals.push(
           ...(await readSessionParticipants(reader, callId, {
@@ -337,7 +341,7 @@ export async function readSettledAttendance(args: {
     }
     return listedIds.size === 0
       ? { kind: "no-session" }
-      : { kind: "read", intervals, lastSessionEndedAt };
+      : { kind: "read", intervals, lastSessionEndedAt, corroboratedSessionIds };
   } catch (error) {
     if (error instanceof NotFinal) return { kind: "not-final" };
     if (error instanceof Expired) return { kind: "expired" };

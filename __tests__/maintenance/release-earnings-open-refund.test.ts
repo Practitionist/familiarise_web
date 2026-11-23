@@ -90,6 +90,14 @@ it("#1569 D10 — the claim also keeps an earning whose booking owes a miss PEND
               none: expect.objectContaining({ completionStatus: "UNVERIFIED" }),
             },
           },
+          {
+            occurrences: {
+              none: expect.objectContaining({
+                outcome: "LEARNER_ABSENT",
+                outcomeConfirmedAt: null,
+              }),
+            },
+          },
         ],
       },
     },

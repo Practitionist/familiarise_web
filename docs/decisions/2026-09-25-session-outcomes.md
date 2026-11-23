@@ -34,7 +34,7 @@ Every void counts toward the learner's right to leave a class series. Only a hos
 
 ### 7. A learner who never joins forfeits the session
 
-The outcome is `LEARNER_ABSENT` and the session counts as held, so no money moves. The learner of a 1:1 session gets one notification with a support link and, when the plan records sessions and a recording exists, a link to the recordings page. Ops can overturn the outcome from the Money hub with a reason.
+The outcome is `LEARNER_ABSENT` and the session counts as held, so no refund is owed. The expert's earning matures only once the verdict is confirmed, 48 hours after it on strong evidence or sooner by ops (see [the report-window record](2026-11-23-session-outcome-report-window.md)). The learner of a 1:1 session gets one notification with a support link and, when the plan records sessions and a recording exists, a link to the recordings page. Ops can overturn the outcome from the Money hub with a reason.
 
 ### 8. There is no "recording instead of a refund"
 

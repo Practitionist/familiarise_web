@@ -111,6 +111,8 @@ export const needsHumanItemSchema = z.object({
   aged: z.boolean(),
   /** The session had a call and is inside the re-read window; a settled one answers its stored verdict. */
   canRereadAttendance: z.boolean(),
+  /** A negative verdict nobody has confirmed yet; ops may confirm it as it stands. */
+  canConfirm: z.boolean(),
   booking: z.object({
     type: z.nativeEnum(AppointmentsType),
     title: z.string(),

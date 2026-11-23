@@ -3,8 +3,8 @@
  */
 
 /**
- * The decision queue is one paged, sorted read over the unchanged NEEDS_HUMAN
- * predicate: one list, one count and one batched user read, each row naming
+ * The decision queue is one paged, sorted read over the needs-human
+ * predicate at the read's time: one list, one count and one batched user read, each row naming
  * its booking, expert and learner (or roster), with its age computed per row.
  */
 
@@ -37,7 +37,7 @@ jest.mock("../../lib/auth-helpers", () => ({
   }),
 }));
 
-import { NEEDS_HUMAN } from "../../lib/booking/misses";
+import { needsHumanWhere } from "../../lib/booking/misses";
 import { readSessionsNeedingHuman } from "../../lib/backoffice/session-outcomes";
 import {
   needsHumanQuerySchema,
@@ -63,6 +63,7 @@ const rows = [
     startsAt: new Date("2026-11-01T10:00:00Z"),
     endsAt: new Date("2026-11-01T11:00:00Z"),
     outcomeAt: new Date("2026-11-01T12:00:00Z"),
+    outcomeConfirmedAt: null,
     completionStatus: "UNVERIFIED",
     outcome: "INCONCLUSIVE",
     deliveredMinutes: 20,
@@ -95,6 +96,7 @@ const rows = [
     startsAt: new Date("2026-11-15T10:00:00Z"),
     endsAt: new Date("2026-11-15T11:00:00Z"),
     outcomeAt: null,
+    outcomeConfirmedAt: null,
     completionStatus: "UNVERIFIED",
     outcome: null,
     deliveredMinutes: null,
@@ -126,7 +128,7 @@ beforeEach(() => {
   mockFindMany.mockResolvedValue(rows);
 });
 
-it("reads one page in three statements over the unchanged predicate, oldest first", async () => {
+it("reads one page in three statements over the predicate at its time, oldest first", async () => {
   const page = await readSessionsNeedingHuman({ now: NOW });
 
   expect(mockFindMany).toHaveBeenCalledTimes(1);
@@ -135,12 +137,14 @@ it("reads one page in three statements over the unchanged predicate, oldest firs
   const [list] = mockFindMany.mock.calls[0] as [Record<string, unknown>];
   expect(list).toMatchObject({
     relationLoadStrategy: "join",
-    where: NEEDS_HUMAN,
+    where: needsHumanWhere(NOW),
     orderBy: [{ endsAt: "asc" }, { id: "asc" }],
     skip: 0,
     take: 20,
   });
-  expect(mockCount.mock.calls[0][0]).toEqual({ where: NEEDS_HUMAN });
+  expect(mockCount.mock.calls[0][0]).toEqual({
+    where: needsHumanWhere(NOW),
+  });
   expect(page).toMatchObject({ total: 41, page: 1, pageSize: 20 });
 });
 
@@ -234,4 +238,25 @@ it("the route refuses an unknown sort with 400 and reads a valid one", async () 
   const body = (await ok.json()) as { items: unknown[]; total: number };
   expect(body.items).toHaveLength(2);
   expect(body.total).toBe(41);
+});
+
+it("offers Confirm only on an applied negative verdict nobody confirmed", async () => {
+  const closed = {
+    ...rows[0],
+    completionStatus: "COMPLETED",
+    outcome: "LEARNER_ABSENT",
+  };
+  mockFindMany.mockResolvedValue([
+    closed,
+    { ...closed, id: "occ-done", outcomeConfirmedAt: NOW },
+    {
+      ...closed,
+      id: "occ-parked",
+      completionStatus: "UNVERIFIED",
+      outcome: "HOST_ABSENT",
+    },
+    rows[0],
+  ]);
+  const { items } = await readSessionsNeedingHuman({ now: NOW });
+  expect(items.map((i) => i.canConfirm)).toEqual([true, false, false, false]);
 });

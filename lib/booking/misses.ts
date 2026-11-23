@@ -3,7 +3,7 @@
  * The make-up machine that owes each miss lives in class-sessions.ts.
  */
 
-import type { Prisma } from "@prisma/client";
+import type { OccurrenceOutcome, Prisma } from "@prisma/client";
 
 /** A cancelled session must be made up, and HELD, within this many days. */
 export const MAKEUP_WINDOW_DAYS = 14;
@@ -64,19 +64,68 @@ export const AWAITING_HUMAN = {
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
-/** The ops needs-human list: the above, plus a paid trial that was voided (D4). */
-export const NEEDS_HUMAN = {
+/** The verdicts that forfeit, refund, strike or void on a person's account; each waits for a confirmation. */
+export const NEGATIVE_MONEY_OUTCOMES = [
+  "HOST_ABSENT",
+  "CUT_SHORT",
+  "LEARNER_ABSENT",
+] as const satisfies readonly OccurrenceOutcome[];
+
+export type NegativeMoneyOutcome = (typeof NEGATIVE_MONEY_OUTCOMES)[number];
+
+const NEGATIVE_SET = new Set<OccurrenceOutcome>(NEGATIVE_MONEY_OUTCOMES);
+
+export const isNegativeMoneyOutcome = (
+  outcome: OccurrenceOutcome | null,
+): outcome is NegativeMoneyOutcome =>
+  outcome !== null && NEGATIVE_SET.has(outcome);
+
+/** Hours from a negative verdict (`outcomeAt`) to its window's close; must stay <= HOLD_PERIOD_HOURS.CONSULTATION. */
+export const OUTCOME_REPORT_WINDOW_HOURS = 48;
+
+/** A learner-absent verdict nobody confirmed holds its booking's earnings; a subscription's release per tranche. */
+export const UNCONFIRMED_LEARNER_ABSENT = {
+  outcome: "LEARNER_ABSENT",
+  outcomeConfirmedAt: null,
   deletedAt: null,
-  isTentative: false,
-  OR: [
-    AWAITING_HUMAN,
-    {
-      completionStatus: "VOIDED",
-      seatsSettledAt: null,
-      appointment: { trial: { paymentId: { not: null } } },
-    },
-  ],
+  appointment: { subscriptionId: null },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** An applied negative verdict whose report window closed unconfirmed: the window-close pass judges it, ops decide a weak one. */
+export function unconfirmedClosedVerdictWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  const closedBefore = new Date(
+    now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000,
+  );
+  return {
+    deletedAt: null,
+    isTentative: false,
+    completionStatus: { in: ["COMPLETED", "VOIDED"] },
+    outcome: { in: [...NEGATIVE_MONEY_OUTCOMES] },
+    outcomeConfirmedAt: null,
+    outcomeAt: { lt: closedBefore },
+  };
+}
+
+/** The ops needs-human list: the above, a paid trial that was voided (D4), and a closed unconfirmed verdict. */
+export function needsHumanWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    deletedAt: null,
+    isTentative: false,
+    OR: [
+      AWAITING_HUMAN,
+      {
+        completionStatus: "VOIDED",
+        seatsSettledAt: null,
+        appointment: { trial: { paymentId: { not: null } } },
+      },
+      unconfirmedClosedVerdictWhere(now),
+    ],
+  };
+}
 
 /** A session parked for ops longer than this escalates: its booking's settlement is waiting on it. */
 export const NEEDS_HUMAN_ESCALATE_DAYS = 7;
@@ -91,7 +140,7 @@ export function agedNeedsHumanWhere(
   const cutoff = agedCutoff(now);
   return {
     AND: [
-      NEEDS_HUMAN,
+      needsHumanWhere(now),
       {
         OR: [
           { outcomeAt: { lt: cutoff } },
