@@ -74,7 +74,7 @@ The table reads the same signals.
 
 ## 4. Gaps: what is built and what is filed
 
-- **Built:** a read-only Stuck work page (`/dashboard/admin/stuck-work`, issue #2424 Phase 2 without Retry buttons) and seven oldest-pending-age gauges on the tick summary, alerted by Better Stack SQL thresholds that the owner configures. Ingest rejections (402/403/5xx) are counted on the run row, and a freshness alert fires when no tick summary arrives for 15 minutes. See the [2026-11-01 gaps decision](../decisions/2026-11-01-observability-gaps-and-launch-posture.md).
+- **Built:** a read-only Stuck work page (`/dashboard/admin/stuck-work`, issue #2424 Phase 2 without Retry buttons) and eight oldest-pending-age gauges on the tick summary (the eighth, `parkedCaptures`, is the seconds since the oldest parked, unreturned capture; 0 when none), alerted by Better Stack SQL thresholds that the owner configures. Ingest rejections (402/403/5xx) are counted on the run row, and a freshness alert fires when no tick summary arrives for 15 minutes. See the [2026-11-01 gaps decision](../decisions/2026-11-01-observability-gaps-and-launch-posture.md).
 - **Built, as a free-tier bridge:** per-item history across runs is the run row's `result.failures` (at most 50 `{ entityId, reason, attempt }` per run, kept 180 days). There is **no** `SystemJobRunItem` table (section 6 explains why).
 - **Deferred to traction:** batched per-item Better Stack events (issue #2424 Phase 3 and issue #2453), once known as gaps PR 2.
 - **Filed:** Retry buttons on the inbox (payouts: #2433), and charts beyond the Run metrics card. Every run is already a row, so SQL views in the back office or Better Stack are cheaper than Grafana.

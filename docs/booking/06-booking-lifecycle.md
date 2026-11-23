@@ -1115,9 +1115,11 @@ This is safe because:
 1. `validateWebhookMetadata()` (Zod schema) throws a validation error
 2. The payment is marked as `SUCCEEDED` (the charge went through -- the money was taken)
 3. The description is set to `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ...`
-4. A `P1 CRITICAL_PAYMENT_WITHOUT_APPOINTMENT` structured log is emitted
-5. A human-readable banner is logged with payment ID, user email, amount, and action required
+4. One `PAYMENT` `SystemEvent` (severity `ERROR`, `correlationId` `parked-capture:<paymentId>`) is written in the same transaction as the stamp, only by the delivery whose stamp won, so a redelivery writes none
+5. A `P1 CRITICAL_PAYMENT_WITHOUT_APPOINTMENT` structured log is emitted (`CRITICAL_PAYMENT_BOOKING_UNCONFIRMED` when the payment already has a booking, which a TRIAL booking with no trial row reaches)
 6. The function returns `null`, skipping all appointment confirmation
+
+The payment is listed on the back office's Stuck work page ("Captures parked for manual recovery") until a refund is owed, pending or paid on it, or a dispute is open or lost. The orphaned-payment alert does not raise it: its cohort excludes the marker.
 
 This is the worst-case scenario in the payment system. The user has been charged, but no appointment was created or confirmed. An admin must manually create the appointment or issue a full refund.
 

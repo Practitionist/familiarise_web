@@ -797,21 +797,46 @@ export async function handlePaymentSuccess(
               });
             } else {
               await parkCapture();
+              // One operator event per parked payment: only the delivery whose stamp won writes it.
+              await recordSystemErrorSafe({
+                organizationId: null,
+                category: "PAYMENT",
+                summary: payment.appointmentId
+                  ? `Capture for payment ${payment.id} parked; booking ${payment.appointmentId} is unconfirmed`
+                  : `Capture for payment ${payment.id} parked; no booking was created`,
+                err: new Error(refusal.reason),
+                context: {
+                  paymentId: payment.id,
+                  appointmentId: payment.appointmentId,
+                  paymentIntent: paymentIntentId,
+                  gatewayPaymentId: gatewayPaymentId ?? null,
+                  amountPaise: gatewayAmountPaise ?? payment.amount,
+                  reason: refusal.reason,
+                },
+                correlationId: `parked-capture:${payment.id}`,
+                db: tx,
+                // Reported to Sentry above, once.
+                skipSentry: true,
+              });
             }
 
             console.error(
               JSON.stringify({
-                event: "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
+                event: payment.appointmentId
+                  ? "CRITICAL_PAYMENT_BOOKING_UNCONFIRMED"
+                  : "CRITICAL_PAYMENT_WITHOUT_APPOINTMENT",
                 alert_priority: "P1",
                 payment_id: payment.id,
+                appointment_id: payment.appointmentId,
                 payment_intent: paymentIntentId,
                 user_id: payment.userId,
                 user_email: payment.user.email,
                 amount: payment.amount,
                 currency: payment.currency,
                 error: refusal.reason,
-                action_required:
-                  "IMMEDIATE: Manual appointment creation or full refund required",
+                action_required: payment.appointmentId
+                  ? "IMMEDIATE: confirm the existing booking by hand or refund in full"
+                  : "IMMEDIATE: Manual appointment creation or full refund required",
                 dashboard_url: `${getAppUrl()}/dashboard/admin/payments/${payment.id}`,
                 timestamp: new Date().toISOString(),
               }),
