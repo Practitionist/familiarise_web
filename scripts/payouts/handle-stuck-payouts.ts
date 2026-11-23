@@ -308,12 +308,13 @@ async function handleStuckPayoutsUnlocked(
             await releaseClawbackRecovery(tx, payout.id);
             return { released: released.count, claimed: true };
           });
-          failedCount++;
           if (!cas.claimed) {
+            skippedCount++;
             console.log(
               `   Skipped — payout left PROCESSING concurrently (webhook won)`,
             );
           } else {
+            failedCount++;
             console.log(
               `   Marked as permanently FAILED (max retries reached); released ${cas.released} earning(s)`,
             );
