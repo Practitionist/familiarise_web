@@ -14,7 +14,7 @@ import { readSettledAttendance } from "@/lib/stream/call-presence";
 /** How long past the booked end a session Stream cannot answer for waits before the sweep parks it UNVERIFIED for ops. */
 export const ATTENDANCE_SETTLE_WAIT_MS = 72 * 60 * 60 * 1000;
 
-/** How long past the room end Stream's record is first read: time for late webhooks and lagging session stats to arrive. */
+/** How long past the room's last known activity Stream's record is first read: time for late webhooks and lagging session stats to arrive. */
 export const ATTENDANCE_SETTLE_DELAY_MS = 6 * 60 * 60 * 1000;
 
 export interface SettleTarget {
@@ -25,7 +25,9 @@ export interface SettleTarget {
     streamCallId: string;
     extendedSeconds: number;
     attendanceSettledAt: Date | null;
+    endedAt: Date | null;
     endedReason: string | null;
+    lastJoinedAt: Date | null;
     streamReportReadySessionIds: string[];
     lastStreamSessionId: string | null;
   };
@@ -33,8 +35,8 @@ export interface SettleTarget {
 
 /**
  * `settled` carries the stored rows; every other answer stored nothing and the
- * caller treats the session as undecided. `too-early`: the room ended less
- * than `ATTENDANCE_SETTLE_DELAY_MS` ago, so a read now could miss a session.
+ * caller treats the session as undecided. `too-early`: the room's last known
+ * activity is less than `ATTENDANCE_SETTLE_DELAY_MS` old, so a read now could miss a session.
  */
 export type AttendanceSettlement =
   | { kind: "settled"; intervals: PresenceInterval[] }
@@ -43,13 +45,18 @@ export type AttendanceSettlement =
   | { kind: "expired" }
   | { kind: "unavailable" };
 
-/** No settle reads Stream before this: the room end plus `ATTENDANCE_SETTLE_DELAY_MS`. */
+/**
+ * No settle reads Stream before this: `ATTENDANCE_SETTLE_DELAY_MS` after the
+ * latest of the room end, the recorded end and the last join, so an overrun counts.
+ */
 export function attendanceReadableAt(target: SettleTarget): Date {
-  const roomEndsAt = resolveRoomEndsAt(
-    target.endsAt,
-    target.meeting.extendedSeconds,
+  const { meeting } = target;
+  const lastActivity = Math.max(
+    resolveRoomEndsAt(target.endsAt, meeting.extendedSeconds).getTime(),
+    meeting.endedAt?.getTime() ?? 0,
+    meeting.lastJoinedAt?.getTime() ?? 0,
   );
-  return new Date(roomEndsAt.getTime() + ATTENDANCE_SETTLE_DELAY_MS);
+  return new Date(lastActivity + ATTENDANCE_SETTLE_DELAY_MS);
 }
 
 function readStoredAttendance(meetingId: string): Promise<PresenceInterval[]> {
@@ -92,6 +99,15 @@ export async function settleOccurrenceAttendance(
   });
   if (read.kind !== "read" && read.kind !== "no-session") {
     return settledMeanwhile(meeting.id, read.kind);
+  }
+  // A session Stream ended more recently than the room knew of gets the same wait.
+  if (
+    read.kind === "read" &&
+    read.lastSessionEndedAt &&
+    now.getTime() <
+      read.lastSessionEndedAt.getTime() + ATTENDANCE_SETTLE_DELAY_MS
+  ) {
+    return { kind: "too-early" };
   }
   const rows = read.kind === "read" ? read.intervals : [];
 
@@ -173,7 +189,9 @@ export const SETTLE_MEETING_SELECT = {
   streamCallId: true,
   extendedSeconds: true,
   attendanceSettledAt: true,
+  endedAt: true,
   endedReason: true,
+  lastJoinedAt: true,
   streamReportReadySessionIds: true,
   lastStreamSessionId: true,
 } as const;

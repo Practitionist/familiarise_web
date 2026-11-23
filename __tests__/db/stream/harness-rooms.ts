@@ -14,21 +14,21 @@ export const SEC = 1_000;
 export const MIN = 60 * SEC;
 export const HOUR = 60 * MIN;
 
-/** A booked hour that ended `endedHoursAgo` hours ago, on the hour. */
-export function pastHour(endedHoursAgo: number) {
+/** A booking of `hours` that ended `endedHoursAgo` hours ago, on the hour. */
+export function pastHour(endedHoursAgo: number, hours = 1) {
   const endsAt = new Date(Date.now() - endedHoursAgo * HOUR);
   endsAt.setUTCMinutes(0, 0, 0);
-  return { startsAt: new Date(endsAt.getTime() - HOUR), endsAt };
+  return { startsAt: new Date(endsAt.getTime() - hours * HOUR), endsAt };
 }
 
-/** An approved consultation whose room Stream timed out at the booked end; `paid` adds a captured payment. */
+/** An approved consultation of `hours` whose room Stream timed out at the booked end; `paid` adds a captured payment. */
 export async function seedConsultationRoom(
   endedHoursAgo = 3,
-  { paid = false }: { paid?: boolean } = {},
+  { paid = false, hours = 1 }: { paid?: boolean; hours?: number } = {},
 ) {
   const host = await seedHost();
   const learner = await seedConsultee();
-  const window = pastHour(endedHoursAgo);
+  const window = pastHour(endedHoursAgo, hours);
   const booking = await seedOneToOne("consultation", host, learner, window, {
     status: "APPROVED",
     isTentative: false,

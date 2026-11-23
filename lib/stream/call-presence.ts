@@ -32,7 +32,12 @@ export interface SettledStreamInterval {
  * - `unavailable`: Stream could not be asked or did not answer.
  */
 export type SettledAttendanceRead =
-  | { kind: "read"; intervals: SettledStreamInterval[] }
+  | {
+      kind: "read";
+      intervals: SettledStreamInterval[];
+      /** The latest `ended_at` session stats report for any session of the occurrence. */
+      lastSessionEndedAt: Date | null;
+    }
   | { kind: "no-session" }
   | { kind: "not-final" }
   | { kind: "expired" }
@@ -299,10 +304,15 @@ export async function readSettledAttendance(args: {
       args.lastKnownSessionId !== null ||
       calls.some((call) => call.currentSessionId !== null);
     const intervals: SettledStreamInterval[] = [];
+    let lastSessionEndedAt: Date | null = null;
     for (const [callId, listed] of listedByCall) {
       for (const session of listed) {
         if (!session.call_ended_at || session.counts.live_sessions > 0) {
           return { kind: "not-final" };
+        }
+        const endedAt = new Date(session.call_ended_at);
+        if (!lastSessionEndedAt || endedAt > lastSessionEndedAt) {
+          lastSessionEndedAt = endedAt;
         }
         // Without its ready announcement a session is read only when our webhooks or the
         // call itself name a session that stats list (checked above).
@@ -312,7 +322,7 @@ export async function readSettledAttendance(args: {
         intervals.push(
           ...(await readSessionParticipants(reader, callId, {
             id: session.call_session_id,
-            endedAt: new Date(session.call_ended_at),
+            endedAt,
             counts: session.counts,
           })),
         );
@@ -320,7 +330,7 @@ export async function readSettledAttendance(args: {
     }
     return listedIds.size === 0
       ? { kind: "no-session" }
-      : { kind: "read", intervals };
+      : { kind: "read", intervals, lastSessionEndedAt };
   } catch (error) {
     if (error instanceof NotFinal) return { kind: "not-final" };
     if (error instanceof Expired) return { kind: "expired" };

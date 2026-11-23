@@ -34,17 +34,17 @@ From code: `auto-complete-appointments` classifies each past `SCHEDULED` session
 
 **Why it matters:** completion drives feedback, earnings release and plan maths.
 
-**Setup (owner-approved shifts):** three QA sessions that ended 6 hours 10 minutes ago (move `startsAt`/`endsAt`, keep the half hour; the sweep reads Stream's record only from six hours past the room end):
+**Setup (owner-approved shifts):** QA sessions that ended 6 hours 10 minutes ago (move `startsAt`/`endsAt`, keep the half hour). The sweep reads Stream's record only six hours after the latest of the room end, the recorded end (`Meeting.endedAt`) and the last join (`Meeting.lastJoinedAt`), so moving the booked times does not move a call that really ran:
 
 - A: free consultation (S-09), nobody joined;
 - B: paid consultation (S-08), nobody joined;
-- C: paid consultation where both parties joined during the original time (only if you ran the meeting for real; otherwise skip C).
+- C: paid consultation where both parties really joined the call (only if you ran the meeting for real; otherwise skip C). Its wait counts from the call's real end, so run C only once that end is more than six hours old.
 
 Control D: a paid session whose call ran and ended 3 hours ago.
 
 **Steps:** NEEDS-OWNER-RUN `auto-complete-appointments`; run again.
 
-**Expect:** A → `COMPLETED` (free, nothing to hold). B → `UNVERIFIED` with outcome `NOBODY_JOINED`, in the needs-human queue, earning held. C → `COMPLETED`, consultation `COMPLETED`, feedback prompts sent. D untouched (its record is not read before six hours). Run 2: no change. History rows with reason `auto-complete`.
+**Expect:** A → `COMPLETED` (free, nothing to hold). B → `UNVERIFIED` with outcome `NOBODY_JOINED`, in the needs-human queue, earning held. C → `COMPLETED`, consultation `COMPLETED`, feedback prompts sent, once its call ended more than six hours ago; before that C stays `SCHEDULED`, which is correct. D untouched (its record is not read before six hours). Run 2: no change. History rows with reason `auto-complete`.
 
 **Aftermath:** B1's view of B: does it say anything ("we're checking what happened")? H1's view? Staff Money → booking ops shows B under session outcomes with **Set outcome**.
 

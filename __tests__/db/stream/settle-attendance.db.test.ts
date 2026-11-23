@@ -961,3 +961,39 @@ it("an occurrence still undecided at the rollout cannot be corroborated, so it d
   });
   expect(await settledAt(room.meetingId)).toBeNull();
 });
+
+it("a session Stream lists as ending later than the room recorded gets its own six hours before the record is stored", async () => {
+  const room = await seedConsultationRoom(30, { hours: 8 });
+  const lastLeave = 17 * HOUR;
+  // B began in the rejoin grace and ran to 17:00 after the start; Stream ended it at 17:05. No webhook of B was seen.
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      {
+        id: "B",
+        live: false,
+        stays: [
+          stay(room.hostId, room.startsAt, 8 * HOUR + 29 * MIN, lastLeave),
+          stay(room.learnerId, room.startsAt, 8 * HOUR + 29 * MIN, lastLeave),
+        ],
+      },
+    ],
+  });
+  await announceReports(room.occurrenceId);
+  const streamEnd = room.startsAt.getTime() + lastLeave + 5 * MIN;
+
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), {
+      now: new Date(streamEnd + 5 * MIN),
+    }),
+  ).toEqual({ kind: "too-early" });
+  expect(await settledAt(room.meetingId)).toBeNull();
+
+  expect(
+    (
+      await settleOccurrenceAttendance(await settleTarget(room), {
+        now: new Date(streamEnd + ATTENDANCE_SETTLE_DELAY_MS),
+      })
+    ).kind,
+  ).toBe("settled");
+});

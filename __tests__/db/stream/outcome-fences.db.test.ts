@@ -11,6 +11,7 @@ import { detectConsultantNoShows } from "../../../scripts/appointments/detect-co
 import { ATTENDANCE_SETTLE_DELAY_MS } from "../../../lib/meetings/settle-attendance";
 import { fakeStream } from "./harness-stream";
 import {
+  HOUR,
   loadSlot,
   lockWaiters,
   MIN,
@@ -232,4 +233,58 @@ it("the ops re-read names the verdict with the end a host's webhook committed du
     result: "settled",
     verdict: { outcome: "CUT_SHORT" },
   });
+});
+
+it("an eight-hour consultation that overran to just before its booked end plus six hours is not read until six hours after the host's end; then it is HELD", async () => {
+  const room = await seedConsultationRoom(30, { paid: true, hours: 8 });
+  const s = room.startsAt;
+  // A: the host alone for 11 minutes, announced. B: both from hour 6 to 13:56, none of its webhooks seen and not yet in stats.
+  const sessionB = {
+    id: "B",
+    live: false,
+    hiddenFromStats: true,
+    stays: [
+      stay(room.hostId, s, 6 * HOUR, 13 * HOUR + 56 * MIN),
+      stay(room.learnerId, s, 6 * HOUR, 13 * HOUR + 56 * MIN),
+    ],
+  };
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      { id: "A", live: false, stays: [stay(room.hostId, s, 0, 11 * MIN)] },
+      sessionB,
+    ],
+  });
+  // The host's "End for everyone" at 13:56 is stamped by our server, which names no Stream session.
+  const hostEnd = new Date(s.getTime() + 13 * HOUR + 56 * MIN);
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: {
+      endedAt: hostEnd,
+      endedReason: "call_ended",
+      streamReportReadySessionIds: ["A"],
+      lastStreamSessionId: "A",
+    },
+  });
+
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(
+        room.endsAt.getTime() + ATTENDANCE_SETTLE_DELAY_MS + 2 * MIN,
+      ),
+      outages: [],
+    }),
+  ).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
+
+  sessionB.hiddenFromStats = false;
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["A", "B"] },
+  });
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(hostEnd.getTime() + READ_AT),
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
 });
