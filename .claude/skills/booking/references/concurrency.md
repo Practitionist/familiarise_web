@@ -257,7 +257,8 @@ database timeout before the booking commits (an expired transaction, P2028, or
 the driver's `Query read timeout`; `isTransactionExpired` and
 `isQueryReadTimeout`) answers a 503 `DATABASE_BUSY` with the same body. A read
 timeout at the booking transaction stays a 500 without that claim, because the
-COMMIT it cut off may have landed. An
+COMMIT it cut off may have landed, and so does a failed idempotency-key replay
+lookup, because the key may name a checkout that was already paid. An
 exclusion-constraint violation is the backstop working, so it is a 409 too:
 detect it with `isExclusionViolation` from `lib/db/pg-errors.ts` (SQLSTATE
 `23P01` structurally, with a narrow text fallback only because Prisma does not
