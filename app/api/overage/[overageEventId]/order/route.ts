@@ -9,7 +9,10 @@ import {
 } from "@/lib/payments/core/razorpay";
 import { PaymentStatus } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
-import { recarveOverageBase } from "@/lib/payments/billing/overage-base-carve";
+import {
+  holdParentEarningsForMemberOverage,
+  recarveOverageBase,
+} from "@/lib/payments/billing/overage-base-carve";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 
 /**
@@ -55,6 +58,7 @@ export async function POST(
           taxAmount: true,
           gstRegime: true,
           paymentGateway: true,
+          parentPaymentId: true,
         },
       },
     },
@@ -112,6 +116,13 @@ export async function POST(
         throw Object.assign(new Error("OVERAGE_RETRY_AFTER_INVOICE"), {
           httpStatus: 409,
         });
+      }
+      // The failure released the parent's earnings; owing again holds them again.
+      if (event.payment?.parentPaymentId) {
+        await holdParentEarningsForMemberOverage(
+          tx,
+          event.payment.parentPaymentId,
+        );
       }
       return false;
     })
