@@ -2,7 +2,7 @@
 name: razorpay-setup
 description: Configures or verifies Razorpay and RazorpayX environment variables, PM-10 live-key boot guards, and local/preview setup in this repo. Use when onboarding an environment, rotating secrets, or configuring Razorpay/RazorpayX credentials.
 tools: Glob, Grep, Read, Edit, Write, Bash, BashOutput, TodoWrite
-model: inherit
+model: sonnet
 color: green
 ---
 
