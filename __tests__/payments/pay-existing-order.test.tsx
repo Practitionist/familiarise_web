@@ -23,8 +23,9 @@ jest.mock("../../hooks/use-toast", () => ({
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({ data: null }),
 }));
+const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 import React, { act } from "react";
@@ -122,7 +123,6 @@ describe("PayExistingOrder buyer state", () => {
           <PayExistingOrder
             key={billingStateCode ?? "none"}
             order={order}
-            doneHref="/done"
             description="Booking payment"
             needsBuyerState
             taxContext={{ billingStateCode, isInternational: false }}
@@ -149,6 +149,56 @@ describe("PayExistingOrder buyer state", () => {
       body: JSON.stringify({ consumerStateCode: "29" }),
     });
     expect(open).toHaveBeenCalledTimes(1);
+    act(() => root.unmount());
+  });
+});
+
+describe("PayExistingOrder return", () => {
+  it("hands the paid order to the confirming step, never straight to the booking", async () => {
+    process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID = "rzp_test_key";
+    let handler: ((r: Record<string, string>) => Promise<void>) | undefined;
+    Object.assign(window, {
+      Razorpay: jest.fn((options: { handler: typeof handler }) => {
+        handler = options.handler;
+        return { on: jest.fn(), open: jest.fn() };
+      }),
+    });
+    Object.assign(globalThis, { fetch: jest.fn(async () => ({ ok: true })) });
+    mockPush.mockClear();
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <PayExistingOrder
+          order={{
+            orderId: "order_Nx1",
+            paymentId: "pay_1",
+            amount: 11300,
+            currency: "INR",
+          }}
+          description="Trial session"
+          needsBuyerState={false}
+          taxContext={{ billingStateCode: "29", isInternational: false }}
+        />,
+      );
+    });
+    await act(async () => {
+      container.querySelector("button")!.click();
+    });
+    await act(async () => {
+      await handler!({
+        razorpay_order_id: "order_Nx1",
+        razorpay_payment_id: "pay_rzp_1",
+        razorpay_signature: "sig",
+      });
+    });
+
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    const target = new URL(mockPush.mock.calls[0][0], "https://x.test");
+    expect(target.pathname).toBe("/checkout/checkout-success");
+    expect(target.searchParams.get("payment_intent")).toBe("order_Nx1");
     act(() => root.unmount());
   });
 });
