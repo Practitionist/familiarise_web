@@ -48,8 +48,8 @@ WORK="$(mktemp -d)"
 LOCK="${FW_HEAVY_LOCK:-/tmp/fw-heavy.lock}"
 HAVE_LOCK=false
 
-# The container, the scratch directory and the lock go on every exit.
-trap 'docker rm -f "$NAME" >/dev/null 2>&1; rm -rf "$WORK"; if [[ "$HAVE_LOCK" == true ]]; then rmdir "$LOCK"; fi' EXIT
+# The container with its data volume, the scratch directory and the lock go on every exit.
+trap 'docker rm -fv "$NAME" >/dev/null 2>&1; rm -rf "$WORK"; if [[ "$HAVE_LOCK" == true ]]; then rmdir "$LOCK"; fi' EXIT
 trap 'exit 130' INT TERM HUP
 
 # The heavy lock, as model-orchestration.md section 6b defines it.
