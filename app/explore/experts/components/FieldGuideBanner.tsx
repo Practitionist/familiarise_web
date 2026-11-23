@@ -9,7 +9,7 @@ export function FieldGuideBanner({
 }: Readonly<{ fieldName: string }>) {
   const href = domainPath(fieldName);
   return (
-    <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-border bg-muted/40 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mb-6 mt-6 flex flex-col gap-3 rounded-2xl border border-border bg-muted/40 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <p className="flex items-center gap-2 text-sm text-foreground">
         <BookOpen aria-hidden="true" className="h-4 w-4 shrink-0" />
         <span>

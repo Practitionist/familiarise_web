@@ -33,7 +33,7 @@ export default function ExpertsInteractiveContent({
   newestExperts,
 }: Readonly<ExpertsInteractiveContentProps>) {
   const { filters, updateFilters, clearFilters } = useExpertsFilters();
-  const browseSectionRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const { formatPrice } = useCurrency();
 
   useEffect(() => {
@@ -105,23 +105,36 @@ export default function ExpertsInteractiveContent({
     pushUrl(`${url.pathname}${url.search}${url.hash}`);
   }, []);
 
-  // Scroll to the browse section, optionally setting a sort first.
+  // Scroll to the filter bar and results, optionally setting a sort first.
   const scrollToBrowse = useCallback(
     (sort?: SortOption) => {
       if (sort) updateFilters({ sort });
-      browseSectionRef.current?.scrollIntoView({ behavior: "smooth" });
+      resultsRef.current?.scrollIntoView({ behavior: "smooth" });
     },
     [updateFilters],
   );
 
-  // Domain grid click → set domain filter + scroll to browse section.
+  // Domain grid click → set domain filter + scroll to the results.
   const handleDomainSelect = useCallback(
     (domainId: string) => {
       updateFilters({ domain: domainId, subdomain: null, tags: [] });
-      browseSectionRef.current?.scrollIntoView({ behavior: "smooth" });
+      resultsRef.current?.scrollIntoView({ behavior: "smooth" });
     },
     [updateFilters],
   );
+
+  // A link that arrives already filtered (a category page's topic or "Filter all" button) lands on the results.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const arrivesFiltered = ["domain", "subdomain", "tags", "search"].some(
+      (key) => params.get(key),
+    );
+    if (!arrivesFiltered) return;
+    const frame = requestAnimationFrame(() =>
+      resultsRef.current?.scrollIntoView({ behavior: "auto" }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const selectedFieldName = useMemo(
     () =>
@@ -156,7 +169,6 @@ export default function ExpertsInteractiveContent({
         {/* The nav's "Top rated" deep-links here with ?sort=rating, so the
             anchor needs the same fixed-navbar offset as #domains. */}
         <div
-          ref={browseSectionRef}
           id="all-experts"
           // Deep-links must land below the fixed header AND the sticky filter
           // bar (~2 rows); same banner-aware formula as the bar itself.
@@ -198,6 +210,14 @@ export default function ExpertsInteractiveContent({
           {/* Sticky settings navbar: search + sort + Filters button, with the
               count and chips beneath. Every facet, expert type included, lives
               in the Filters sheet (no sidebar grid). */}
+          <div
+            ref={resultsRef}
+            aria-hidden="true"
+            style={{
+              scrollMarginTop:
+                "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem))",
+            }}
+          />
           <StickyFilterBar
             metadata={metadata}
             filters={filters}
