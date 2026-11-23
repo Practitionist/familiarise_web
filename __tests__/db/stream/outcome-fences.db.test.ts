@@ -75,6 +75,13 @@ async function stageHalfHourTimeout(
   });
 }
 
+/** The outcome the sweep stored on the occurrence. */
+const storedOutcome = (occurrenceId: string) =>
+  prisma.appointmentOccurrence.findUniqueOrThrow({
+    where: { id: occurrenceId },
+    select: { completionStatus: true, outcome: true },
+  });
+
 beforeEach(() => fakeStream.reset());
 
 it("a host's deliberate end that lands after the sweep loaded the room stamps nothing that run; the next run judges with it", async () => {
@@ -100,7 +107,12 @@ it("a host's deliberate end that lands after the sweep loaded the room stamps no
     }),
   ).toMatchObject({
     kind: "written",
+    moved: true,
     verdict: { outcome: "CUT_SHORT", hostAttributed: true },
+  });
+  expect(await storedOutcome(room.occurrenceId)).toEqual({
+    completionStatus: "VOIDED",
+    outcome: "CUT_SHORT",
   });
 });
 
@@ -294,7 +306,15 @@ it("an eight-hour consultation that overran to just before its booked end plus s
       now: new Date(hostEnd.getTime() + READ_AT),
       outages: [],
     }),
-  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+  ).toMatchObject({
+    kind: "written",
+    moved: true,
+    verdict: { outcome: "HELD" },
+  });
+  expect(await storedOutcome(room.occurrenceId)).toEqual({
+    completionStatus: "COMPLETED",
+    outcome: "HELD",
+  });
 });
 
 /** An eight-hour consultation: the host alone for 11 minutes in A (announced), then both in B from hour 6, none of B's webhooks seen. */
@@ -357,7 +377,15 @@ it("a host's End for everyone records the session Stream holds, so a lagging ove
       now: new Date(hostEnd.getTime() + READ_AT),
       outages: [],
     }),
-  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+  ).toMatchObject({
+    kind: "written",
+    moved: true,
+    verdict: { outcome: "HELD" },
+  });
+  expect(await storedOutcome(room.occurrenceId)).toEqual({
+    completionStatus: "COMPLETED",
+    outcome: "HELD",
+  });
 });
 
 it("a host's end whose session lookup fails is stamped as before, keeping the session already recorded", async () => {
@@ -445,5 +473,13 @@ it("a host end that commits during the Stream read moves the cutoff, so the read
       now: new Date(hostEnd.getTime() + READ_AT),
       outages: [],
     }),
-  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+  ).toMatchObject({
+    kind: "written",
+    moved: true,
+    verdict: { outcome: "HELD" },
+  });
+  expect(await storedOutcome(room.occurrenceId)).toEqual({
+    completionStatus: "COMPLETED",
+    outcome: "HELD",
+  });
 });

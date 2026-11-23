@@ -32,6 +32,8 @@ const stream = {
   sessionsNext: undefined as string | undefined,
   /** When set, the call listing never answers. */
   stall: false,
+  /** Participant pages per `callId/session`, each with the total Stream reported on it. */
+  pages: new Map<string, { rows: Row[]; total: number }[]>(),
 };
 
 jest.mock("../../lib/stream-client", () => ({
@@ -58,8 +60,21 @@ jest.mock("../../lib/stream-client", () => ({
         get: async () => ({
           call: { id: callId, type: "default", current_session_id: "" },
         }),
-        queryCallParticipantSessions: async (req: { session: string }) => {
+        queryCallParticipantSessions: async (req: {
+          session: string;
+          next?: string;
+        }) => {
           if (stream.failParticipants) throw stream.failParticipants;
+          const paged = stream.pages.get(`${callId}/${req.session}`);
+          if (paged) {
+            const index = req.next ? Number(req.next) : 0;
+            return {
+              participants_sessions: paged[index].rows,
+              total_participant_sessions: paged[index].total,
+              session: { ended_at: "2026-11-23T05:35:00Z" },
+              ...(index + 1 < paged.length ? { next: String(index + 1) } : {}),
+            };
+          }
           const rows = stream.rows.get(`${callId}/${req.session}`) ?? [];
           return {
             participants_sessions: rows,
@@ -125,6 +140,22 @@ beforeEach(() => {
   stream.sessionsNext = undefined;
   stream.stall = false;
   stream.failParticipants = null;
+  stream.pages = new Map();
+});
+
+it("a participant total that changes between pages is not final", async () => {
+  stream.pages.set("occurrence-occ-1/s1", [
+    { rows: [stay("priya", "04:30", "04:40")], total: 3 },
+    { rows: [stay("priya", "04:41", "04:50")], total: 2 },
+  ]);
+  stream.sessions.set("default:occurrence-occ-1", [
+    {
+      ...ended("s1"),
+      counts: { live_sessions: 0, sessions: 2, participants: 1 },
+    },
+    ended("s2"),
+  ]);
+  expect(await read()).toEqual({ kind: "not-final" });
 });
 
 it("reads every session of the current call and of each earlier call Stream lists for the occurrence", async () => {

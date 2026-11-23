@@ -184,7 +184,7 @@ async function readSessionParticipants(
   const intervals: SettledStreamInterval[] = [];
   const seen = new Set<string>();
   let rows = 0;
-  let total = 0;
+  let total: number | null = null;
   let next: string | undefined;
   do {
     const cursor = next;
@@ -202,6 +202,10 @@ async function readSessionParticipants(
         : new NotFinal("detail not available yet");
     });
     if (!page.session?.ended_at) throw new NotFinal("session not ended");
+    // The total is the whole session's; a page that reports another one is an inconsistent read.
+    if (total !== null && page.total_participant_sessions !== total) {
+      throw new NotFinal("the total changed between pages");
+    }
     total = page.total_participant_sessions;
     for (const row of page.participants_sessions) {
       rows++;
@@ -227,6 +231,7 @@ async function readSessionParticipants(
   // Stream's docs say expired detail is an empty list with the total kept; live checks saw a 404 (handled above).
   if (
     rows === 0 &&
+    total !== null &&
     total > 0 &&
     Date.now() - session.endedAt.getTime() >= PARTICIPANT_DETAIL_RETENTION_MS
   ) {

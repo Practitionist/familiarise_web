@@ -309,11 +309,22 @@ it("two settlers racing store one snapshot, and a settled room is answered witho
   await announceReports(room.occurrenceId);
   const target = await settleTarget(room);
 
+  const later = new Date(now.getTime() + MIN);
   const [first, second] = await Promise.all([
     settleOccurrenceAttendance(target, { now }),
-    settleOccurrenceAttendance(target, { now }),
+    settleOccurrenceAttendance(target, { now: later }),
   ]);
   expect(first).toEqual(second);
+  expect(await stored(room.meetingId)).toHaveLength(2);
+  const stamp = await settledAt(room.meetingId);
+  expect([now.getTime(), later.getTime()]).toContain(stamp?.getTime());
+
+  // A third settler still holding the unsettled room never re-stamps or adds rows.
+  const stale = await settleOccurrenceAttendance(target, {
+    now: new Date(now.getTime() + 2 * MIN),
+  });
+  expect(stale).toEqual(first);
+  expect(await settledAt(room.meetingId)).toEqual(stamp);
   expect(await stored(room.meetingId)).toHaveLength(2);
 
   const asked = fakeStream.requests;

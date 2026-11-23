@@ -336,7 +336,15 @@ export async function recordMeetingEndedSynchronously(
     lastJoinedAt: meeting.lastJoinedAt,
   };
   if (!(await stampEnd(meeting, endedAt, endedReason, sessionId, guard))) {
-    return alreadyEnded;
+    // A reopen during the lookup may have moved the room: answer the call that represents it now.
+    const room = await prisma.meeting.findUnique({
+      where: { id: meeting.id },
+      select: { streamCallId: true },
+    });
+    return {
+      kind: "already_ended",
+      streamCallId: room?.streamCallId ?? meeting.streamCallId,
+    };
   }
   return { kind: "recorded", endedReason, streamCallId: meeting.streamCallId };
 }
@@ -456,7 +464,11 @@ async function stampEnd(
       guard,
     );
     if (count > 0) return true;
-    // A newer join may have recorded its session during the lookup: stamp the end alone.
+    // Another end landed during the lookup: the session is still kept unless a join changed the guard.
+    await prisma.meeting.updateMany({
+      where: { id: meeting.id, streamCallId: meeting.streamCallId, ...guard },
+      data: { lastStreamSessionId: sessionId },
+    });
     sessionId = null;
   }
   let { count } = await casEnd(

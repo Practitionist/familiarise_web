@@ -67,11 +67,55 @@ it("stamps the end alone when a newer join recorded a session during the lookup"
     await recordMeetingEndedSynchronously("occurrence-o-1", endedAt),
   ).toMatchObject({ kind: "recorded" });
 
-  const endOnly = mockUpdateMany.mock.calls[1][0];
+  const endOnly = mockUpdateMany.mock.calls
+    .map(([arg]) => arg)
+    .find((arg) => arg.data.endedAt && !arg.data.lastStreamSessionId);
   expect(endOnly.data).toEqual({
     endedAt,
     endedReason: "call_ended",
     isRecording: false,
   });
   expect(endOnly.where).not.toHaveProperty("lastStreamSessionId");
+});
+
+it("keeps the looked-up session when another end landed during the lookup but no join did", async () => {
+  // The guarded end misses on the end fields; the session write and the end alone then land.
+  mockUpdateMany
+    .mockResolvedValueOnce({ count: 0 })
+    .mockResolvedValue({ count: 1 });
+
+  await recordMeetingEndedSynchronously("occurrence-o-1", endedAt);
+
+  expect(mockUpdateMany).toHaveBeenCalledWith({
+    where: {
+      id: "m-1",
+      streamCallId: "occurrence-o-1",
+      lastStreamSessionId: "A",
+      lastJoinedAt,
+    },
+    data: { lastStreamSessionId: "B" },
+  });
+});
+
+it("answers the room's current call id when its end was not stamped", async () => {
+  mockFindUnique.mockResolvedValueOnce({
+    id: "m-1",
+    streamCallId: "occurrence-o-1",
+    endedAt: null,
+    endedReason: null,
+    lastStreamSessionId: "A",
+    lastJoinedAt,
+    occurrence: { id: "o-1", startsAt: new Date("2026-11-23T08:00:00Z") },
+  });
+  // A host reopen moved the room to a new call during the lookup.
+  mockFindUnique.mockResolvedValue({
+    streamCallId: "occurrence-o-1-r2",
+    endedAt: null,
+    endedReason: null,
+  });
+  mockUpdateMany.mockResolvedValue({ count: 0 });
+
+  expect(
+    await recordMeetingEndedSynchronously("occurrence-o-1", endedAt),
+  ).toEqual({ kind: "already_ended", streamCallId: "occurrence-o-1-r2" });
 });

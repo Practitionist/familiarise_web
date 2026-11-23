@@ -34,17 +34,17 @@ From code: `auto-complete-appointments` classifies each past `SCHEDULED` session
 
 **Why it matters:** completion drives feedback, earnings release and plan maths.
 
-**Setup (owner-approved shifts):** QA sessions that ended 6 hours 10 minutes ago (move `startsAt`/`endsAt`, keep the half hour). The sweep reads Stream's record only six hours after the latest of the room end, the recorded end (`Meeting.endedAt`) and the last join (`Meeting.lastJoinedAt`), so moving the booked times does not move a call that really ran:
+**Setup (owner-approved shifts for A and B only):** A and B ended 6 hours 10 minutes ago (move `startsAt`/`endsAt`, keep the half hour). The sweep reads Stream's record only six hours after the latest of the room end, the recorded end (`Meeting.endedAt`) and the last join (`Meeting.lastJoinedAt`), and it judges attendance against the booked window, so never shift a session whose call really ran:
 
 - A: free consultation (S-09), nobody joined;
 - B: paid consultation (S-08), nobody joined;
-- C: paid consultation where both parties really joined the call (only if you ran the meeting for real; otherwise skip C). Its wait counts from the call's real end, so run C only once that end is more than six hours old.
+- C: paid consultation where both parties really joined the call during its own booked window (only if you ran the meeting for real; otherwise skip C). Do not move C's times: its Stream stays must fall inside its booked window. Run C once its real call ended more than six hours ago.
 
 Control D: a paid session whose call ran and ended 3 hours ago.
 
 **Steps:** NEEDS-OWNER-RUN `auto-complete-appointments`; run again.
 
-**Expect:** A → `COMPLETED` (free, nothing to hold). B → `UNVERIFIED` with outcome `NOBODY_JOINED`, in the needs-human queue, earning held. C → `COMPLETED`, consultation `COMPLETED`, feedback prompts sent, once its call ended more than six hours ago; before that C stays `SCHEDULED`, which is correct. D untouched (its record is not read before six hours). Run 2: no change. History rows with reason `auto-complete`.
+**Expect:** A → `COMPLETED` (free, nothing to hold). B → `UNVERIFIED` with outcome `NOBODY_JOINED`, in the needs-human queue, earning held. C → `COMPLETED`, consultation `COMPLETED`, feedback prompts sent, once its call ended more than six hours ago and Stream's record is final. Six hours makes C eligible for a read, not certain to settle: if Stream's record is not final yet (a session missing from its stats, or counts that disagree), the sweep leaves C `SCHEDULED` and retries every 30 minutes, which is a deferral, not a failure. Before six hours C stays `SCHEDULED` too, which is correct. D untouched (its record is not read before six hours). Run 2: no change. History rows with reason `auto-complete`.
 
 **Aftermath:** B1's view of B: does it say anything ("we're checking what happened")? H1's view? Staff Money → booking ops shows B under session outcomes with **Set outcome**.
 
@@ -52,11 +52,11 @@ Control D: a paid session whose call ran and ended 3 hours ago.
 
 **Why it matters:** the buyer showed up; the expert didn't.
 
-**Setup:** a paid B2 consultation running now (owner-approved shift so it starts within minutes). B2 joins the room and stays; H1 never joins. Then owner-approved: move the session so it ended 125 minutes ago. If the room can't be joined, BLOCKED.
+**Setup:** a paid B2 consultation running now (owner-approved shift so it starts within minutes). B2 joins the room during its booked window and stays; H1 never joins. Do not move it afterwards: B2's Stream stays must fall inside the booked window. Wait until the call ended more than six hours ago, since Stream's record is read only then. If the room can't be joined, BLOCKED.
 
 **Steps:** NEEDS-OWNER-RUN `auto-complete-appointments` (it must leave this one alone) and `detect-consultant-no-shows`; run both again.
 
-**Expect:** auto-complete doesn't complete it; the no-show job cancels it, refunds 100 % under `consultant-no-show:<paymentId>`, records one `CONSULTANT_NO_SHOW` strike for H1. A session ended 100 minutes ago (inside the 120-minute grace) is not touched. Run 2: no second refund or strike. Multi-session bookings (partial refunds) are excluded from this job: record what happens to a subscription session with the same shape (expected: needs-human, not auto-refunded).
+**Expect:** auto-complete doesn't complete it; the no-show job cancels it, refunds 100 % under `consultant-no-show:<paymentId>`, records one `CONSULTANT_NO_SHOW` strike for H1. A session ended 100 minutes ago (inside the 120-minute grace) is not touched, and neither is one whose call ended less than six hours ago (its record is not read yet). Run 2: no second refund or strike. Multi-session bookings (partial refunds) are excluded from this job: record what happens to a subscription session with the same shape (expected: needs-human, not auto-refunded).
 
 **Aftermath:** B2 is told the expert didn't attend and the refund amount; H1's dashboard shows the strike count and the reason (CO-85 for the public profile threshold).
 
