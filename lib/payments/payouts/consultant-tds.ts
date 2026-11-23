@@ -14,8 +14,14 @@ import {
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { computeResidentPayoutTds } from "./shared-lifecycle";
 
-/** Payouts whose staged TDS counts toward the expert's history. */
-const LIVE_PAYOUT_STATUSES = [PayoutStatus.PROCESSING, PayoutStatus.COMPLETED];
+/** Payouts whose staged TDS counts toward the expert's history: the live ones, and a
+ *  re-armed one that kept its staged TDS and will resend it. */
+const COUNTED_PAYOUT_WHERE = {
+  OR: [
+    { status: { in: [PayoutStatus.PROCESSING, PayoutStatus.COMPLETED] } },
+    { status: PayoutStatus.APPROVED, netAmount: { not: null } },
+  ],
+} satisfies Prisma.ConsultantPayoutWhereInput;
 
 export type ConsultantTdsInput = {
   consultantProfileId: string;
@@ -238,7 +244,7 @@ async function priorFyGrossPaise(
         {
           status: { in: [EarningStatus.PAID, EarningStatus.BATCHED] },
           payout: {
-            status: { in: LIVE_PAYOUT_STATUSES },
+            ...COUNTED_PAYOUT_WHERE,
             tdsFinancialYear: input.financialYear,
           },
         },
@@ -254,7 +260,7 @@ async function priorFyGrossPaise(
 }
 
 /**
- * Reads the expert's other live payouts once: the TDS still carried forward
+ * Reads the expert's other counted payouts once: the TDS still carried forward
  * (any FY), and a loader for the TDS already assigned to this FY at the
  * with-PAN rate (withheld + carried − credited − refund-reversed).
  */
@@ -264,7 +270,7 @@ async function loadTdsHistory(
 ): Promise<{ carryInPaise: number; assignedPaise: () => Promise<number> }> {
   const otherLive = {
     consultantProfileId: input.consultantProfileId,
-    status: { in: LIVE_PAYOUT_STATUSES },
+    AND: [COUNTED_PAYOUT_WHERE],
     ...(input.payoutId ? { id: { not: input.payoutId } } : {}),
   } satisfies Prisma.ConsultantPayoutWhereInput;
   const rows = await db.consultantPayout.groupBy({

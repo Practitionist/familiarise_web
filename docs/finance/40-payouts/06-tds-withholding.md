@@ -55,7 +55,7 @@ If the exemption is not available, the base is this payout's own gross. If it is
 
 Because the crossing payout is taxed on the whole year-to-date gross, it carries a catch-up for the earlier, exempt payouts. The sequence in `planConsultantPayoutTds` is:
 
-1. **Prior gross.** `priorFyGrossPaise` sums the gross of earnings in the expert's other live payouts (PROCESSING or COMPLETED) stamped with this financial year; an older payout with no financial-year stamp counts by its earnings' `paidAt`.
+1. **Prior gross.** `priorFyGrossPaise` sums the gross of earnings in the expert's other live payouts (PROCESSING or COMPLETED), and in a re-armed APPROVED payout that kept its staged TDS (`netAmount` set), stamped with this financial year; the same payouts count toward assigned TDS and carry, so a payout planned while a retry waits sees it; an older payout with no financial-year stamp counts by its earnings' `paidAt`.
 2. **Required TDS** is 10 basis points of the year-to-date base.
 3. **Assigned TDS** is what the expert's other payouts this year have already withheld at the with-PAN rate, plus carry, less credits, with reversals netted. Payouts withheld at the no-PAN rate are left out.
 4. **Due** is required minus assigned.
