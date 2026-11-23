@@ -78,7 +78,7 @@ SELECT r.id, r."paymentId", r."amountPaise", r.status, r.reason, r."dedupeKey", 
 FROM "Refund" r JOIN "Payment" p ON p.id = r."paymentId" WHERE p."appointmentId" = :aid;
 
 SELECT e.id, e.role, e.status, e."grossAmount", e."platformFeePaise", e."consultantSharePaise",
-       e."refundedShareAmount", e."holdUntil", e."appointmentOccurrenceId",
+       e."refundedShareAmount", e."holdUntil", e."cycleOrdinal",
        (SELECT json_agg(json_build_object('reason', h.reason, 'released', h."releasedAt"))
           FROM "EarningsHold" h WHERE h."consultantEarningsId" = e.id) AS holds
 FROM "ConsultantEarnings" e JOIN "Payment" p ON p.id = e."paymentId" WHERE p."appointmentId" = :aid;

@@ -19,6 +19,7 @@ import path from "node:path";
 import {
   findDestructive,
   normalise,
+  parseKnownDriftFile,
   planStatements,
   sidecarOwnedUniqueIndexes,
   droppedIndexName,
@@ -150,6 +151,19 @@ describe("the allowlist match", () => {
       'ALTER TABLE "ConsultantReviewRevision"\n  DROP CONSTRAINT "ConsultantReviewRevision_reviewId_fkey";';
     expect(normalise(entry)).toBe(normalise(planned));
   });
+
+  it("carries the earnings occurrence column drop without allowing it while prod still writes the column", () => {
+    const planned = planStatements(
+      '-- AlterTable\nALTER TABLE "ConsultantEarnings" DROP COLUMN "appointmentOccurrenceId";\n',
+    )[0];
+    const drift = parseKnownDriftFile(
+      path.join(process.cwd(), "prisma/sql/known-drift.json"),
+    );
+    const matches = (e: { statement: string }) =>
+      normalise(e.statement) === normalise(planned);
+    expect(drift.knownDivergences.some(matches)).toBe(true);
+    expect(drift.destructiveStatementsAllowed.some(matches)).toBe(false);
+  });
 });
 
 describe("sidecar-owned unique indexes", () => {
@@ -175,10 +189,9 @@ describe("sidecar-owned unique indexes", () => {
     expect(parsed.has("payment_legs_sum_to_amount")).toBe(true);
   });
 
-  it("#1766 — the earnings unique carries the cycle ordinal and keeps NULLS NOT DISTINCT", () => {
-    // A subscription mints one row per cycle on the same (payment, consultant,
-    // role, NULL occurrence) key, so the widened unique is what lets the
-    // tranches coexist while a second whole-purchase row still collides.
+  it("the earnings unique is (payment, consultant, role, cycle) and keeps NULLS NOT DISTINCT", () => {
+    // A subscription's tranches differ only by cycle; every other row has a
+    // NULL cycle, so a second row for the same payee and role collides.
     const sql = readFileSync(
       path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
       "utf8",
@@ -191,7 +204,6 @@ describe("sidecar-owned unique indexes", () => {
       '"paymentId"',
       '"consultantProfileId"',
       '"role"',
-      '"appointmentOccurrenceId"',
       '"cycleOrdinal"',
     ]);
   });

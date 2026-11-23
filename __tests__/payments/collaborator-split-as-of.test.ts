@@ -48,10 +48,7 @@ jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
   withNewExpertHold: jest.fn(
     async (_db: unknown, _id: unknown, at: unknown) => at,
   ),
-  resolveEarningsAnchor: jest.fn(async () => ({
-    lastOccurrenceEndsAt: null,
-    appointmentOccurrenceId: null,
-  })),
+  lastLiveOccurrenceEnd: jest.fn(async () => null),
 }));
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
   mintConsumerInvoiceBestEffort: jest.fn(),

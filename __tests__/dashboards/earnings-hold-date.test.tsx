@@ -55,7 +55,6 @@ const response = {
       refundedShareAmount: 0,
       role: "OWNER",
       shareBps: 10000,
-      appointmentOccurrenceId: null,
       status: "PENDING",
       // A future hold; a matured one reads "releasing shortly".
       holdUntil: new Date(Date.now() + 7 * 86_400_000).toISOString(),
