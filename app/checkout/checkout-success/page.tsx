@@ -39,6 +39,46 @@ const RETRY_DELAYS_MS = [
 const RETRY_NOW_DELAYS_MS = [2000, 2000, 3000];
 const FAILED_PAYMENT_STATUSES = new Set(["FAILED", "EXPIRED"]);
 
+/** The headline copy for a confirmed booking, by appointment type. */
+const CONFIRMED_COPY: Partial<
+  Record<string, { title: string; description: string; nextSteps: string }>
+> = {
+  CONSULTATION: {
+    title: "Consultation Booking Confirmed!",
+    description:
+      "Your payment has been processed successfully and your consultation is confirmed.",
+    nextSteps:
+      "You'll receive a confirmation email with the session details and join link.",
+  },
+  TRIAL: {
+    title: "Trial Session Confirmed!",
+    description:
+      "Your payment has been processed successfully and your trial session is confirmed.",
+    nextSteps: "You can find the session and its join link on your dashboard.",
+  },
+  SUBSCRIPTION: {
+    title: "Subscription Activated!",
+    description:
+      "Your payment has been processed successfully and your subscription is active.",
+    nextSteps:
+      "You'll receive a confirmation email with your session schedule.",
+  },
+  WEBINAR: {
+    title: "Webinar Registration Complete!",
+    description:
+      "Your payment has been processed successfully. You're now registered for the webinar.",
+    nextSteps:
+      "You'll receive a confirmation email with the webinar join link and details.",
+  },
+  CLASS: {
+    title: "Class Enrollment Complete!",
+    description:
+      "Your payment has been processed successfully. You're now enrolled in the class.",
+    nextSteps:
+      "You'll receive a confirmation email with class details and access information.",
+  },
+};
+
 function CheckoutSuccessContent() {
   const [paymentDetails, setPaymentDetails] = useState<PaymentDetails | null>(
     null,
@@ -227,72 +267,27 @@ function CheckoutSuccessContent() {
   };
 
   const getStatusMessage = (appointmentType: string) => {
-    switch (appointmentType) {
-      case "CONSULTATION":
-        return {
-          title: "Consultation Booking Confirmed!",
-          description:
-            "Your payment has been processed successfully and your consultation is confirmed.",
-          nextSteps:
-            "You'll receive a confirmation email with the session details and join link.",
-          statusIcon: confirmedIcon,
-          statusText: "Confirmed",
-        };
-      case "TRIAL":
-        return {
-          title: "Trial Session Confirmed!",
-          description:
-            "Your payment has been processed successfully and your trial session is confirmed.",
-          nextSteps:
-            "You can find the session and its join link on your dashboard.",
-          statusIcon: confirmedIcon,
-          statusText: "Confirmed",
-        };
-      case "SUBSCRIPTION":
-        return {
-          title: "Subscription Activated!",
-          description:
-            "Your payment has been processed successfully and your subscription is active.",
-          nextSteps:
-            "You'll receive a confirmation email with your session schedule.",
-          statusIcon: confirmedIcon,
-          statusText: "Confirmed",
-        };
-      case "WEBINAR":
-        return {
-          title: "Webinar Registration Complete!",
-          description:
-            "Your payment has been processed successfully. You're now registered for the webinar.",
-          nextSteps:
-            "You'll receive a confirmation email with the webinar join link and details.",
-          statusIcon: confirmedIcon,
-          statusText: "Confirmed",
-        };
-      case "CLASS":
-        return {
-          title: "Class Enrollment Complete!",
-          description:
-            "Your payment has been processed successfully. You're now enrolled in the class.",
-          nextSteps:
-            "You'll receive a confirmation email with class details and access information.",
-          statusIcon: confirmedIcon,
-          statusText: "Confirmed",
-        };
-      default:
-        // Reached when the payment is settled but no appointment is linked
-        // yet. Saying "Confirmed" here would be a lie the buyer acts on — they
-        // would close the tab and expect a session that does not exist. Say
-        // what is actually true: we have the money, the booking is landing.
-        return {
-          title: "Payment received",
-          description:
-            "We have your payment. Your booking is being confirmed — this usually takes a few seconds.",
-          nextSteps:
-            "You'll get a confirmation email as soon as it's done. If you don't see it within a few minutes, contact support with your payment reference and we'll finish it manually — your payment is safe either way.",
-          statusIcon: pendingIcon,
-          statusText: "Confirming your booking",
-        };
+    const confirmed = CONFIRMED_COPY[appointmentType];
+    if (confirmed) {
+      return {
+        ...confirmed,
+        statusIcon: confirmedIcon,
+        statusText: "Confirmed",
+      };
     }
+    // Reached when the payment is settled but no appointment is linked
+    // yet. Saying "Confirmed" here would be a lie the buyer acts on — they
+    // would close the tab and expect a session that does not exist. Say
+    // what is actually true: we have the money, the booking is landing.
+    return {
+      title: "Payment received",
+      description:
+        "We have your payment. Your booking is being confirmed — this usually takes a few seconds.",
+      nextSteps:
+        "You'll get a confirmation email as soon as it's done. If you don't see it within a few minutes, contact support with your payment reference and we'll finish it manually — your payment is safe either way.",
+      statusIcon: pendingIcon,
+      statusText: "Confirming your booking",
+    };
   };
 
   if (phase === "loading") {
