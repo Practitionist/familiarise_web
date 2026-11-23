@@ -61,6 +61,14 @@ const settledAt = async (meetingId: string) =>
     })
   ).attendanceSettledAt;
 
+const corroborated = async (meetingId: string) =>
+  (
+    await prisma.meeting.findUniqueOrThrow({
+      where: { id: meetingId },
+      select: { attendanceCorroboratedSessionIds: true },
+    })
+  ).attendanceCorroboratedSessionIds;
+
 /** Records Stream's `call.stats_report_ready` for every ended session the fake Stream holds for this occurrence. */
 async function announceReports(occurrenceId: string) {
   const ids = [...fakeStream.calls.values()]
@@ -126,6 +134,7 @@ it("the record's worked example: Hannah 2 min late, Priya's 3-minute drop merged
     verdict: { outcome: "HELD", deliveredMinutes: 58, lostMinutes: 2 },
   });
   expect(await settledAt(room.meetingId)).toEqual(now);
+  expect(await corroborated(room.meetingId)).toEqual([]);
   expect(await stored(room.meetingId)).toHaveLength(3);
   const seat = await prisma.appointmentParticipant.findFirstOrThrow({
     where: { appointmentId: room.appointmentId, userId: room.learnerId },
@@ -808,6 +817,10 @@ it("a session with no report settles only when our webhooks corroborate the stat
       outages: [],
     }),
   ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+  // The settle stamp keeps which sessions were read without an announcement.
+  expect(await corroborated(room.meetingId)).toEqual(
+    expect.arrayContaining(["B"]),
+  );
 });
 
 it("a pre-start end's reserved replacement call, never created at Stream, does not hide the original call: nobody returned, so the session is NOBODY_JOINED", async () => {

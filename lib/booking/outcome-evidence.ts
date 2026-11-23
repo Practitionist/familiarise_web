@@ -4,19 +4,13 @@
  */
 import type { OccurrenceOutcome } from "@prisma/client";
 
+import { isNegativeMoneyOutcome } from "@/lib/booking/misses";
 import {
   outageOverlapsBooking,
   VOID_LOSS_MINUTES,
   type PresenceInterval,
   type SessionOutcomeInput,
 } from "@/lib/booking/session-outcome";
-
-/** The verdicts that forfeit, refund, strike or void on a person's account; the rest need no evidence gate. */
-const NEGATIVE_MONEY_OUTCOMES: readonly OccurrenceOutcome[] = [
-  "HOST_ABSENT",
-  "CUT_SHORT",
-  "LEARNER_ABSENT",
-];
 
 /** The four conditions, in the order they are reported when they fail. */
 export type EvidenceCheck =
@@ -69,7 +63,7 @@ export function judgeOutcomeEvidence(
   input: OutcomeEvidenceInput,
   outcome: OccurrenceOutcome,
 ): OutcomeEvidence | null {
-  if (!NEGATIVE_MONEY_OUTCOMES.includes(outcome)) return null;
+  if (!isNegativeMoneyOutcome(outcome)) return null;
   const failed: EvidenceCheck[] = [];
   if (!input.everySessionAnnounced) failed.push("announced");
   if (outcome !== "CUT_SHORT") {

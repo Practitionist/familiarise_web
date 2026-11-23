@@ -131,7 +131,11 @@ export async function settleOccurrenceAttendance(
         endedReason: meeting.endedReason,
         lastJoinedAt: meeting.lastJoinedAt,
       },
-      data: { attendanceSettledAt: now },
+      data: {
+        attendanceSettledAt: now,
+        attendanceCorroboratedSessionIds:
+          read.kind === "read" ? read.corroboratedSessionIds : [],
+      },
     });
     if (count === 0) return false;
     // Rows stored before the room settled are not Stream's record; the snapshot replaces them.

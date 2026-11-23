@@ -1,0 +1,264 @@
+/**
+ * @jest-environment node
+ */
+
+// Invariant: a negative verdict is confirmed once, by CAS from null: by the
+// window-close pass on strong evidence after 48 hours, by the ops confirm door
+// (which leaves outcomeAt alone), or as ops write it. A weak one stays
+// unconfirmed on the needs-human list.
+
+jest.mock("../../lib/prisma", () => {
+  const { memTable } = jest.requireActual("../fixtures/mem-db");
+  return {
+    __esModule: true,
+    default: {
+      appointmentOccurrence: memTable([], "occ"),
+      maintenanceWindow: memTable([], "mw"),
+      platformIncident: memTable([], "pi"),
+      refund: memTable([], "rf"),
+      bookingStatusHistory: memTable([], "h"),
+    },
+  };
+});
+jest.mock("../../utils/appointmentlock", () => ({
+  withAppointmentLock: jest.fn(
+    async (_id: string, fn: () => Promise<unknown>) => fn(),
+  ),
+}));
+jest.mock("../../lib/booking/class-sessions", () => ({
+  onClassSessionVoided: jest.fn(),
+}));
+
+import prisma, { type Tx } from "@/lib/prisma";
+import { matchesWhere, type memTable, type Row } from "../fixtures/mem-db";
+import {
+  needsHumanWhere,
+  OUTCOME_REPORT_WINDOW_HOURS,
+  UNCONFIRMED_LEARNER_ABSENT,
+  unconfirmedClosedVerdictWhere,
+} from "@/lib/booking/misses";
+import { confirmClosedOutcomes } from "@/lib/booking/session-outcome-sweep";
+import {
+  confirmSessionOutcome,
+  setSessionOutcome,
+} from "@/lib/backoffice/session-outcomes";
+import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+
+type Table = ReturnType<typeof memTable>;
+const occurrences = prisma.appointmentOccurrence as unknown as Table;
+
+const NOW = new Date("2026-11-25T12:00:00Z");
+const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+const START = hoursAgo(60);
+const at = (minutes: number) => new Date(START.getTime() + minutes * 60_000);
+
+/** A row in the shape the pass's select returns: host "hannah" waited the hour, learner "priya" never came. */
+function verdict(id: string, overrides: Row = {}, meeting: Row = {}): Row {
+  return {
+    id,
+    appointmentId: `apt-${id}`,
+    deletedAt: null,
+    isTentative: false,
+    startsAt: at(0),
+    endsAt: at(60),
+    completionStatus: "COMPLETED",
+    outcome: "LEARNER_ABSENT",
+    outcomeAt: hoursAgo(50),
+    outcomeConfirmedAt: null,
+    meeting: {
+      endedAt: at(62),
+      endedReason: "session_timeout",
+      attendanceSettledAt: hoursAgo(51),
+      attendanceCorroboratedSessionIds: [],
+      presences: [{ userId: "hannah", joinedAt: at(0), leftAt: at(60) }],
+      ...meeting,
+    },
+    appointment: {
+      subscriptionId: null,
+      consultation: {
+        consultationPlan: { consultantProfile: { userId: "hannah" } },
+      },
+      subscription: null,
+      trial: null,
+      webinar: null,
+      class: null,
+    },
+    ...overrides,
+  };
+}
+
+const row = (id: string) => occurrences.rows.find((r) => r.id === id)!;
+
+beforeEach(() => {
+  occurrences.rows.splice(0, occurrences.rows.length);
+  jest.clearAllMocks();
+});
+
+describe("the predicates", () => {
+  it("keeps the report window inside the consultation earnings hold", () => {
+    expect(OUTCOME_REPORT_WINDOW_HOURS).toBe(48);
+    expect(OUTCOME_REPORT_WINDOW_HOURS).toBeLessThanOrEqual(
+      PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION,
+    );
+  });
+
+  it("an unconfirmed learner absence holds a consultation's earning, not a subscription's", () => {
+    const open = verdict("a");
+    expect(matchesWhere(open, UNCONFIRMED_LEARNER_ABSENT)).toBe(true);
+    expect(
+      matchesWhere(
+        { ...open, outcomeConfirmedAt: NOW },
+        UNCONFIRMED_LEARNER_ABSENT,
+      ),
+    ).toBe(false);
+    expect(
+      matchesWhere(
+        { ...open, appointment: { subscriptionId: "sub-1" } },
+        UNCONFIRMED_LEARNER_ABSENT,
+      ),
+    ).toBe(false);
+  });
+
+  it("lists an applied negative verdict for ops once its window closes unconfirmed", () => {
+    const closed = verdict("a");
+    expect(matchesWhere(closed, needsHumanWhere(NOW))).toBe(true);
+    const inWindow = verdict("b", { outcomeAt: hoursAgo(47) });
+    expect(matchesWhere(inWindow, needsHumanWhere(NOW))).toBe(false);
+    const confirmed = verdict("c", { outcomeConfirmedAt: hoursAgo(1) });
+    expect(matchesWhere(confirmed, needsHumanWhere(NOW))).toBe(false);
+    const held = verdict("d", { outcome: "HELD" });
+    expect(matchesWhere(held, unconfirmedClosedVerdictWhere(NOW))).toBe(false);
+  });
+});
+
+describe("the window-close pass", () => {
+  it("confirms a strong closed verdict, leaves a weak or open one, and reports the weak count", async () => {
+    occurrences.rows.push(
+      verdict("strong"),
+      verdict("weak", {}, { attendanceCorroboratedSessionIds: ["s-2"] }),
+      verdict("unsettled", {}, { attendanceSettledAt: null }),
+      verdict("open", { outcomeAt: hoursAgo(47) }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toEqual({ confirmed: 1, weak: 2, errors: [] });
+    expect(row("strong").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("strong").outcomeAt).toEqual(hoursAgo(50));
+    for (const id of ["weak", "unsettled", "open"]) {
+      expect(row(id).outcomeConfirmedAt).toBeNull();
+    }
+  });
+
+  it("loses the CAS to a relabel that lands between its read and its write", async () => {
+    occurrences.rows.push(verdict("strong"));
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementationOnce(async (args) => {
+      const rows = await read(args);
+      Object.assign(row("strong"), { outcome: "HELD", outcomeAt: NOW });
+      return rows;
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(0);
+    expect(row("strong").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("starts nothing past its deadline", async () => {
+    occurrences.rows.push(verdict("strong"));
+    const run = await confirmClosedOutcomes(NOW, () => true);
+    expect(run.confirmed).toBe(0);
+    expect(occurrences.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("the ops confirm door", () => {
+  it("stamps only outcomeConfirmedAt, by CAS on the outcome the operator saw", async () => {
+    occurrences.rows.push(verdict("a", { outcomeAt: hoursAgo(10) }));
+    await confirmSessionOutcome({
+      occurrenceId: "a",
+      outcome: "LEARNER_ABSENT",
+      now: NOW,
+    });
+    expect(row("a")).toMatchObject({
+      outcome: "LEARNER_ABSENT",
+      outcomeAt: hoursAgo(10),
+      outcomeConfirmedAt: NOW,
+    });
+    // A second confirm, or one naming an outcome the row no longer has, is refused.
+    await expect(
+      confirmSessionOutcome({ occurrenceId: "a", outcome: "LEARNER_ABSENT" }),
+    ).rejects.toMatchObject({ code: "SESSION_MOVED" });
+  });
+
+  it("refuses a verdict that changed since the operator read it", async () => {
+    occurrences.rows.push(verdict("a", { outcome: "HELD" }));
+    await expect(
+      confirmSessionOutcome({ occurrenceId: "a", outcome: "LEARNER_ABSENT" }),
+    ).rejects.toMatchObject({ code: "SESSION_MOVED", httpStatus: 409 });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("refuses to confirm an outcome that is not negative, writing nothing", async () => {
+    occurrences.rows.push(verdict("a", { outcome: "HELD" }));
+    await expect(
+      confirmSessionOutcome({ occurrenceId: "a", outcome: "HELD" }),
+    ).rejects.toMatchObject({ code: "OUTCOME_NOT_CONFIRMABLE" });
+    expect(occurrences.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("set-outcome", () => {
+  const tx = prisma as unknown as Tx;
+  const overturnRow = (overrides: Row) =>
+    verdict("a", {
+      ordinal: 1,
+      seatsSettledAt: null,
+      appointment: { classId: null, subscription: null },
+      ...overrides,
+    });
+
+  it("confirms a negative outcome ops write, on a relabel and on a status move", async () => {
+    occurrences.rows.push(overturnRow({ outcome: "HELD" }));
+    await setSessionOutcome(tx, {
+      occurrenceId: "a",
+      outcome: "LEARNER_ABSENT",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    expect(row("a")).toMatchObject({
+      completionStatus: "COMPLETED",
+      outcomeConfirmedAt: NOW,
+    });
+
+    occurrences.rows.splice(0, 1, overturnRow({ outcome: "HELD" }));
+    await setSessionOutcome(tx, {
+      occurrenceId: "a",
+      outcome: "HOST_ABSENT",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    expect(row("a")).toMatchObject({
+      completionStatus: "VOIDED",
+      outcomeConfirmedAt: NOW,
+    });
+  });
+
+  it("clears the stamp when ops overturn a confirmed negative verdict to a positive one", async () => {
+    occurrences.rows.push(
+      overturnRow({
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+        outcomeConfirmedAt: hoursAgo(5),
+      }),
+    );
+    await setSessionOutcome(tx, {
+      occurrenceId: "a",
+      outcome: "HELD",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    expect(row("a")).toMatchObject({
+      completionStatus: "COMPLETED",
+      outcome: "HELD",
+      outcomeConfirmedAt: null,
+    });
+  });
+});

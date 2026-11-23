@@ -46,9 +46,13 @@ import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant, transitionParticipant } from "./participants";
 import {
   agedNeedsHumanWhere,
-  NEEDS_HUMAN,
+  isNegativeMoneyOutcome,
+  needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
+  unconfirmedClosedVerdictWhere,
+  type NegativeMoneyOutcome,
 } from "./misses";
+import { judgeOutcomeEvidence } from "./outcome-evidence";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -285,6 +289,8 @@ async function writeSlotOutcomeTransaction(
         data: {
           outcome: verdict.outcome,
           outcomeAt: now,
+          // A negative verdict is proposed; the window-close pass or ops confirm it.
+          outcomeConfirmedAt: null,
           deliveredMinutes: verdict.deliveredMinutes,
           lostMinutes: verdict.lostMinutes,
           ...(to === "VOIDED" && { voidedAt: now }),
@@ -669,7 +675,7 @@ export function staleNeedsHumanWhere(
   const cutoff = new Date(now.getTime() - NEEDS_HUMAN_ALERT_HOURS * 3_600_000);
   return {
     AND: [
-      NEEDS_HUMAN,
+      needsHumanWhere(now),
       // Queued since the verdict, or since the call ended when none was written.
       {
         OR: [
@@ -752,4 +758,118 @@ export async function alertStaleNeedsHuman(
     });
   }
   return stale;
+}
+
+/** Closed unconfirmed verdicts judged per page by the window-close pass, and its pages per run. */
+const OUTCOME_CONFIRM_PAGE = 100;
+const OUTCOME_CONFIRM_MAX_PAGES = 3;
+
+const CONFIRM_SELECT = {
+  id: true,
+  startsAt: true,
+  endsAt: true,
+  outcome: true,
+  meeting: {
+    select: {
+      endedAt: true,
+      endedReason: true,
+      attendanceSettledAt: true,
+      attendanceCorroboratedSessionIds: true,
+      presences: { select: { userId: true, joinedAt: true, leftAt: true } },
+    },
+  },
+  appointment: { select: SESSION_HOSTS_SELECT },
+} satisfies Prisma.AppointmentOccurrenceSelect;
+
+type ConfirmRow = Prisma.AppointmentOccurrenceGetPayload<{
+  select: typeof CONFIRM_SELECT;
+}>;
+
+/** Strong evidence on the stored snapshot; a room never settled has no announcement record, so it is weak. */
+function isStrongVerdict(
+  row: ConfirmRow,
+  outcome: NegativeMoneyOutcome,
+  outages: OutageWindow[],
+): boolean {
+  const { meeting } = row;
+  const evidence = judgeOutcomeEvidence(
+    {
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      hostUserIds: sessionHostUserIds(row.appointment),
+      intervals: meeting?.presences ?? [],
+      meeting: meeting
+        ? { endedAt: meeting.endedAt, endedReason: meeting.endedReason }
+        : null,
+      maintenanceWindows: outages,
+      everySessionAnnounced:
+        !!meeting?.attendanceSettledAt &&
+        meeting.attendanceCorroboratedSessionIds.length === 0,
+    },
+    outcome,
+  );
+  return evidence?.strong === true;
+}
+
+export interface OutcomeConfirmRun {
+  confirmed: number;
+  /** Judged weak this run: left unconfirmed on the needs-human list for ops. */
+  weak: number;
+  errors: string[];
+}
+
+/**
+ * Confirms each negative verdict whose report window closed on strong evidence,
+ * newest first, by CAS from an unconfirmed stamp; a weak one stays for ops.
+ */
+export async function confirmClosedOutcomes(
+  now: Date,
+  pastDeadline: () => boolean,
+): Promise<OutcomeConfirmRun> {
+  const run: OutcomeConfirmRun = { confirmed: 0, weak: 0, errors: [] };
+  const where = unconfirmedClosedVerdictWhere(now);
+  const seen: string[] = [];
+  for (let page = 0; page < OUTCOME_CONFIRM_MAX_PAGES; page++) {
+    if (pastDeadline()) break;
+    try {
+      const rows = await prisma.appointmentOccurrence.findMany({
+        relationLoadStrategy: "join",
+        where:
+          seen.length > 0 ? { AND: [where, { id: { notIn: seen } }] } : where,
+        select: CONFIRM_SELECT,
+        orderBy: [{ outcomeAt: "desc" }, { id: "asc" }],
+        take: OUTCOME_CONFIRM_PAGE,
+      });
+      if (rows.length === 0) break;
+      seen.push(...rows.map((r) => r.id));
+      const outages = await readOutageWindows(
+        prisma,
+        new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
+      );
+      const strong = new Map<NegativeMoneyOutcome, string[]>();
+      for (const row of rows) {
+        if (!isNegativeMoneyOutcome(row.outcome)) continue;
+        if (!isStrongVerdict(row, row.outcome, outages)) {
+          run.weak++;
+          continue;
+        }
+        strong.set(row.outcome, [...(strong.get(row.outcome) ?? []), row.id]);
+      }
+      for (const [outcome, ids] of strong) {
+        // A relabel or confirm since the read changes the outcome or the stamp, so the CAS skips it.
+        const { count } = await prisma.appointmentOccurrence.updateMany({
+          where: { AND: [where, { id: { in: ids }, outcome }] },
+          data: { outcomeConfirmedAt: now },
+        });
+        run.confirmed += count;
+      }
+      if (rows.length < OUTCOME_CONFIRM_PAGE) break;
+    } catch (error) {
+      run.errors.push(
+        `Failed to confirm closed session outcomes: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      break;
+    }
+  }
+  return run;
 }

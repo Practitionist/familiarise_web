@@ -63,6 +63,7 @@ import {
 } from "@/lib/booking/entitlement";
 import {
   alertStaleNeedsHuman,
+  confirmClosedOutcomes,
   escalateAgedNeedsHuman,
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
@@ -76,7 +77,11 @@ import {
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
-import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
+import {
+  AWAITING_HUMAN,
+  UNSETTLED_MISS,
+  unconfirmedClosedVerdictWhere,
+} from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
@@ -228,7 +233,7 @@ function undecidedSlotWhere(bufferTime: Date) {
   } satisfies Prisma.AppointmentOccurrenceWhereInput;
 }
 
-/** Every pass and the needs-human alert; parents are probed as they stand, before any slot is decided. */
+/** Every pass, the window-close pass and the needs-human alert; parents are probed as they stand, before any slot is decided. */
 export async function hasAutoCompleteWork(
   db: PrismaLike,
   now: Date,
@@ -241,7 +246,11 @@ export async function hasAutoCompleteWork(
   if (outOfTime()) return true;
   const slot = await db.appointmentOccurrence.findFirst({
     where: {
-      OR: [undecidedSlotWhere(bufferTime), staleNeedsHumanWhere(now)],
+      OR: [
+        undecidedSlotWhere(bufferTime),
+        staleNeedsHumanWhere(now),
+        unconfirmedClosedVerdictWhere(now),
+      ],
     },
     select: { id: true },
   });
@@ -1391,6 +1400,12 @@ async function autoCompleteAppointmentsUnlocked(
       parents,
       allErrors,
       classEnd,
+    );
+    // Before the alerts, so a verdict confirmed now is not counted as waiting.
+    const confirms = await confirmClosedOutcomes(new Date(), pastDeadline);
+    allErrors.push(...confirms.errors);
+    console.log(
+      `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
     );
     try {
       // Owner decision — a needs-human item older than 72 h is warned about, throttled.

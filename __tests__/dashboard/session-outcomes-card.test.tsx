@@ -20,6 +20,7 @@ import { z } from "zod";
 import { SessionOutcomesCard } from "@/components/dashboard/backoffice/money/SessionOutcomesCard";
 import { rereadToast } from "@/components/dashboard/backoffice/money/RereadAttendanceDialog";
 import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
+import { NEGATIVE_MONEY_OUTCOMES } from "@/lib/booking/misses";
 import {
   needsHumanQuerySchema,
   type NeedsHumanItem,
@@ -37,6 +38,7 @@ const item: NeedsHumanItem = {
   endedReason: null,
   aged: true,
   canRereadAttendance: true,
+  canConfirm: false,
   booking: {
     type: "CONSULTATION",
     title: "Career chat",
@@ -47,10 +49,11 @@ const item: NeedsHumanItem = {
   },
 };
 
-const fetchMock = jest.fn(async (_url: string) => ({
+const onePage = async (_url: string) => ({
   ok: true,
   json: async () => ({ items: [item], total: 45, page: 1, pageSize: 20 }),
-}));
+});
+const fetchMock = jest.fn(onePage);
 
 const sentQueries = () =>
   fetchMock.mock.calls.map(([url]) =>
@@ -60,7 +63,8 @@ const sentQueries = () =>
   );
 
 beforeEach(() => {
-  fetchMock.mockClear();
+  fetchMock.mockReset();
+  fetchMock.mockImplementation(onePage);
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -176,4 +180,66 @@ it("the re-read door posts a reason the route's schema accepts, and words what S
   expect(rereadToast({ result: "out-of-time", verdict: null })).toBe(
     "Stream took too long to answer, so nothing was stored; read it again.",
   );
+});
+
+it("the confirm door posts the outcome the row shows and a reason the route's schema accepts", async () => {
+  const closed: NeedsHumanItem = {
+    ...item,
+    completionStatus: "COMPLETED",
+    outcome: "LEARNER_ABSENT",
+    canConfirm: true,
+  };
+  fetchMock.mockImplementation(async () => ({
+    ok: true,
+    json: async () => ({ items: [closed], total: 1, page: 1, pageSize: 20 }),
+  }));
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <SessionOutcomesCard onOpenBooking={jest.fn()} />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(
+    (
+      await screen.findAllByRole("button", {
+        name: "Confirm outcome for Career chat, 1 Nov 2026, 3:30 pm IST",
+      })
+    )[0],
+  );
+  fireEvent.change(screen.getByRole("textbox"), {
+    target: { value: "Learner told support they forgot" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm outcome" }));
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/confirm"))).toBe(
+      true,
+    ),
+  );
+  const [url, init] = fetchMock.mock.calls.find(([u]) =>
+    u.endsWith("/confirm"),
+  ) as unknown as [string, RequestInit];
+  expect(url).toBe("/api/admin/sessions/occ-1/confirm");
+  expect(init.method).toBe("POST");
+  // The route's body: the confirmable outcome plus the required reason.
+  expect(
+    z
+      .object({ outcome: z.enum(NEGATIVE_MONEY_OUTCOMES) })
+      .extend({ reason: opsReasonSchema })
+      .strict()
+      .parse(JSON.parse(String(init.body))),
+  ).toEqual({
+    outcome: "LEARNER_ABSENT",
+    reason: "Learner told support they forgot",
+  });
+});
+
+it("offers no Confirm on a row the reader did not mark confirmable", async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <SessionOutcomesCard onOpenBooking={jest.fn()} />
+    </QueryClientProvider>,
+  );
+  expect((await screen.findAllByText("Career chat")).length).toBeGreaterThan(0);
+  expect(
+    screen.queryByRole("button", { name: /^Confirm outcome for/ }),
+  ).not.toBeInTheDocument();
 });

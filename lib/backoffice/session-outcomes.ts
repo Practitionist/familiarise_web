@@ -1,6 +1,7 @@
 /**
  * The ops side of session outcomes: overturn one session's verdict
- * (`session.set-outcome`), read Stream's record of a session again
+ * (`session.set-outcome`), confirm a negative one (`session.confirm-outcome`),
+ * read Stream's record of a session again
  * (`session.reread-attendance`), and page through the sessions only a human
  * can decide. A void's make-up or refund is money, so an overturn that would
  * un-void a session is refused once either has happened.
@@ -33,7 +34,11 @@ import {
   type AttendanceSettlement,
 } from "@/lib/meetings/settle-attendance";
 import { INCIDENT_REFUND_KEY_PREFIX } from "@/lib/booking/incident-keys";
-import { isAgedNeedsHuman, NEEDS_HUMAN } from "@/lib/booking/misses";
+import {
+  isAgedNeedsHuman,
+  isNegativeMoneyOutcome,
+  needsHumanWhere,
+} from "@/lib/booking/misses";
 import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
   transitionOccurrenceCompletion,
@@ -152,6 +157,10 @@ async function assertUnvoidable(tx: Tx, occ: OverturnRow) {
   }
 }
 
+/** A negative verdict ops write is confirmed as written; any other carries no stamp. */
+const confirmedByOps = (outcome: OccurrenceOutcome, now: Date) =>
+  isNegativeMoneyOutcome(outcome) ? now : null;
+
 /** A relabel inside one status is not a status write; CAS on the status read. */
 async function relabel(
   tx: Tx,
@@ -161,7 +170,11 @@ async function relabel(
 ) {
   const { count } = await tx.appointmentOccurrence.updateMany({
     where: { id: occ.id, completionStatus: occ.completionStatus },
-    data: { outcome: args.outcome, outcomeAt: now },
+    data: {
+      outcome: args.outcome,
+      outcomeAt: now,
+      outcomeConfirmedAt: confirmedByOps(args.outcome, now),
+    },
   });
   if (count === 0) {
     throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
@@ -207,6 +220,7 @@ async function moveStatus(
     data: {
       outcome: args.outcome,
       outcomeAt: now,
+      outcomeConfirmedAt: confirmedByOps(args.outcome, now),
       voidedAt: to === "VOIDED" ? now : null,
     },
     reason: `ops:session.set-outcome:${args.outcome}`,
@@ -286,6 +300,50 @@ export async function overturnSessionOutcome(args: {
   return withAppointmentLock(occ.appointmentId, () =>
     prisma.$transaction((tx) => setSessionOutcome(tx, args)),
   );
+}
+
+/**
+ * Confirms a negative verdict as it stands, under the appointment lock the
+ * overturn takes. Sets only the stamp, by CAS from null, so `outcomeAt` keeps its time.
+ */
+export async function confirmSessionOutcome(args: {
+  occurrenceId: string;
+  outcome: OccurrenceOutcome;
+  now?: Date;
+}) {
+  const now = args.now ?? new Date();
+  const { outcome } = args;
+  if (!isNegativeMoneyOutcome(outcome)) {
+    throw new OpsRefusal(
+      "OUTCOME_NOT_CONFIRMABLE",
+      "Only a host-absent, cut-short or learner-absent verdict needs a confirmation.",
+    );
+  }
+  const occ = await prisma.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: { appointmentId: true },
+  });
+  if (!occ) {
+    throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
+  }
+  return withAppointmentLock(occ.appointmentId, async () => {
+    const { count } = await prisma.appointmentOccurrence.updateMany({
+      where: {
+        id: args.occurrenceId,
+        outcome,
+        outcomeConfirmedAt: null,
+        deletedAt: null,
+      },
+      data: { outcomeConfirmedAt: now },
+    });
+    if (count === 0) {
+      throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+    }
+    return {
+      before: { outcome, outcomeConfirmedAt: null },
+      after: { outcome, outcomeConfirmedAt: now.toISOString() },
+    };
+  });
 }
 
 /** Ops may ask Stream again until this many days after the session; Stream drops the detail after 90. */
@@ -374,6 +432,7 @@ const NEEDS_HUMAN_ROW_SELECT = {
   startsAt: true,
   endsAt: true,
   outcomeAt: true,
+  outcomeConfirmedAt: true,
   completionStatus: true,
   outcome: true,
   deliveredMinutes: true,
@@ -405,8 +464,8 @@ const personOf = (u: HeadlineUser | null) =>
 
 /**
  * Sessions only a human can decide: an INCONCLUSIVE verdict, a consultation
- * host no-show the detector declined, a call the maintenance drain cut, and a
- * paid trial that was voided (D4). None of them moves money on its own. One
+ * host no-show the detector declined, a call the maintenance drain cut, a
+ * paid trial that was voided (D4), and a negative verdict whose window closed unconfirmed. None of them moves money on its own. One
  * page in three statements: the list, its count and one batched user read.
  */
 export async function readSessionsNeedingHuman({
@@ -418,16 +477,17 @@ export async function readSessionsNeedingHuman({
   sort?: NeedsHumanSort;
   now?: Date;
 } = {}): Promise<NeedsHumanPage> {
+  const where = needsHumanWhere(now);
   const [rows, total] = await Promise.all([
     prisma.appointmentOccurrence.findMany({
       relationLoadStrategy: "join",
-      where: NEEDS_HUMAN,
+      where,
       orderBy: needsHumanOrderBy(sort),
       skip: (page - 1) * NEEDS_HUMAN_PAGE_SIZE,
       take: NEEDS_HUMAN_PAGE_SIZE,
       select: NEEDS_HUMAN_ROW_SELECT,
     }),
-    prisma.appointmentOccurrence.count({ where: NEEDS_HUMAN }),
+    prisma.appointmentOccurrence.count({ where }),
   ]);
   const userIds = headlineUserIds(rows.map((r) => r.appointment));
   const users =
@@ -455,6 +515,11 @@ export async function readSessionsNeedingHuman({
       aged: isAgedNeedsHuman(row, now),
       // Stays offered once settled: a settled re-read only recomputes the verdict from the stored rows.
       canRereadAttendance: !!row.meeting && now <= rereadDeadline(row.endsAt),
+      // An applied negative verdict nobody confirmed; a parked UNVERIFIED one is decided through set-outcome.
+      canConfirm:
+        isNegativeMoneyOutcome(row.outcome) &&
+        row.outcomeConfirmedAt === null &&
+        row.completionStatus !== "UNVERIFIED",
       booking: {
         type: row.appointment.appointmentType,
         title: headline.title,
