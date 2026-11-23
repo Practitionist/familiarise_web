@@ -20,11 +20,7 @@ import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
-import {
-  assertPayoutBalance,
-  reportPayoutBalance,
-  type BalancePreflight,
-} from "./balance-preflight";
+import { assertPayoutBalance, reportPayoutBalance } from "./balance-preflight";
 import { PAYOUT_CONSTANTS } from "./constants";
 import { isMakerCheckerDisbursementBlocked } from "./maker-checker";
 import {
@@ -767,10 +763,8 @@ export interface OrgPayoutProcessOutcome {
   status: PayoutStatus;
   submittedToGateway: boolean;
   claimed: boolean;
-  /** What stopped or warned before the send; processPendingOrgPayouts reports these once per run. */
-  preClaim?:
-    | { kind: "ACCOUNT_REFUSED"; reason: string }
-    | { kind: "BALANCE"; preflight: BalancePreflight };
+  /** Set when an account check failed the payout; processPendingOrgPayouts reports these once per run. */
+  accountRefusal?: string;
 }
 
 type OrgPayoutDestination = {
@@ -787,25 +781,27 @@ type OrgPayoutClaimResult = {
   refused?: { reason: string; failure: UnpaidOrgPayoutFailure };
 };
 
-/**
- * Order: live-payouts flag; the balance, before any claim; then one Serializable
- * transaction that hands a payout the gateway already holds to reconciliation,
- * runs the account checks (a refusal fails it APPROVED→FAILED), the dispute and
- * refund gates, the claim and the shortfall; then a fresh account read before the send.
- */
+/** One payout, with its own balance read; a run reads the balance once and calls processOrgPayoutClaim. */
 export async function processOrgPayout(
   payoutId: string,
 ): Promise<OrgPayoutProcessOutcome> {
-  const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
-  let balanceWarning: BalancePreflight | null = null;
-  if (liveEnabled) {
-    const pre = await readOrgPayoutBalanceBeforeClaim(payoutId);
-    if (pre.kind === "stop") return pre.outcome;
-    balanceWarning = pre.balanceWarning;
+  if (process.env.ENABLE_LIVE_PAYOUTS === "true") {
+    const held = await holdOrgPayoutOnShortBalance(payoutId);
+    if (held) return held;
   }
-  const warning = balanceWarning
-    ? { preClaim: { kind: "BALANCE" as const, preflight: balanceWarning } }
-    : {};
+  return processOrgPayoutClaim(payoutId);
+}
+
+/**
+ * Order: live-payouts flag; one Serializable transaction that hands a payout the
+ * gateway already holds to reconciliation, runs the account checks (a refusal
+ * fails it APPROVED→FAILED), the dispute and refund gates, the claim and the
+ * shortfall; then a fresh account read immediately before the send.
+ */
+async function processOrgPayoutClaim(
+  payoutId: string,
+): Promise<OrgPayoutProcessOutcome> {
+  const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
   const result = await withSerializableRetry(
     () =>
@@ -964,7 +960,7 @@ export async function processOrgPayout(
       status: result.status,
       submittedToGateway: false,
       claimed: false,
-      preClaim: { kind: "ACCOUNT_REFUSED", reason: result.refused.reason },
+      accountRefusal: result.refused.reason,
     };
   }
 
@@ -977,7 +973,6 @@ export async function processOrgPayout(
       status: result.status,
       submittedToGateway: result.submittedToGateway,
       claimed: result.claimed,
-      ...warning,
     };
   }
 
@@ -1010,14 +1005,7 @@ export async function processOrgPayout(
       status: failure.status,
       submittedToGateway: false,
       claimed: true,
-      ...(failure.wasNoOp
-        ? {}
-        : {
-            preClaim: {
-              kind: "ACCOUNT_REFUSED" as const,
-              reason: fresh.reason,
-            },
-          }),
+      ...(failure.wasNoOp ? {} : { accountRefusal: fresh.reason }),
     };
   }
 
@@ -1027,7 +1015,6 @@ export async function processOrgPayout(
       status: "PROCESSING",
       submittedToGateway: true,
       claimed: true,
-      ...warning,
     };
   } catch (err) {
     const cls = classifyGatewaySubmissionError(err);
@@ -1041,7 +1028,6 @@ export async function processOrgPayout(
         status: "FAILED",
         submittedToGateway: true,
         claimed: true,
-        ...warning,
       };
     }
     reportSentryError(err, { subsystem: "payments" });
@@ -1057,40 +1043,22 @@ function isClaimableOrgPayout(p: {
   return !p.platformHeldAt && PAYOUT_ALLOWED_FROM.PROCESSING.includes(p.status);
 }
 
-/** The balance is read before the claim, so a short balance leaves the payout APPROVED, never PROCESSING with nothing sent. */
-async function readOrgPayoutBalanceBeforeClaim(
+/** A single payout's balance read, before its claim; a short balance leaves it APPROVED, never PROCESSING with nothing sent. */
+async function holdOrgPayoutOnShortBalance(
   payoutId: string,
-): Promise<
-  | { kind: "stop"; outcome: OrgPayoutProcessOutcome }
-  | { kind: "go"; balanceWarning: BalancePreflight | null }
-> {
+): Promise<OrgPayoutProcessOutcome | null> {
   const payout = await prisma.organizationPayout.findUnique({
     where: { id: payoutId },
     select: { status: true, platformHeldAt: true, amountPaise: true },
   });
-  // A missing row is refused by the claim transaction's own read.
-  if (!payout) return { kind: "go", balanceWarning: null };
-  const unclaimed = {
-    status: payout.status,
-    submittedToGateway: false,
-    claimed: false,
-  };
-  if (!isClaimableOrgPayout(payout)) {
-    return { kind: "stop", outcome: unclaimed };
-  }
-  const preflight = await assertPayoutBalance(payout.amountPaise, {
-    report: false,
-  });
-  if (!preflight.ok) {
-    console.warn(
-      `[OrgPayoutService] Holding payout ${payoutId} — ${preflight.reason}`,
-    );
-    return {
-      kind: "stop",
-      outcome: { ...unclaimed, preClaim: { kind: "BALANCE", preflight } },
-    };
-  }
-  return { kind: "go", balanceWarning: preflight.reason ? preflight : null };
+  // A missing or unclaimable row is decided by the claim transaction's own read.
+  if (!payout || !isClaimableOrgPayout(payout)) return null;
+  const preflight = await assertPayoutBalance(payout.amountPaise);
+  if (preflight.ok) return null;
+  console.warn(
+    `[OrgPayoutService] Holding payout ${payoutId} — ${preflight.reason}`,
+  );
+  return { status: payout.status, submittedToGateway: false, claimed: false };
 }
 
 type OrgPayoutDestinationRow = {
@@ -1321,48 +1289,58 @@ export async function processPendingOrgPayouts(
 
   const pending = await prisma.organizationPayout.findMany({
     where: pendingOrgPayoutWhere(),
-    select: { id: true, approvedBy: true, orgApprovedBy: true },
-    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      approvedBy: true,
+      orgApprovedBy: true,
+      amountPaise: true,
+    },
+    // Least recently touched first: a payout re-armed after an attempt queues behind every payout untouched since.
+    orderBy: [{ updatedAt: "asc" }, { createdAt: "asc" }],
   });
   result.scanned = pending.length;
-  // Pre-claim refusals and balance notes are reported once per run; each refused row keeps its own reason.
-  const refusals = createRunFailureReporter("payments");
-  const balanceNotes: Partial<
-    Record<
-      "short" | "unknown",
-      { preflight: BalancePreflight; payoutIds: string[] }
-    >
-  > = {};
 
+  const disbursable: typeof pending = [];
   for (const p of pending) {
+    if (!(await isOrgDisbursementBlocked(p, opts.triggeredByUserId))) {
+      disbursable.push(p);
+    }
+  }
+
+  // One balance read per run, for what this run can disburse, as on the consultant rail; reported once.
+  const slice = disbursable.slice(0, opts.limit);
+  const balance = await assertPayoutBalance(
+    slice.reduce((s, p) => s + p.amountPaise, 0),
+    { report: false },
+  );
+  reportPayoutBalance(balance, { payoutIds: slice.map((p) => p.id) });
+  if (!balance.ok) {
+    console.warn(
+      `[OrgPayoutService] Holding ${slice.length} approved payout(s) — ${balance.reason}`,
+    );
+  }
+
+  // Account refusals are reported once per run; each refused payout keeps its own reason.
+  const refusals = createRunFailureReporter("payments");
+  for (const p of balance.ok ? disbursable : []) {
     if (
       opts.limit !== undefined &&
       result.advanced + result.errors.length >= opts.limit
     ) {
       break;
     }
-    if (await isOrgDisbursementBlocked(p, opts.triggeredByUserId)) continue;
     try {
-      const out = await processOrgPayout(p.id);
-      if (out.claimed || out.preClaim?.kind === "ACCOUNT_REFUSED") {
-        result.advanced++;
-      }
-      if (out.preClaim?.kind === "ACCOUNT_REFUSED") {
+      const out = await processOrgPayoutClaim(p.id);
+      if (out.claimed || out.accountRefusal) result.advanced++;
+      if (out.accountRefusal) {
         refusals.add(
           "org-payout.account-refused",
           new Error(
-            "Organisation payout failed before its claim: its payout account check refused",
+            "Organisation payout failed before its send: its payout account check refused",
           ),
-          { payoutId: p.id, reason: out.preClaim.reason },
+          { payoutId: p.id, reason: out.accountRefusal },
           { level: "warning" },
         );
-      } else if (out.preClaim?.kind === "BALANCE") {
-        const { preflight } = out.preClaim;
-        const note = (balanceNotes[preflight.ok ? "unknown" : "short"] ??= {
-          preflight,
-          payoutIds: [],
-        });
-        note.payoutIds.push(p.id);
       }
     } catch (err) {
       reportSentryError(err, { subsystem: "payments" });
@@ -1371,9 +1349,6 @@ export async function processPendingOrgPayouts(
     }
   }
   refusals.flush();
-  for (const note of Object.values(balanceNotes)) {
-    reportPayoutBalance(note.preflight, { payoutIds: note.payoutIds });
-  }
 
   const redrive = await redriveStaleProcessingOrgPayouts(opts.limit);
   result.scanned += redrive.scanned;
