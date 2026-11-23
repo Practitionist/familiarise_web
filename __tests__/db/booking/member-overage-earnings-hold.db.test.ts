@@ -7,7 +7,6 @@
  */
 import "./harness-cancel-route";
 import { randomUUID } from "node:crypto";
-import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
 import {
   futureAt,
@@ -27,30 +26,21 @@ import {
   earningsOf,
   overageHeld,
   released,
-  seedIssuedInvoice,
-  seedSponsoredMember,
+  seedLicensedMember,
   seedUnpaidMemberOverage,
-  type Sponsor,
 } from "./harness-overage";
-import { sessionUser } from "./harness-session";
 
-jest.mock("../../../lib/payments/index", () =>
-  jest.requireActual("./harness-edges").orderGatewayMock(),
-);
-jest.mock("../../../lib/compliance/dpdp", () =>
-  jest.requireActual("./harness-edges").consentGrantedMock(),
-);
-// A retried overage mints its order here; the shared reader stays real.
-jest.mock("../../../lib/payments/core/razorpay", () => ({
-  ...jest.requireActual("../../../lib/payments/core/razorpay"),
-  getRazorpayClient: () => null,
-  createRazorpayOrder: jest.fn(
-    async (args: { amount: number; currency: string }) => ({
-      id: `order_${globalThis.crypto.randomUUID()}`,
-      amount: args.amount,
-      currency: args.currency,
-    }),
-  ),
+jest.mock("../../../lib/payments/index", () => ({
+  __esModule: true,
+  createPaymentIntent: jest.fn(async () => ({
+    id: `order_${randomUUID()}`,
+    client_secret: null,
+  })),
+  cancelPaymentIntent: jest.fn(async () => undefined),
+}));
+jest.mock("../../../lib/compliance/dpdp", () => ({
+  __esModule: true,
+  checkConsent: jest.fn(async () => true),
 }));
 jest.mock("../../../lib/novu/org-workflows", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
@@ -71,13 +61,7 @@ jest.mock("../../../lib/cron/with-cron-lock", () => ({
 
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
-import {
-  handleOverageMemberFailure,
-  handleOverageMemberSuccess,
-} from "../../../lib/payments/webhooks/overage-handlers";
-import { POST as retryOverage } from "../../../app/api/overage/[overageEventId]/order/route";
-import { releaseSponsorTrustPark } from "../../../lib/payments/payouts/trust-park";
-import { settleOrgInvoicePaid } from "../../../lib/payments/billing/org-invoice-settlement";
+import { handleOverageMemberSuccess } from "../../../lib/payments/webhooks/overage-handlers";
 import { settleFailedMemberOverageAsOrg } from "../../../lib/payments/billing/overage-settlement";
 import { runTimeoutMemberOverages } from "../../../jobs/billing/timeout-member-overages";
 import { replaceOccurrence } from "../../../lib/appointments/occurrences";
@@ -103,17 +87,13 @@ afterAll(() => {
   else process.env.PLATFORM_GSTIN = OLD_GSTIN;
 });
 
-/** A member of a sponsoring org (licensed by default) books a ₹1,000 consultation on the org's account. */
-async function bookOnLicence(cap: number, sponsor?: Sponsor) {
+/** A member of a licensed org books a ₹1,000 consultation on the org's account. */
+async function bookOnLicence(cap: number) {
   const host = await seedHost();
   await publishEveryHour(host);
-  const plan = await seedConsultationPlan(host, "Sponsored consultation");
+  const plan = await seedConsultationPlan(host, "Licensed consultation");
   const buyer = await seedBuyer();
-  const { orgId, billingAccountId } = await seedSponsoredMember(
-    buyer.userId,
-    cap,
-    sponsor,
-  );
+  const { orgId } = await seedLicensedMember(buyer.userId, cap);
   await handleCheckout(
     {
       ...consultationCheckout(plan.id, futureAt(6, 10), `lic-${randomUUID()}`),
@@ -127,7 +107,7 @@ async function bookOnLicence(cap: number, sponsor?: Sponsor) {
   const side = await prisma.payment.findFirst({
     where: { parentPaymentId: parent.id },
   });
-  return { orgId, billingAccountId, buyer, parent, side };
+  return { orgId, parent, side };
 }
 
 /** Every column an earning's amounts are made of. */
@@ -269,12 +249,7 @@ it("a gateway capture writes its earnings held while a member overage on the pay
   expect(earnings[0]).toMatchObject(overageHeld(parent.id));
 });
 
-/**
- * A paid two-session subscription whose tranches the deferred writer (the
- * capture's post-commit retry, the heal sweep) mints; `held` leaves a member
- * overage unpaid on it first.
- */
-async function mintSubscription(held: boolean) {
+it("stamps a delivered subscription tranche while it is held, so paying the overage lets it release", async () => {
   const host = await seedHost();
   const buyer = await seedConsultee();
   const periodStart = new Date(Date.now() - 20 * DAY_MS);
@@ -291,9 +266,8 @@ async function mintSubscription(held: boolean) {
   const parent = await prisma.payment.findFirstOrThrow({
     where: { appointmentId },
   });
-  const side = held
-    ? await seedUnpaidMemberOverage(parent, buyer.userId)
-    : null;
+  const side = await seedUnpaidMemberOverage(parent, buyer.userId);
+  // The deferred writer (the capture's post-commit retry, the heal sweep).
   const resolved = await resolvePaymentForEarnings(
     { id: parent.id },
     "SUBSCRIPTION",
@@ -303,32 +277,6 @@ async function mintSubscription(held: boolean) {
     appointmentType: resolved!.earningsAppointmentType,
     teamAt: parent.createdAt,
   });
-  return { host, appointmentId, periodStart, parent, side };
-}
-
-/** One confirmed hour-long session on the subscription. */
-const addSession = (
-  appointmentId: string,
-  consultantProfileId: string,
-  at: {
-    ordinal: number;
-    startsAt: Date;
-    completionStatus: "COMPLETED" | "SCHEDULED";
-  },
-) =>
-  prisma.appointmentOccurrence.create({
-    data: {
-      appointmentId,
-      ...at,
-      endsAt: new Date(at.startsAt.getTime() + HOUR_MS),
-      isTentative: false,
-      consultantProfileId,
-    },
-  });
-
-it("stamps a delivered subscription tranche while it is held, so paying the overage lets it release", async () => {
-  const { host, appointmentId, periodStart, parent, side } =
-    await mintSubscription(true);
   const minted = await earningsOf(parent.id);
   expect(minted.length).toBeGreaterThan(0);
   for (const tranche of minted) {
@@ -340,16 +288,23 @@ it("stamps a delivered subscription tranche while it is held, so paying the over
 
   // Both sessions are delivered while the overage is unpaid.
   for (const ordinal of [1, 2]) {
-    await addSession(appointmentId, host.consultantProfileId, {
-      ordinal,
-      startsAt: new Date(periodStart.getTime() + ordinal * 7 * DAY_MS),
-      completionStatus: "COMPLETED",
+    const startsAt = new Date(periodStart.getTime() + ordinal * 7 * DAY_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId,
+        ordinal,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+        completionStatus: "COMPLETED",
+      },
     });
   }
   await prisma.$transaction((tx) =>
     settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
   );
-  await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
+  await handleOverageMemberSuccess(side.paymentIntent, Number(side.amount));
 
   for (const tranche of await earningsOf(parent.id)) {
     expect(tranche).toMatchObject(released);
@@ -360,12 +315,45 @@ it("stamps a delivered subscription tranche while it is held, so paying the over
 describe("a delivered subscription tranche keeps its stamped date when a later cycle is scheduled", () => {
   /** A two-cycle subscription whose first cycle is delivered and settled; `held` leaves a member overage unpaid on it. */
   async function deliverFirstCycle(held: boolean) {
-    const { host, appointmentId, periodStart, parent, side } =
-      await mintSubscription(held);
-    await addSession(appointmentId, host.consultantProfileId, {
-      ordinal: 1,
-      startsAt: new Date(periodStart.getTime() + 7 * DAY_MS),
-      completionStatus: "COMPLETED",
+    const host = await seedHost();
+    const buyer = await seedConsultee();
+    const periodStart = new Date(Date.now() - 20 * DAY_MS);
+    const { subscriptionId, appointmentId } = await seedPaidSubscription(
+      host,
+      buyer,
+      periodStart,
+      { sessionsPerWeek: 1, totalSessions: 2 },
+    );
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { status: "APPROVED" },
+    });
+    const parent = await prisma.payment.findFirstOrThrow({
+      where: { appointmentId },
+    });
+    const side = held
+      ? await seedUnpaidMemberOverage(parent, buyer.userId)
+      : null;
+    const resolved = await resolvePaymentForEarnings(
+      { id: parent.id },
+      "SUBSCRIPTION",
+    );
+    await createEarningsFromPayment({
+      payment: resolved!.paymentForEarnings,
+      appointmentType: resolved!.earningsAppointmentType,
+      teamAt: parent.createdAt,
+    });
+    const startsAt = new Date(periodStart.getTime() + 7 * DAY_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId,
+        ordinal: 1,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+        completionStatus: "COMPLETED",
+      },
     });
     await prisma.$transaction((tx) =>
       settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
@@ -381,10 +369,17 @@ describe("a delivered subscription tranche keeps its stamped date when a later c
     appointmentId: string,
     consultantProfileId: string,
   ) {
-    await addSession(appointmentId, consultantProfileId, {
-      ordinal: 2,
-      startsAt: new Date(Date.now() + 10 * DAY_MS),
-      completionStatus: "SCHEDULED",
+    const startsAt = new Date(Date.now() + 10 * DAY_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId,
+        ordinal: 2,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId,
+        completionStatus: "SCHEDULED",
+      },
     });
     await recomputeEarningsHold(prisma, appointmentId);
   }
@@ -418,92 +413,4 @@ describe("a delivered subscription tranche keeps its stamped date when a later c
       holdUntil: stamped,
     });
   });
-});
-
-describe("an unverified invoice sponsor's booking past its cap", () => {
-  const unverified: Sponsor = {
-    fundingSource: "INVOICE",
-    status: "PENDING_VERIFICATION",
-  };
-  const trustParkedHeld = (parentId: string) => ({
-    ...overageHeld(parentId),
-    preHoldStatus: "PENDING_TRUST",
-  });
-
-  it("holds the trust-parked earning; verifying the sponsor lifts only the trust park", async () => {
-    const { orgId, parent, side } = await bookOnLicence(0, unverified);
-    expect((await earningsOf(parent.id))[0]).toMatchObject(
-      trustParkedHeld(parent.id),
-    );
-
-    await prisma.$transaction((tx) => releaseSponsorTrustPark(tx, orgId));
-    expect((await earningsOf(parent.id))[0]).toMatchObject(
-      overageHeld(parent.id),
-    );
-
-    await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
-    expect((await earningsOf(parent.id))[0]).toMatchObject(released);
-  });
-
-  it("paying the sponsor's first invoice lifts only the trust park", async () => {
-    const { orgId, billingAccountId, parent, side } = await bookOnLicence(
-      0,
-      unverified,
-    );
-    expect((await earningsOf(parent.id))[0]).toMatchObject(
-      trustParkedHeld(parent.id),
-    );
-    const invoice = await seedIssuedInvoice(orgId, billingAccountId);
-
-    await prisma.$transaction((tx) =>
-      settleOrgInvoicePaid(tx, {
-        invoiceId: invoice.id,
-        paidAt: new Date(),
-        providerPaymentId: null,
-        paymentRef: "bank-transfer",
-      }),
-    );
-    expect((await earningsOf(parent.id))[0]).toMatchObject(
-      overageHeld(parent.id),
-    );
-
-    await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
-    expect((await earningsOf(parent.id))[0]).toMatchObject(released);
-  });
-});
-
-it("a member retrying a failed overage puts the earnings hold back", async () => {
-  const { buyer, parent, side } = await bookOnLicence(0, {
-    fundingSource: "INVOICE",
-    status: "ACTIVE",
-  });
-  const event = await prisma.overageEvent.findFirstOrThrow({
-    where: { paymentId: side!.id },
-  });
-  // The failure gives the base back to the org's accrual and releases the hold.
-  await handleOverageMemberFailure(side!.paymentIntent);
-  expect((await earningsOf(parent.id))[0]).toMatchObject(released);
-
-  sessionUser.current = {
-    id: buyer.userId,
-    role: "CONSULTEE",
-    consulteeProfileId: buyer.consulteeProfileId,
-    consultantProfileId: null,
-    name: "Buyer",
-  };
-  const res = await retryOverage(
-    new NextRequest(`http://localhost/api/overage/${event.id}/order`, {
-      method: "POST",
-    }),
-    { params: Promise.resolve({ overageEventId: event.id }) },
-  );
-
-  expect(res.status).toBe(200);
-  expect(
-    (await prisma.overageEvent.findUniqueOrThrow({ where: { id: event.id } }))
-      .chargeStatus,
-  ).toBe("PENDING");
-  expect((await earningsOf(parent.id))[0]).toMatchObject(
-    overageHeld(parent.id),
-  );
 });

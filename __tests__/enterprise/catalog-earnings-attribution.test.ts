@@ -65,6 +65,11 @@ jest.mock("../../lib/prisma", () => {
     },
     supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },
+    paymentLeg: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    overageEvent: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     consultantEarnings: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest
@@ -74,7 +79,6 @@ jest.mock("../../lib/prisma", () => {
           ...data,
         })),
     },
-    ...jest.requireActual("../fixtures/no-member-overage").noMemberOverage(),
     consultantProfile: { update: jest.fn().mockResolvedValue({}) },
     organization: {
       findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
