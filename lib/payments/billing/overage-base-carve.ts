@@ -4,6 +4,7 @@ import type { Tx } from "@/lib/prisma";
 import type { Posting } from "@/lib/payments/ledger/post";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
+  placeEarningsHolds,
   releaseEarningsHolds,
   type EarningsHoldDb,
 } from "@/lib/payments/payouts/earnings-holds";
@@ -75,20 +76,11 @@ export async function releaseOverageHeldParentEarnings(
   // Lock the held rows before counting: a batch holding them concurrently is
   // then either committed and counted, or forces this transaction to retry.
   await lockHeldOverageEarnings(tx, consultantIds, orgIds);
-  const licenseLeg = await tx.paymentLeg.findUnique({
-    where: {
-      paymentId_source: { paymentId: parentPaymentId, source: "LICENSE" },
-    },
-    select: { amountPaise: true },
-  });
-  const unpaidSiblings = await tx.overageEvent.count({
-    where: {
-      overageBehavior: "CHARGE_MEMBER",
-      chargeStatus: { in: licenseLeg ? ["PENDING", "FAILED"] : ["PENDING"] },
-      ...(settledSidePaymentId && { paymentId: { not: settledSidePaymentId } }),
-      payment: { parentPaymentId },
-    },
-  });
+  const unpaidSiblings = await countUnpaidMemberOverages(
+    tx,
+    parentPaymentId,
+    settledSidePaymentId,
+  );
   if (unpaidSiblings > 0) return;
 
   const match = {
@@ -97,6 +89,73 @@ export async function releaseOverageHeldParentEarnings(
   };
   await releaseEarningsHolds(tx, "consultant", consultantIds, match);
   await releaseEarningsHolds(tx, "org", orgIds, match);
+}
+
+/** The parent's member overages still owed: PENDING, or FAILED on a LICENSE parent. */
+async function countUnpaidMemberOverages(
+  tx: Pick<Tx, "overageEvent" | "paymentLeg">,
+  parentPaymentId: string,
+  settledSidePaymentId?: string,
+): Promise<number> {
+  const licenseLeg = await tx.paymentLeg.findUnique({
+    where: {
+      paymentId_source: { paymentId: parentPaymentId, source: "LICENSE" },
+    },
+    select: { amountPaise: true },
+  });
+  return tx.overageEvent.count({
+    where: {
+      overageBehavior: "CHARGE_MEMBER",
+      chargeStatus: { in: licenseLeg ? ["PENDING", "FAILED"] : ["PENDING"] },
+      ...(settledSidePaymentId && { paymentId: { not: settledSidePaymentId } }),
+      payment: { parentPaymentId },
+    },
+  });
+}
+
+/**
+ * Places the parent's OVERAGE hold on its PENDING earnings; rows an earlier
+ * batch already holds are written again, so a concurrent release waits for this one.
+ */
+export async function holdParentEarningsForMemberOverage(
+  tx: EarningsHoldDb,
+  parentPaymentId: string,
+): Promise<void> {
+  const holdable = {
+    paymentId: parentPaymentId,
+    OR: [
+      { status: EarningStatus.PENDING },
+      { status: EarningStatus.HELD, preHoldStatus: EarningStatus.PENDING },
+    ],
+  };
+  const consultantIds = (
+    await tx.consultantEarnings.findMany({
+      where: holdable,
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  const orgIds = (
+    await tx.organizationEarnings.findMany({
+      where: holdable,
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  await lockHeldOverageEarnings(tx, consultantIds, orgIds);
+  const overageHold = {
+    reason: EarningsHoldReason.OVERAGE,
+    sourceRef: parentPaymentId,
+  };
+  await placeEarningsHolds(tx, "consultant", consultantIds, overageHold);
+  await placeEarningsHolds(tx, "org", orgIds, overageHold);
+}
+
+/** Earnings written while a member overage on their payment is still owed start under its hold. */
+export async function holdNewEarningsForUnpaidMemberOverage(
+  tx: Pick<Tx, "overageEvent" | "paymentLeg"> & EarningsHoldDb,
+  paymentId: string,
+): Promise<void> {
+  if ((await countUnpaidMemberOverages(tx, paymentId)) === 0) return;
+  await holdParentEarningsForMemberOverage(tx, paymentId);
 }
 
 /** A no-op write on the parent's HELD earnings, taken by both the overage place and release. */

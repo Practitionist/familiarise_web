@@ -254,7 +254,11 @@ function createEarningsTestHarness(options: EarningsHarnessOptions = {}) {
       ),
     },
     contract: { findFirst: jest.fn(async () => null) },
-    paymentLeg: { findMany: jest.fn(async () => options.paymentLegs ?? []) },
+    paymentLeg: {
+      findMany: jest.fn(async () => options.paymentLegs ?? []),
+      findUnique: jest.fn(async () => null),
+    },
+    overageEvent: { count: jest.fn(async () => 0) },
     ...(options.billingAccount
       ? {
           billingAccount: {

@@ -214,6 +214,7 @@ function makeDb(
     paymentLeg: memTable([]),
     membership: memTable([]),
     supportCase: memTable([]),
+    overageEvent: { count: jest.fn(async () => 0) },
     expertCustomerRelationship: memTable([]),
     platformFeeSchedule: memTable([]),
     consultantFeeWaiver: memTable([]),

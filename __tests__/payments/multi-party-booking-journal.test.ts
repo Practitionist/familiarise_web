@@ -99,9 +99,15 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
+    paymentLeg: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     // #1458 — only read when an OVERAGE_INVOICE_ACCRUAL leg funded the payment.
-    overageEvent: { findMany: jest.fn().mockResolvedValue([]) },
+    overageEvent: {
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+    },
     consultantEarnings: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest

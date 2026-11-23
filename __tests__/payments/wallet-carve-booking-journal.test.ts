@@ -54,6 +54,7 @@ function makeWorld(legPaise: number) {
   const leg = { source: "WALLET", amountPaise: legPaise };
   const payment = { amount: legPaise, taxAmount: TAX };
   const holds = createEarningsHoldStore();
+  const overageCreate = jest.fn().mockResolvedValue({ id: "ev-1" });
   const tx = {
     ...holds.db,
     consultantEarnings: {
@@ -146,7 +147,9 @@ function makeWorld(legPaise: number) {
       aggregate: jest
         .fn()
         .mockResolvedValue({ _sum: { basePaise: 0, surchargePaise: 0 } }),
-      create: jest.fn().mockResolvedValue({ id: "ev-1" }),
+      create: overageCreate,
+      // The member's side payment stays unpaid once the carve has minted it.
+      count: jest.fn(async () => overageCreate.mock.calls.length),
     },
     bookingUtilization: {
       findUnique: jest.fn().mockResolvedValue({ id: "bu" }),
@@ -201,7 +204,7 @@ function makeWorld(legPaise: number) {
         0,
       );
   const balanced = () => txns.every((t) => sumSigned(t) === 0);
-  return { leg, journal, carve, net, balanced };
+  return { leg, journal, carve, net, balanced, holds };
 }
 
 function sumSigned(t: Txn): number {
@@ -230,6 +233,9 @@ describe("wallet-funded booking with a member overage carve", () => {
     expect(world.net("DISCOUNT|_|_|INR")).toBe(BASE);
     expect(world.net("PLATFORM_FEE|_|_|INR")).toBe(-228_014);
     expect(world.balanced()).toBe(true);
+    // Whichever runs first, the earning waits for the member's payment.
+    expect(world.holds.consultant[0]).toMatchObject({ status: "HELD" });
+    expect(world.holds.activeReasons("ce-0")).toEqual(["OVERAGE"]);
     expect(walletCredit).toHaveBeenCalledTimes(1);
     expect(walletCredit).toHaveBeenCalledWith(
       expect.anything(),

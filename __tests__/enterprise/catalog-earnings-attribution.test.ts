@@ -65,7 +65,11 @@ jest.mock("../../lib/prisma", () => {
     },
     supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },
-    paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
+    paymentLeg: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    overageEvent: { count: jest.fn().mockResolvedValue(0) },
     consultantEarnings: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest
