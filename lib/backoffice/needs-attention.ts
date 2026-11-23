@@ -344,7 +344,7 @@ const SOURCES: readonly AttentionSource[] = [
   },
   {
     key: "refundedLiveBookings",
-    label: "Refunded in full outside the app, booking still live",
+    label: "Fully refunded, booking still live",
     money: true,
     note: "A payment refunded in full only from the app is not listed here, and a booking leaves the list once it is cancelled or its sessions are over.",
     read: async (now) => {

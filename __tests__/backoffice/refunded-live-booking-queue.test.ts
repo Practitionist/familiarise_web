@@ -109,7 +109,7 @@ it("says who was refunded what for which booking, how much outside the app, what
 
   const queue = queues.find((q) => q.key === "refundedLiveBookings");
   expect(queue).toMatchObject({
-    label: "Refunded in full outside the app, booking still live",
+    label: "Fully refunded, booking still live",
     money: true,
     limitMs: 0,
   });
