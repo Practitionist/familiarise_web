@@ -6,13 +6,12 @@ import { useChromePathname } from "@/lib/navigation/use-chrome-pathname";
 import { MessageSquare } from "lucide-react";
 
 import { BrandWordmark } from "@/components/brand/BrandWordmark";
+import { BRAND_NAME } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { COMPANY_INFO } from "@/lib/company";
 import { NEWSLETTER_NOTICE } from "@/lib/newsletter/notice";
 import { isChromeHidden } from "@/lib/navigation/public-chrome";
-import { EXPLORE_FIELDS } from "@/lib/navigation/public-nav";
-import { domainPath } from "@/lib/explore/domain-slug";
 
 interface FooterLink {
   label: string;
@@ -39,9 +38,9 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     heading: "Solutions",
     links: [
       { label: "College students", href: "/use-cases/college-students" },
-      { label: "Early-career pros", href: "/use-cases/early-career" },
+      { label: "Early career professionals", href: "/use-cases/early-career" },
       { label: "Career switchers", href: "/use-cases/career-switchers" },
-      { label: "Long-term mentorship", href: "/use-cases/mentorship" },
+      { label: "Ongoing mentorship", href: "/use-cases/mentorship" },
     ],
   },
   {
@@ -81,13 +80,6 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     ],
   },
 ];
-
-// Internal-linking band. A marketplace's value is its long-tail catalog, so
-// these deep links are worth more here than another column of company pages.
-const EXPERTISE_LINKS: FooterLink[] = EXPLORE_FIELDS.map((name) => ({
-  label: name,
-  href: domainPath(name),
-}));
 
 const Footer: React.FC = () => {
   const pathname = useChromePathname();
@@ -213,8 +205,8 @@ const Footer: React.FC = () => {
               </div>
             </Link>
             <p className="text-zinc-400 text-sm leading-relaxed max-w-xs">
-              Live classes, webinars, tutoring and 1-on-1 sessions with experts
-              interviewed by our founder.
+              Live classes, webinars, tutoring and private sessions with vetted
+              experts who do the work every day.
             </p>
           </div>
 
@@ -238,55 +230,27 @@ const Footer: React.FC = () => {
             </div>
           ))}
         </div>
-
-        {/* Expertise band — deep links into the catalog */}
-        <div className="mt-12 pt-8 border-t border-zinc-800">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 mb-3">
-            Find an expert in
-          </h3>
-          <div className="flex flex-wrap gap-x-5 gap-y-2">
-            {EXPERTISE_LINKS.map((link) => (
-              <Link
-                key={link.label}
-                href={link.href}
-                className="text-sm text-zinc-400 hover:text-white transition-colors"
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
-        </div>
       </div>
 
-      {/* Bottom Bar — legal-entity details (name, CIN, registered office,
-          contact) render beside the copyright line on every page. */}
+      {/* Decorative full-width wordmark; sized from Sora's ~5.23em width at this tracking so it spans the viewport. */}
+      <div
+        aria-hidden="true"
+        className="relative z-10 select-none overflow-hidden px-4 pb-6 md:px-6"
+      >
+        <p
+          translate="no"
+          className="whitespace-nowrap bg-gradient-to-b from-zinc-100 via-zinc-500 to-zinc-950 bg-clip-text text-center font-display text-[calc((100vw-3rem)/5.4)] font-semibold leading-[0.85] tracking-[-0.03em] text-transparent"
+        >
+          {BRAND_NAME}
+        </p>
+      </div>
+
+      {/* Bottom bar. The CIN, registered office and contact email are on the grievance page and the policy pages' company details. */}
       <div className="border-t border-zinc-800 relative z-10">
-        <div className="container mx-auto px-4 md:px-6 py-6 space-y-2 text-center md:text-left">
+        <div className="container mx-auto px-4 md:px-6 py-6 text-center">
           <p className="text-sm text-zinc-400">
             © {new Date().getFullYear()} Familiarise, operated by{" "}
             {COMPANY_INFO.name}. All rights reserved.
-          </p>
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            CIN: {COMPANY_INFO.cin} · Registered office:{" "}
-            {COMPANY_INFO.registeredAddress} · Email:{" "}
-            <a
-              href={`mailto:${COMPANY_INFO.email}`}
-              className="underline hover:text-white transition-colors"
-            >
-              {COMPANY_INFO.email}
-            </a>
-            {COMPANY_INFO.phone ? (
-              <>
-                {" "}
-                · Phone:{" "}
-                <a
-                  href={`tel:${COMPANY_INFO.phone}`}
-                  className="underline hover:text-white transition-colors"
-                >
-                  {COMPANY_INFO.phone}
-                </a>
-              </>
-            ) : null}
           </p>
         </div>
       </div>

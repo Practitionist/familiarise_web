@@ -112,13 +112,13 @@ export function FeaturedExpertsSection({
               Highest rated experts
             </Badge>
             <h2 className="text-fluid-4xl font-bold text-foreground mb-2 tracking-tight">
-              Learn from{" "}
+              Learn from the experts{" "}
               <span className="text-muted-foreground">
-                founder-interviewed experts
+                learners rate highest
               </span>
             </h2>
             <p className="text-lg text-muted-foreground">
-              Experts teaching live classes, webinars and one-on-one sessions
+              Experts teaching live classes, webinars and private sessions
             </p>
           </div>
           <Link href="/explore/experts">
