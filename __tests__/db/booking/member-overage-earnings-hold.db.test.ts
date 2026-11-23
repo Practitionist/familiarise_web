@@ -30,18 +30,12 @@ import {
   seedUnpaidMemberOverage,
 } from "./harness-overage";
 
-jest.mock("../../../lib/payments/index", () => ({
-  __esModule: true,
-  createPaymentIntent: jest.fn(async () => ({
-    id: `order_${randomUUID()}`,
-    client_secret: null,
-  })),
-  cancelPaymentIntent: jest.fn(async () => undefined),
-}));
-jest.mock("../../../lib/compliance/dpdp", () => ({
-  __esModule: true,
-  checkConsent: jest.fn(async () => true),
-}));
+jest.mock("../../../lib/payments/index", () =>
+  jest.requireActual("./harness-edges").orderGatewayMock(),
+);
+jest.mock("../../../lib/compliance/dpdp", () =>
+  jest.requireActual("./harness-edges").consentGrantedMock(),
+);
 jest.mock("../../../lib/novu/org-workflows", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
 );
@@ -249,7 +243,12 @@ it("a gateway capture writes its earnings held while a member overage on the pay
   expect(earnings[0]).toMatchObject(overageHeld(parent.id));
 });
 
-it("stamps a delivered subscription tranche while it is held, so paying the overage lets it release", async () => {
+/**
+ * A paid two-session subscription whose tranches the deferred writer (the
+ * capture's post-commit retry, the heal sweep) mints; `held` leaves a member
+ * overage unpaid on it first.
+ */
+async function mintSubscription(held: boolean) {
   const host = await seedHost();
   const buyer = await seedConsultee();
   const periodStart = new Date(Date.now() - 20 * DAY_MS);
@@ -266,8 +265,9 @@ it("stamps a delivered subscription tranche while it is held, so paying the over
   const parent = await prisma.payment.findFirstOrThrow({
     where: { appointmentId },
   });
-  const side = await seedUnpaidMemberOverage(parent, buyer.userId);
-  // The deferred writer (the capture's post-commit retry, the heal sweep).
+  const side = held
+    ? await seedUnpaidMemberOverage(parent, buyer.userId)
+    : null;
   const resolved = await resolvePaymentForEarnings(
     { id: parent.id },
     "SUBSCRIPTION",
@@ -277,6 +277,32 @@ it("stamps a delivered subscription tranche while it is held, so paying the over
     appointmentType: resolved!.earningsAppointmentType,
     teamAt: parent.createdAt,
   });
+  return { host, appointmentId, periodStart, parent, side };
+}
+
+/** One confirmed hour-long session on the subscription. */
+const addSession = (
+  appointmentId: string,
+  consultantProfileId: string,
+  at: {
+    ordinal: number;
+    startsAt: Date;
+    completionStatus: "COMPLETED" | "SCHEDULED";
+  },
+) =>
+  prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId,
+      ...at,
+      endsAt: new Date(at.startsAt.getTime() + HOUR_MS),
+      isTentative: false,
+      consultantProfileId,
+    },
+  });
+
+it("stamps a delivered subscription tranche while it is held, so paying the overage lets it release", async () => {
+  const { host, appointmentId, periodStart, parent, side } =
+    await mintSubscription(true);
   const minted = await earningsOf(parent.id);
   expect(minted.length).toBeGreaterThan(0);
   for (const tranche of minted) {
@@ -288,23 +314,16 @@ it("stamps a delivered subscription tranche while it is held, so paying the over
 
   // Both sessions are delivered while the overage is unpaid.
   for (const ordinal of [1, 2]) {
-    const startsAt = new Date(periodStart.getTime() + ordinal * 7 * DAY_MS);
-    await prisma.appointmentOccurrence.create({
-      data: {
-        appointmentId,
-        ordinal,
-        startsAt,
-        endsAt: new Date(startsAt.getTime() + HOUR_MS),
-        isTentative: false,
-        consultantProfileId: host.consultantProfileId,
-        completionStatus: "COMPLETED",
-      },
+    await addSession(appointmentId, host.consultantProfileId, {
+      ordinal,
+      startsAt: new Date(periodStart.getTime() + ordinal * 7 * DAY_MS),
+      completionStatus: "COMPLETED",
     });
   }
   await prisma.$transaction((tx) =>
     settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
   );
-  await handleOverageMemberSuccess(side.paymentIntent, Number(side.amount));
+  await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
 
   for (const tranche of await earningsOf(parent.id)) {
     expect(tranche).toMatchObject(released);
@@ -315,45 +334,12 @@ it("stamps a delivered subscription tranche while it is held, so paying the over
 describe("a delivered subscription tranche keeps its stamped date when a later cycle is scheduled", () => {
   /** A two-cycle subscription whose first cycle is delivered and settled; `held` leaves a member overage unpaid on it. */
   async function deliverFirstCycle(held: boolean) {
-    const host = await seedHost();
-    const buyer = await seedConsultee();
-    const periodStart = new Date(Date.now() - 20 * DAY_MS);
-    const { subscriptionId, appointmentId } = await seedPaidSubscription(
-      host,
-      buyer,
-      periodStart,
-      { sessionsPerWeek: 1, totalSessions: 2 },
-    );
-    await prisma.subscription.update({
-      where: { id: subscriptionId },
-      data: { status: "APPROVED" },
-    });
-    const parent = await prisma.payment.findFirstOrThrow({
-      where: { appointmentId },
-    });
-    const side = held
-      ? await seedUnpaidMemberOverage(parent, buyer.userId)
-      : null;
-    const resolved = await resolvePaymentForEarnings(
-      { id: parent.id },
-      "SUBSCRIPTION",
-    );
-    await createEarningsFromPayment({
-      payment: resolved!.paymentForEarnings,
-      appointmentType: resolved!.earningsAppointmentType,
-      teamAt: parent.createdAt,
-    });
-    const startsAt = new Date(periodStart.getTime() + 7 * DAY_MS);
-    await prisma.appointmentOccurrence.create({
-      data: {
-        appointmentId,
-        ordinal: 1,
-        startsAt,
-        endsAt: new Date(startsAt.getTime() + HOUR_MS),
-        isTentative: false,
-        consultantProfileId: host.consultantProfileId,
-        completionStatus: "COMPLETED",
-      },
+    const { host, appointmentId, periodStart, parent, side } =
+      await mintSubscription(held);
+    await addSession(appointmentId, host.consultantProfileId, {
+      ordinal: 1,
+      startsAt: new Date(periodStart.getTime() + 7 * DAY_MS),
+      completionStatus: "COMPLETED",
     });
     await prisma.$transaction((tx) =>
       settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
@@ -369,17 +355,10 @@ describe("a delivered subscription tranche keeps its stamped date when a later c
     appointmentId: string,
     consultantProfileId: string,
   ) {
-    const startsAt = new Date(Date.now() + 10 * DAY_MS);
-    await prisma.appointmentOccurrence.create({
-      data: {
-        appointmentId,
-        ordinal: 2,
-        startsAt,
-        endsAt: new Date(startsAt.getTime() + HOUR_MS),
-        isTentative: false,
-        consultantProfileId,
-        completionStatus: "SCHEDULED",
-      },
+    await addSession(appointmentId, consultantProfileId, {
+      ordinal: 2,
+      startsAt: new Date(Date.now() + 10 * DAY_MS),
+      completionStatus: "SCHEDULED",
     });
     await recomputeEarningsHold(prisma, appointmentId);
   }
