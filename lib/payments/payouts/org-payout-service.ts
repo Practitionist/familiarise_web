@@ -775,6 +775,10 @@ export async function processOrgPayout(payoutId: string): Promise<{
   claimed: boolean;
 }> {
   const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
+  if (liveEnabled) {
+    const held = await holdOrgPayoutOnShortBalance(payoutId);
+    if (held) return held;
+  }
 
   return withSerializableRetry(
     () =>
@@ -916,6 +920,32 @@ export async function processOrgPayout(payoutId: string): Promise<{
   });
 }
 
+/** The balance is read before the claim, so a short balance leaves the payout APPROVED, never PROCESSING with nothing sent. */
+async function holdOrgPayoutOnShortBalance(payoutId: string): Promise<{
+  status: PayoutStatus;
+  submittedToGateway: false;
+  claimed: false;
+} | null> {
+  const row = await prisma.organizationPayout.findUnique({
+    where: { id: payoutId },
+    select: { status: true, amountPaise: true, platformHeldAt: true },
+  });
+  // A row the claim would refuse needs no balance read; the claim decides it.
+  if (
+    !row ||
+    row.platformHeldAt ||
+    !PAYOUT_ALLOWED_FROM.PROCESSING.includes(row.status)
+  ) {
+    return null;
+  }
+  const preflight = await assertPayoutBalance(row.amountPaise);
+  if (preflight.ok) return null;
+  console.warn(
+    `[OrgPayoutService] Holding payout ${payoutId} — ${preflight.reason}`,
+  );
+  return { status: row.status, submittedToGateway: false, claimed: false };
+}
+
 async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
   const payout = await prisma.organizationPayout.findUniqueOrThrow({
     where: { id: payoutId },
@@ -990,14 +1020,6 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
   const sdk = getRazorpayPayoutsService();
   const idempotencyKey = sdk.generateIdempotencyKey(payoutId);
   const mode = sdk.determinePayoutMode(payout.amountPaise, "bank_account");
-
-  const preflight = await assertPayoutBalance(payout.amountPaise);
-  if (!preflight.ok) {
-    console.warn(
-      `[OrgPayoutService] Holding payout ${payoutId} — ${preflight.reason}`,
-    );
-    return;
-  }
 
   const response = await sdk.createPayout({
     fundAccountId,
@@ -1123,10 +1145,7 @@ export async function processPendingOrgPayouts(
     }
   }
 
-  const redrive = await redriveStaleProcessingOrgPayouts(
-    opts.limit,
-    opts.triggeredByUserId,
-  );
+  const redrive = await redriveStaleProcessingOrgPayouts(opts.limit);
   result.scanned += redrive.scanned;
   result.advanced += redrive.advanced;
   result.errors.push(...redrive.errors);
@@ -1137,14 +1156,8 @@ export async function processPendingOrgPayouts(
 const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000;
 
 async function redriveSingleOrgPayoutRow(
-  p: {
-    id: string;
-    gatewayPayoutId: string | null;
-    approvedBy: string | null;
-    orgApprovedBy: string | null;
-  },
+  p: { id: string; gatewayPayoutId: string | null },
   result: OrgProcessingResult,
-  triggeredByUserId: string | undefined,
 ): Promise<void> {
   const { findRazorpayPayoutByReference } =
     await import("./payout-gateway-lookup");
@@ -1161,10 +1174,12 @@ async function redriveSingleOrgPayoutRow(
         data: { gatewayPayoutId },
       });
     } else if (lookup.kind === "none") {
-      // Submitting here is a fresh disbursement, so the approver who triggered this run may not do it.
-      if (await isOrgDisbursementBlocked(p, triggeredByUserId)) return;
-      await submitOrgPayoutToGateway(p.id);
-      result.advanced++;
+      // A re-drive never sends: re-armed APPROVED, the next processOrgPayout re-runs every first-send gate.
+      const reset = await prisma.organizationPayout.updateMany({
+        where: { id: p.id, status: "PROCESSING", gatewayPayoutId: null },
+        data: { status: "APPROVED" },
+      });
+      if (reset.count > 0) result.advanced++;
       return;
     } else {
       result.errors.push(
@@ -1233,19 +1248,12 @@ export async function applyOrgGatewayStatus(
 
 async function redriveStaleProcessingOrgPayouts(
   limit = 100,
-  triggeredByUserId?: string,
 ): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
   const stale = await prisma.organizationPayout.findMany({
     where: staleProcessingOrgPayoutWhere(staleBefore),
-    select: {
-      id: true,
-      gatewayPayoutId: true,
-      paymentGateway: true,
-      approvedBy: true,
-      orgApprovedBy: true,
-    },
+    select: { id: true, gatewayPayoutId: true },
     orderBy: { updatedAt: "asc" },
     take: limit,
   });
@@ -1254,7 +1262,7 @@ async function redriveStaleProcessingOrgPayouts(
   await Promise.all(
     stale.map(async (p) => {
       try {
-        await redriveSingleOrgPayoutRow(p, result, triggeredByUserId);
+        await redriveSingleOrgPayoutRow(p, result);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (

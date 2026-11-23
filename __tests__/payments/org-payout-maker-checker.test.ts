@@ -56,6 +56,7 @@ jest.mock("../../lib/prisma", () => {
         ...data,
       })),
       update: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     user: { count: jest.fn(async () => 2) },
     organization: { findUnique: jest.fn(async () => null) },
@@ -159,7 +160,8 @@ it("skips disbursing a payout its triggering admin approved, on either approval"
   expect(recordEvent).not.toHaveBeenCalled();
 });
 
-it("does not let the approver who triggered a run resubmit a stale payout the gateway never saw", async () => {
+// The pass that later sends a re-armed payout applies maker-checker, as pinned above.
+it("re-arms a stale payout the gateway never saw without submitting it, whoever triggered the run", async () => {
   const OLD_UPDATE = new Date(Date.now() - 2 * 60 * 60 * 1000);
   stale = [
     {
@@ -177,14 +179,20 @@ it("does not let the approver who triggered a run resubmit a stale payout the ga
       updatedAt: OLD_UPDATE,
     },
   ];
-  await processPendingOrgPayouts({ limit: 10, triggeredByUserId: "admin_1" });
+  const run = await processPendingOrgPayouts({
+    limit: 10,
+    triggeredByUserId: "admin_1",
+  });
 
-  const skipped = recordEvent.mock.calls.map(
-    ([event]) => (event as { context: { payoutId: string } }).context.payoutId,
-  );
-  expect(skipped).toEqual(["op-mine"]);
-  const submitted = payouts.findUnique.mock.calls.map(
-    ([args]) => args.where.id,
-  );
-  expect(submitted).not.toContain("op-mine");
+  const reArmed = payouts.updateMany.mock.calls.map(([args]) => args);
+  expect(reArmed).toHaveLength(2);
+  for (const id of ["op-mine", "op-theirs"]) {
+    expect(reArmed).toContainEqual({
+      where: { id, status: "PROCESSING", gatewayPayoutId: null },
+      data: { status: "APPROVED" },
+    });
+  }
+  expect(payouts.findUnique).not.toHaveBeenCalled();
+  expect(recordEvent).not.toHaveBeenCalled();
+  expect(run.errors).toEqual([]);
 });
