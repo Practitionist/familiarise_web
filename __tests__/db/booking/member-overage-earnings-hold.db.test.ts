@@ -69,6 +69,7 @@ import { settleSubscriptionCycle } from "../../../lib/booking/subscription-cycle
 import {
   computeHoldUntil,
   holdHoursFor,
+  recomputeEarningsHold,
 } from "../../../lib/payments/payouts/earnings-hold";
 import {
   createEarningsFromPayment,
@@ -309,4 +310,107 @@ it("stamps a delivered subscription tranche while it is held, so paying the over
     expect(tranche).toMatchObject(released);
     expect(tranche.holdUntil).not.toBeNull();
   }
+});
+
+describe("a delivered subscription tranche keeps its stamped date when a later cycle is scheduled", () => {
+  /** A two-cycle subscription whose first cycle is delivered and settled; `held` leaves a member overage unpaid on it. */
+  async function deliverFirstCycle(held: boolean) {
+    const host = await seedHost();
+    const buyer = await seedConsultee();
+    const periodStart = new Date(Date.now() - 20 * DAY_MS);
+    const { subscriptionId, appointmentId } = await seedPaidSubscription(
+      host,
+      buyer,
+      periodStart,
+      { sessionsPerWeek: 1, totalSessions: 2 },
+    );
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { status: "APPROVED" },
+    });
+    const parent = await prisma.payment.findFirstOrThrow({
+      where: { appointmentId },
+    });
+    const side = held
+      ? await seedUnpaidMemberOverage(parent, buyer.userId)
+      : null;
+    const resolved = await resolvePaymentForEarnings(
+      { id: parent.id },
+      "SUBSCRIPTION",
+    );
+    await createEarningsFromPayment({
+      payment: resolved!.paymentForEarnings,
+      appointmentType: resolved!.earningsAppointmentType,
+      teamAt: parent.createdAt,
+    });
+    const startsAt = new Date(periodStart.getTime() + 7 * DAY_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId,
+        ordinal: 1,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+        completionStatus: "COMPLETED",
+      },
+    });
+    await prisma.$transaction((tx) =>
+      settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+    );
+    const [tranche] = await earningsOf(parent.id);
+    expect(tranche).toMatchObject({ cycleOrdinal: 0 });
+    expect(tranche.holdUntil).not.toBeNull();
+    return { host, appointmentId, parent, side, stamped: tranche.holdUntil };
+  }
+
+  /** The expert places cycle 2 ten days out; allocation re-anchors the appointment's holds. */
+  async function scheduleSecondCycle(
+    appointmentId: string,
+    consultantProfileId: string,
+  ) {
+    const startsAt = new Date(Date.now() + 10 * DAY_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId,
+        ordinal: 2,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId,
+        completionStatus: "SCHEDULED",
+      },
+    });
+    await recomputeEarningsHold(prisma, appointmentId);
+  }
+
+  it("held for an unpaid overage: the tranche keeps its stamp through the payment", async () => {
+    const { host, appointmentId, parent, side, stamped } =
+      await deliverFirstCycle(true);
+    expect((await earningsOf(parent.id))[0]).toMatchObject(
+      overageHeld(parent.id),
+    );
+
+    await scheduleSecondCycle(appointmentId, host.consultantProfileId);
+    await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
+
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...released,
+      cycleOrdinal: 0,
+      holdUntil: stamped,
+    });
+  });
+
+  it("unheld: the tranche keeps its stamp", async () => {
+    const { host, appointmentId, parent, stamped } =
+      await deliverFirstCycle(false);
+
+    await scheduleSecondCycle(appointmentId, host.consultantProfileId);
+
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...released,
+      cycleOrdinal: 0,
+      holdUntil: stamped,
+    });
+  });
 });
