@@ -278,7 +278,11 @@ describe("a dispute opening against a payout batching the same earning", () => {
     const failCas = payoutsTable.updateMany.mock.calls.find(
       ([args]) => (args.data as Row).status === "FAILED",
     );
-    expect(failCas?.[0].where).toEqual({ id: "po-1", status: "APPROVED" });
+    expect(failCas?.[0].where).toEqual({
+      id: "po-1",
+      status: "APPROVED",
+      providerPayoutId: null,
+    });
     const failIndex = payoutsTable.updateMany.mock.calls.indexOf(failCas!);
     await expect(
       payoutsTable.updateMany.mock.results[failIndex].value,

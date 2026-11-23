@@ -19,7 +19,7 @@ const LIVE_PAYOUT_STATUSES = [PayoutStatus.PROCESSING, PayoutStatus.COMPLETED];
 
 export type ConsultantTdsInput = {
   consultantProfileId: string;
-  /** Excluded from every read so a retry recomputes the same figures; null for a preview. */
+  /** Excluded from every read so the payout never counts its own gross or TDS; null for a preview. */
   payoutId: string | null;
   netSharePaise: number;
   grossThisPayoutPaise: number;

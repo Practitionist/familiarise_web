@@ -94,6 +94,10 @@ import { goHref } from "@/lib/dashboard/go";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
+import {
   buildPayoutCompletionPostings,
   buildPayoutReversalPostings,
   DISPUTE_GATED_PAYMENT_WHERE,
@@ -992,6 +996,7 @@ export async function processApprovedPayouts(
     return [];
   }
 
+  const failures = createRunFailureReporter("payments");
   try {
     const approvedPayouts = await prisma.consultantPayout.findMany({
       where: APPROVED_PAYOUT_WHERE,
@@ -1042,12 +1047,13 @@ export async function processApprovedPayouts(
       ) {
         break;
       }
-      const result = await processSinglePayout(payout);
+      const result = await processSinglePayout(payout, failures);
       results.push(result);
     }
 
     return results;
   } finally {
+    failures.flush();
     await releaseLock(PAYOUT_PROCESS_LOCK_KEY, lockToken);
   }
 }
@@ -1202,6 +1208,7 @@ export async function processPayoutById(
   );
   if (!lockToken) return null;
 
+  const failures = createRunFailureReporter("payments");
   try {
     const payout = await prisma.consultantPayout.findFirst({
       where: { id: payoutId, status: PayoutStatus.APPROVED },
@@ -1220,8 +1227,9 @@ export async function processPayoutById(
         error: preflight.reason,
       };
     }
-    return await processSinglePayout(payout);
+    return await processSinglePayout(payout, failures);
   } finally {
+    failures.flush();
     await releaseLock(PAYOUT_PROCESS_LOCK_KEY, lockToken);
   }
 }
@@ -1312,6 +1320,46 @@ type ClaimGateOutcome =
 /** The claim's view of the row: its amount and the net it staged for a first send, or null. */
 type ClaimTarget = { id: string; amount: number; netAmount: number | null };
 
+/**
+ * Fails an APPROVED payout before any send, clearing its staged TDS, and releases its
+ * earnings. A row carrying a gateway id is never failed here: a payout may exist for it.
+ */
+async function failUnsentConsultantPayout(
+  db: PrismaLike,
+  payoutId: string,
+  reason: string,
+): Promise<boolean> {
+  const failed = await db.consultantPayout.updateMany({
+    where: {
+      id: payoutId,
+      status: PayoutStatus.APPROVED,
+      providerPayoutId: null,
+    },
+    data: {
+      status: PayoutStatus.FAILED,
+      failureReason: reason.slice(0, 500),
+      tdsDeducted: 0,
+      netAmount: null,
+      tdsRateAppliedBps: null,
+      tdsFinancialYear: null,
+      tdsCatchUpFy: null,
+      tdsCarryPaise: 0,
+      tdsCreditPaise: 0,
+    },
+  });
+  if (failed.count === 0) return false;
+  await db.consultantEarnings.updateMany({
+    where: { payoutId, status: EarningStatus.BATCHED },
+    data: {
+      payoutId: null,
+      status: EarningStatus.READY,
+      releasedFromPayoutId: payoutId,
+    },
+  });
+  await releaseClawbackRecovery(db, payoutId);
+  return true;
+}
+
 async function runConsultantPayoutClaimGate(
   db: PrismaLike,
   { id: payoutId, amount, netAmount }: ClaimTarget,
@@ -1344,31 +1392,7 @@ async function runConsultantPayoutClaimGate(
     sumPaise(owedAgg._sum.refundedShareAmount);
   if (owedPaise < amount) {
     const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${amount}p`;
-    const failed = await db.consultantPayout.updateMany({
-      where: { id: payoutId, status: PayoutStatus.APPROVED },
-      data: {
-        status: PayoutStatus.FAILED,
-        failureReason: shortfallReason.slice(0, 500),
-        tdsDeducted: 0,
-        netAmount: null,
-        tdsRateAppliedBps: null,
-        tdsFinancialYear: null,
-        tdsCatchUpFy: null,
-        tdsCarryPaise: 0,
-        tdsCreditPaise: 0,
-      },
-    });
-    if (failed.count > 0) {
-      await db.consultantEarnings.updateMany({
-        where: { payoutId, status: EarningStatus.BATCHED },
-        data: {
-          payoutId: null,
-          status: EarningStatus.READY,
-          releasedFromPayoutId: payoutId,
-        },
-      });
-      await releaseClawbackRecovery(db, payoutId);
-    }
+    await failUnsentConsultantPayout(db, payoutId, shortfallReason);
     return { kind: "shortfall", owedPaise, shortfallReason };
   }
 
@@ -1385,8 +1409,40 @@ async function runConsultantPayoutClaimGate(
   return { kind: "claimed" };
 }
 
+async function failCatchUpTakenPayout(
+  payoutId: string,
+  failures: RunFailureReporter,
+): Promise<PayoutResult> {
+  const cause =
+    "TDS_CATCH_UP_TAKEN: the 194-O catch-up this payout staged is held by another payout of the expert";
+  const failedReason = `${cause}; failed unsent, its earnings go to the next batch`;
+  const released = await withSerializableRetry(
+    () =>
+      prisma.$transaction(
+        (tx) => failUnsentConsultantPayout(tx, payoutId, failedReason),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    1,
+  );
+  const error = released
+    ? failedReason
+    : `${cause}; left APPROVED with its earnings linked because it carries a gateway id or moved`;
+  console.warn(`[Payouts] Payout ${payoutId}: ${error}`);
+  failures.add(
+    "payout-tds-catch-up-taken",
+    new Error(error),
+    {
+      payoutId,
+      released,
+    },
+    { level: "warning" },
+  );
+  return { payoutId, success: false, error };
+}
+
 async function claimConsultantPayoutForDisbursement(
   target: ClaimTarget,
+  failures: RunFailureReporter,
 ): Promise<PayoutResult | null> {
   const { id: payoutId, amount } = target;
   let claimOutcome: ClaimGateOutcome;
@@ -1405,12 +1461,10 @@ async function claimConsultantPayoutForDisbursement(
           )
         : await runConsultantPayoutClaimGate(prisma, target);
   } catch (err) {
-    // Another payout took this FY's catch-up while this one waited APPROVED; resending
-    // the staged body would withhold it twice, so the row stays APPROVED for an operator.
+    // Another payout took this FY's catch-up while this one waited APPROVED. Its staged
+    // body cannot be honoured, so it fails unsent and the next batch re-plans under a new key.
     if (!isTdsCatchUpRace(err)) throw err;
-    const error = `TDS_CATCH_UP_TAKEN: payout ${payoutId} staged this FY's 194-O catch-up, which another live payout now holds; resend needs an operator`;
-    console.warn(`[Payouts] ${error}`);
-    return { payoutId, success: false, error };
+    return failCatchUpTakenPayout(payoutId, failures);
   }
 
   if (claimOutcome.kind === "dispute_blocked") {
@@ -1702,34 +1756,40 @@ async function planAndStageConsultantTds(
   return staged.count === 0 ? null : payoutAmountAfterTDS;
 }
 
-async function processSinglePayout(payout: {
-  id: string;
-  consultantProfileId: string;
-  provider: PaymentGateway;
-  amount: number;
-  currency: string;
-  method: PayoutMethod;
-  idempotencyKey: string | null;
-  netAmount: number | null;
-  payoutAccount: PayoutDestination | null;
-  consultantProfile: {
-    payoutAccounts?: PayoutDestination[];
-    user: {
-      name: string | null;
-      email: string | null;
+async function processSinglePayout(
+  payout: {
+    id: string;
+    consultantProfileId: string;
+    provider: PaymentGateway;
+    amount: number;
+    currency: string;
+    method: PayoutMethod;
+    idempotencyKey: string | null;
+    netAmount: number | null;
+    payoutAccount: PayoutDestination | null;
+    consultantProfile: {
+      payoutAccounts?: PayoutDestination[];
+      user: {
+        name: string | null;
+        email: string | null;
+        [key: string]: unknown;
+      };
       [key: string]: unknown;
     };
     [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}): Promise<PayoutResult> {
+  },
+  failures: RunFailureReporter,
+): Promise<PayoutResult> {
   let providerPayoutId: string | undefined;
   let submittedToGateway = false;
   const markSubmitted = () => {
     submittedToGateway = true;
   };
   try {
-    const blockedResult = await claimConsultantPayoutForDisbursement(payout);
+    const blockedResult = await claimConsultantPayoutForDisbursement(
+      payout,
+      failures,
+    );
     if (blockedResult) {
       return blockedResult;
     }
