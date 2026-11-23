@@ -4,7 +4,7 @@ type: explanation
 band: domain
 audience: sde2
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-24
 ---
 
 # Support decision records
@@ -120,6 +120,14 @@ These are short records of the owner decisions that shaped the support system: t
 - **Status:** Accepted, implemented.
 - **Decision.** Personal cases are private to their submitter and operators, however the booking is tagged. Organization cases belong to whoever currently holds the matching organization permission. Organization views show metadata and withhold sensitive personal complaints as counts.
 - **See** [scopes and visibility](09-org-scopes-and-visibility.md).
+
+## SD-16: A no-show report is a typed case on its session
+
+- **Status:** Accepted 2026-11-24, implemented (steps 1 to 3 of the report-window build).
+- **Context.** A negative session verdict (`HOST_ABSENT`, `CUT_SHORT`, `LEARNER_ABSENT`) waits 48 hours for strong evidence before it is confirmed, and a participant's report may speed it up or block it. That needs a report a job can read, not a conversation.
+- **Decision.** The no-show turn files its own `SupportCase` on the scope `OCCURRENCE:<id>`, stores the flow terminal's reason in `SupportCase.flowReason` (a counted reason is never replaced), offers "I was there" to both sides, and counts a report from the session's booked end to 48 hours after the verdict. No second report table.
+- **Cost.** One nullable column and one index, and a no-show conversation no longer shares the booking's open thread. A report changes only whether a verdict is confirmed; it cannot create one.
+- **See** [intake and flows](01-intake-and-flows.md#a-no-show-report) and [the report-window record](../decisions/2026-11-23-session-outcome-report-window.md).
 
 ## Planned work (P2)
 

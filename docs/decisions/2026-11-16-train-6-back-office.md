@@ -79,7 +79,7 @@ Worked example of the leads change: Olivia Brown (ADMIN) moves a new enterprise 
 
 The second pull request changes only reads, paging and display on the Appointments page of both trees. It changes no money rule, no status transition and no schema.
 
-1. **"Sessions that need a decision" is a paged, sortable table.** `readSessionsNeedingHuman` (`lib/backoffice/session-outcomes.ts`) reads one page of 20 rows over the needs-human predicate (`needsHumanWhere` in `lib/booking/misses.ts`, a function of the time since the report-window record added a negative verdict whose 48-hour window closed unconfirmed).
+1. **"Sessions that need a decision" is a paged, sortable table.** `readSessionsNeedingHuman` (`lib/backoffice/session-outcomes.ts`) reads one page of 20 rows over the needs-human predicate (`needsHumanWhere` in `lib/booking/misses.ts`, a function of the time since the report-window record added a negative verdict whose 48-hour window closed unconfirmed and a negative verdict a participant reported on).
    - It costs three statements: one joined list, one count and one batched user read. The old read was two lists capped at 100 rows, with no booking or person on a row.
    - `GET /api/admin/sessions/needs-human` parses `?page` (a positive whole number) and `?sort` through `needsHumanQuerySchema` (`lib/backoffice/needs-human-queue.ts`). The sort keys are `endsAt`, `startsAt`, `outcomeAt` (shown as "Waiting since") and `lostMinutes`, with a leading `-` for descending; anything else answers 400.
    - The default order is the session's end, oldest first, so a session parked longest leads the first page. Each row still says whether it is over 7 days old (`isAgedNeedsHuman`, the same test the escalation uses), because its booking's settlement waits on it.

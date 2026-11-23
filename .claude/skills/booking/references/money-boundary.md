@@ -647,8 +647,9 @@ host no-show, a maintenance-cut call, and a `NOBODY_JOINED` or `OFFLINE` verdict
 on a booking with a `SUCCEEDED` payment on any rail. `auto-complete-appointments`
 will not complete its booking, `release-earnings` keeps its earnings `PENDING`
 (`RELEASABLE_PAYMENT`), and the ops card lists it through `needsHumanWhere(now)`
-(`AWAITING_HUMAN`, a voided paid trial, and a negative verdict whose 48-hour window
-closed unconfirmed). The exit is `session.set-outcome`; nothing is refunded or
+(`AWAITING_HUMAN`, a voided paid trial, a negative verdict whose 48-hour window
+closed unconfirmed, and `REPORTED_VERDICT`: an unconfirmed negative verdict with a
+linked non-org case whose reason disputes or agrees with it). The exit is `session.set-outcome`; nothing is refunded or
 released automatically. A free session where nobody joined has no money to hold and
 completes. Widen this predicate, never a caller's copy of it.
 
@@ -657,15 +658,22 @@ A negative verdict (`NEGATIVE_MONEY_OUTCOMES`: `HOST_ABSENT`, `CUT_SHORT`,
 that stamp is `release-earnings`: `UNCONFIRMED_LEARNER_ABSENT` inside
 `RELEASABLE_PAYMENT` keeps the earning `PENDING` (never `HELD`), scoped like
 `EARNINGS_HOLDING_MISS`, so a subscription is excluded. `confirmClosedOutcomes`
-(`lib/booking/session-outcome-sweep.ts`, run by `auto-complete-appointments`) stamps
-a verdict by CAS 48 hours after `outcomeAt` only on strong evidence
-(`judgeOutcomeEvidence`); a weak one stays for ops, who confirm it with
+(`lib/booking/session-outcome-sweep.ts`, run by `auto-complete-appointments`, candidates
+from `confirmableVerdictWhere`, which the idle probe shares) stamps a verdict by CAS 48
+hours after `outcomeAt`, or earlier on an agreeing report from the harmed party, only on
+strong evidence (`judgeOutcomeEvidence`). It first runs `judgeReports`: a counted
+dispute (the accused party's `*_join_issue` or `*_attended` reason) means it never
+stamps, and `disputed` is counted in its run. A report counts only from a non-org case
+whose reporter is on the reason's side, filed between `endsAt` and `outcomeAt` + 48 h
+(`countedEffect`); `REPORT_EFFECT` is the one table of which reason disputes or agrees.
+A weak, disputed or reported verdict stays for ops, who confirm it with
 `session.confirm-outcome` (`confirmSessionOutcome`, which leaves `outcomeAt` alone)
 or decide it with `session.set-outcome` (a negative outcome is stamped at once, any
 other clears the stamp). Never let a reader treat a null stamp as confirmed. The
 detector's claim, the void refund and the class reliability flag do not read the
-stamp yet, and participant reports and notices do not exist yet: both are planned in
-`docs/decisions/2026-11-23-session-outcome-report-window.md`.
+stamp yet, so an early agreement stamp moves no money today, and the notices and the
+corrected "automatic full refund" copy are planned in
+`docs/decisions/2026-11-23-session-outcome-report-window.md` (steps 4 and 5).
 
 A parked session cannot wait silently. After 72 hours `alertStaleNeedsHuman`
 records a standing finding; after 7 days (`NEEDS_HUMAN_ESCALATE_DAYS`,
