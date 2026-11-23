@@ -1,18 +1,32 @@
 import {
+  BrainCircuit,
   Briefcase,
+  ChartLine,
   Code,
   FileText,
   GraduationCap,
   HeartPulse,
   IndianRupee,
   Languages,
+  Megaphone,
   MessagesSquare,
+  PenTool,
   Palette,
   Repeat,
   Rocket,
+  Salad,
   Sprout,
+  SquareKanban,
   type LucideIcon,
 } from "lucide-react";
+
+export interface FieldPhoto {
+  /** A file under public/, optimised by next/image. */
+  src: string;
+  alt: string;
+  /** Where the photo came from and under which licence, kept for provenance. */
+  credit: string;
+}
 
 export interface FieldTile {
   /** The domain's name in the database; the tile shows only while it has verified experts. */
@@ -20,6 +34,17 @@ export interface FieldTile {
   label: string;
   icon: LucideIcon;
   subtopics: string[];
+  /** Without a photo the tile falls back to the dark dot-grid style. */
+  photo?: FieldPhoto;
+}
+
+export interface SubtopicTile {
+  label: string;
+  /** Shown only while this field has verified experts. */
+  domain: string;
+  /** A free-text search of the experts directory. */
+  search: string;
+  icon: LucideIcon;
 }
 
 /** The landing page's fields in demand order. A domain missing from this list never gets a tile. */
@@ -88,4 +113,39 @@ export const GOAL_LINKS: { label: string; href: string; icon: LucideIcon }[] = [
   },
   { label: "Career switch", href: "/use-cases/career-switchers", icon: Repeat },
   { label: "First job", href: "/use-cases/early-career", icon: Rocket },
+];
+
+/** Popular subtopics inside the fields above, as smaller tiles after the field tiles. */
+export const SUBTOPIC_TILES: SubtopicTile[] = [
+  { label: "AI & ML", domain: "Technology", search: "AI", icon: BrainCircuit },
+  {
+    label: "Data science",
+    domain: "Technology",
+    search: "data",
+    icon: ChartLine,
+  },
+  {
+    label: "Product management",
+    domain: "Business",
+    search: "product",
+    icon: SquareKanban,
+  },
+  {
+    label: "UI/UX design",
+    domain: "Creative Arts",
+    search: "design",
+    icon: PenTool,
+  },
+  {
+    label: "Public speaking",
+    domain: "Personal Development",
+    search: "speaking",
+    icon: Megaphone,
+  },
+  {
+    label: "Nutrition",
+    domain: "Health",
+    search: "nutrition",
+    icon: Salad,
+  },
 ];
