@@ -8,8 +8,10 @@
  */
 
 const MIN = 60_000;
-const BOOKED_START = new Date(Date.now() - 55 * MIN);
-const BOOKED_END = new Date(Date.now() + 5 * MIN);
+// One clock read: two would let the booked hour run a millisecond long, which the cap rounds up to a second.
+const NOW = Date.now();
+const BOOKED_START = new Date(NOW - 55 * MIN);
+const BOOKED_END = new Date(NOW + 5 * MIN);
 
 type Store = {
   meeting: {
