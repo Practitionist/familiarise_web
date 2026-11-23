@@ -136,7 +136,8 @@ no_session_links >"$LOG/session-links.log" 2>&1
 record session-links $?
 
 begin
-"$BIN/jest" --coverage=false --maxWorkers=2 >"$LOG/jest.log" 2>&1
+# Recycles a worker found above the limit after a suite; it does not bound memory during a suite.
+"$BIN/jest" --coverage=false --maxWorkers=2 --workerIdleMemoryLimit=1200MB >"$LOG/jest.log" 2>&1
 record jest $?
 grep -E '^(Test Suites|Tests):' "$LOG/jest.log" | sed 's/^/  /' | tee -a "$SUMMARY"
 
