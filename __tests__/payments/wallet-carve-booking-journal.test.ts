@@ -149,7 +149,9 @@ function makeWorld(legPaise: number) {
         .mockResolvedValue({ _sum: { basePaise: 0, surchargePaise: 0 } }),
       create: overageCreate,
       // The member's side payment stays unpaid once the carve has minted it.
-      count: jest.fn(async () => overageCreate.mock.calls.length),
+      updateMany: jest.fn(async () => ({
+        count: overageCreate.mock.calls.length,
+      })),
     },
     bookingUtilization: {
       findUnique: jest.fn().mockResolvedValue({ id: "bu" }),

@@ -69,7 +69,7 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue(null),
     },
-    overageEvent: { count: jest.fn().mockResolvedValue(0) },
+    overageEvent: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     consultantEarnings: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest

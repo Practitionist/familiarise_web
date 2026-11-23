@@ -111,7 +111,7 @@ function makeTx(opts: {
           .mockResolvedValue({ _sum: { basePaise: 0, surchargePaise: 0 } }),
         create: jest.fn().mockResolvedValue({ id: "ev1" }),
         // The side payment the recorder minted is still unpaid.
-        count: jest.fn().mockResolvedValue(1),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       bookingUtilization: {
         findUnique: jest.fn().mockResolvedValue({ id: "bu1" }),
@@ -795,7 +795,8 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
           payment: { id: "side_wallet_1", parentPaymentId: "parent_wallet_1" },
         }),
         // Unpaid when the earning is written; none left once this one fails.
-        count: jest.fn().mockResolvedValueOnce(1).mockResolvedValue(0),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        count: jest.fn().mockResolvedValue(0),
       },
       payment: {
         findUnique: jest.fn().mockResolvedValue({
@@ -913,7 +914,7 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
             parentPaymentId: "parent_license_1",
           },
         }),
-        count: jest.fn().mockResolvedValue(1),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       payment: {
         findUnique: jest.fn().mockResolvedValue({

@@ -178,7 +178,7 @@ function makeWorld(rail: "CARD" | "WALLET") {
     creditNote: { findUnique: jest.fn(async () => null) },
     overageEvent: {
       findMany: jest.fn(async () => []),
-      count: jest.fn(async () => 0),
+      updateMany: jest.fn(async () => ({ count: 0 })),
     },
     orgAuditLog: { create: jest.fn(async () => ({})) },
   };

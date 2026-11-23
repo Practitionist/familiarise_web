@@ -62,7 +62,7 @@ jest.mock("../../lib/prisma", () => {
     },
     overageEvent: {
       findMany: jest.fn().mockResolvedValue([]),
-      count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: {

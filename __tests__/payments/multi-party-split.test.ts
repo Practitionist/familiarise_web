@@ -258,7 +258,7 @@ function createEarningsTestHarness(options: EarningsHarnessOptions = {}) {
       findMany: jest.fn(async () => options.paymentLegs ?? []),
       findUnique: jest.fn(async () => null),
     },
-    overageEvent: { count: jest.fn(async () => 0) },
+    overageEvent: { updateMany: jest.fn(async () => ({ count: 0 })) },
     ...(options.billingAccount
       ? {
           billingAccount: {
