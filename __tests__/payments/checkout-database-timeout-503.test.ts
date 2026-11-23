@@ -82,6 +82,7 @@ import {
   fetchCheckoutWithBusyRetry,
 } from "../../app/checkout/plans/utils";
 import { getErrorToast } from "../../lib/errors/mapping/payment-error-toast-map";
+import { replayByIdempotencyKey } from "../../lib/payments/operations/checkout-replay";
 
 const actualPricing = jest.requireActual(
   "../../lib/payments/checkout/pricing",
@@ -197,6 +198,18 @@ describe("a database timeout before the booking commits answers a typed 503", ()
     expect(soleCapture().level).toBe("warning");
   });
 
+  it("a read timeout in pricing, after the replay lookup found no earlier attempt", async () => {
+    $transaction.mockRejectedValueOnce(queryReadTimeout());
+
+    const res = await POST(webinarCheckout());
+
+    expect(replayByIdempotencyKey).toHaveBeenCalledTimes(1);
+    expect(calculateAmountAndValidate).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject(DATABASE_BUSY_BODY);
+    expect(soleCapture().level).toBe("warning");
+  });
+
   it("the booking transaction past its timeout: rolled back, the minted order retired", async () => {
     calculateAmountAndValidate.mockResolvedValueOnce(PRICED);
     revalidateInsideLock.mockResolvedValueOnce(null);
@@ -228,6 +241,22 @@ describe("what keeps its answer", () => {
     const body = await res.json();
 
     expect(res.status).toBe(500);
+    expect(body.yourCardWasNotCharged).toBeUndefined();
+    expect(body.errorId).toBe("0123456789abcdef0123456789abcdef");
+    expect(soleCapture().level).toBeUndefined();
+  });
+
+  it("a read timeout at the replay lookup is a fault without the not-charged claim, since the key may name a paid checkout", async () => {
+    jest
+      .mocked(replayByIdempotencyKey)
+      .mockRejectedValueOnce(queryReadTimeout());
+
+    const res = await POST(webinarCheckout());
+    const body = await res.json();
+
+    expect(calculateAmountAndValidate).not.toHaveBeenCalled();
+    expect(res.status).toBe(500);
+    expect(body.errorType).toBe("UNKNOWN_ERROR");
     expect(body.yourCardWasNotCharged).toBeUndefined();
     expect(body.errorId).toBe("0123456789abcdef0123456789abcdef");
     expect(soleCapture().level).toBeUndefined();
