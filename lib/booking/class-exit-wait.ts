@@ -42,12 +42,11 @@ export function exitWaitOf(rows: readonly VoidRow[]): ExitWait | null {
         ? reportWindowClosesAt(new Date(r.outcomeAt))
         : null,
     }));
-  if (pending.length === 0) return null;
-  return pending.reduce((last, w) =>
-    (w.settlesBy?.getTime() ?? Infinity) >
-    (last.settlesBy?.getTime() ?? Infinity)
-      ? w
-      : last,
+  // An unknown verdict time settles last; no pending void means the exit may run now.
+  const settlesAt = (w: ExitWait) => w.settlesBy?.getTime() ?? Infinity;
+  return pending.reduce<ExitWait | null>(
+    (last, w) => (last === null || settlesAt(w) > settlesAt(last) ? w : last),
+    null,
   );
 }
 
