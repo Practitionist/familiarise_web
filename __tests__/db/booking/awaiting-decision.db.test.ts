@@ -694,11 +694,18 @@ describe("a plan with parked sessions", () => {
     expect(labels.lines.learnerList).toBe(line);
     expect(labels.lines.page).toContain(line);
     expect(labels.lines.staffDrawer).toBe(line);
-    // Each parked session says so on every surface that lists sessions.
-    expect(labels.parkedRows).toEqual({
-      learnerList: 2,
-      page: 2,
-      staffDrawer: 2,
+    // Each parked session says so on every surface that lists sessions, and the
+    // next steps are the session ahead and ops' decision, never Completed.
+    expect({
+      parkedRows: labels.parkedRows,
+      nextSession: labels.timeline.includes("Next session"),
+      opsStep: labels.timeline.includes("Our team decides 2 sessions"),
+      completedStep: labels.timeline.includes("Completed"),
+    }).toEqual({
+      parkedRows: { learnerList: 2, page: 2, staffDrawer: 2 },
+      nextSession: true,
+      opsStep: true,
+      completedStep: false,
     });
   });
 
