@@ -277,6 +277,25 @@ describe("a session parked for ops holds its booking's status", () => {
     ).toBe(
       "Week done. Schedule the next 2. 2 sessions are waiting on a decision.",
     );
+    // A booking being moved keeps its move prompt first.
+    const moving = bookingStatus(
+      {
+        ...plan,
+        reschedule: {
+          by: "CONSULTANT",
+          mine: false,
+          proposedStartsAt: null,
+          originalStartsAt: null,
+          expiresAt: null,
+        },
+        names: { payer: "Charlotte", consultant: "Hannah" },
+      },
+      "CONSULTEE",
+    );
+    expect(moving.stage).toBe("BEING_MOVED");
+    expect(moving.line).toBe(
+      "Hannah asked for a new time. 2 sessions are waiting on a decision.",
+    );
     // The host's own live class keeps its event word, with the line.
     expect(
       bookingStatus(

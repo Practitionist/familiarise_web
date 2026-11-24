@@ -390,9 +390,18 @@ describe("a park through the ops door, uncommitted while auto-complete runs, kee
         };
       });
       const sweep = autoCompleteAppointments({ startedAt: Date.now() });
-      await Promise.race([asked, sweep]);
-      paused.open();
-      await Promise.all([door, sweep]);
+      // The race counts only if the sweep reached this booking's lock while the park was open.
+      let askedFirst = false;
+      try {
+        askedFirst = await Promise.race([
+          asked.then(() => true),
+          sweep.then(() => false),
+        ]);
+      } finally {
+        paused.open();
+        await Promise.all([door, sweep]);
+      }
+      expect(askedFirst).toBe(true);
 
       expect({
         status: await booking.status(),
@@ -642,6 +651,7 @@ describe("a plan with parked sessions", () => {
       learnerList: word,
       expertList: word,
       page: word,
+      pageChip: word,
     });
   });
 });

@@ -156,12 +156,26 @@ export function listStatusFacts(
   };
 }
 
-/** A subscription row's plan end has passed, as its booking page reads it; undefined for other kinds. */
+/**
+ * A subscription row's plan end has passed, as its booking page reads it;
+ * undefined for other kinds and for a row whose end cannot be resolved.
+ */
 export function planEndedOf(
-  sub: PlanEndShape | null | undefined,
+  sub:
+    | (Omit<PlanEndShape, "subscriptionPlan"> & {
+        subscriptionPlan: PlanEndShape["subscriptionPlan"] | null;
+      })
+    | null
+    | undefined,
   now: Date,
 ): boolean | undefined {
-  return sub ? subscriptionIsOver(sub, now) : undefined;
+  if (!sub) return undefined;
+  const { subscriptionPlan } = sub;
+  if (!sub.planEndsAt && !subscriptionPlan) return undefined;
+  return subscriptionIsOver(
+    { ...sub, subscriptionPlan: subscriptionPlan ?? { durationInMonths: 0 } },
+    now,
+  );
 }
 
 /** A trial's hold: its own due time, else its order's expiry, and whether it lapsed. */

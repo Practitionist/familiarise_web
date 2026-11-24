@@ -30,6 +30,7 @@ import {
   bucketFactsOf,
   listStatusFacts,
   paymentsLapsed,
+  planEndedOf,
   trialHoldFacts,
 } from "./list-status-facts";
 import {
@@ -265,6 +266,7 @@ export function mapAppointmentDetail(
     payDeadline: pendingDeadline ?? null,
     payLapsed: paymentsLapsed(appointment.payment),
     parkedSessions: holdFacts.parkedSessions,
+    planEnded: planEndedOf(appointment.subscription, now),
     bookingSource:
       appointment.consultation?.bookingSource ??
       appointment.subscription?.bookingSource ??

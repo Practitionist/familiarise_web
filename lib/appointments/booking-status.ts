@@ -330,6 +330,11 @@ function wordOf(
   }
 }
 
+const APPENDS_PARKED_LINE = new Set<BookingStage>([
+  "AWAITING_ALLOCATION",
+  "BEING_MOVED",
+]);
+
 /** A live booking keeps its word; its parked sessions are named under it. */
 function parkedLine(f: BookingStatusFacts): string {
   const n = f.parkedSessions ?? 0;
@@ -544,9 +549,9 @@ export function bookingStatus(
     stage,
     label: word,
     tone: WORD_TONE[word],
-    // A plan waiting for its next placement keeps its prompt and names the parked sessions after it.
+    // A placement or move prompt stays first; the parked sessions are named after it.
     line:
-      stage === "AWAITING_ALLOCATION" && parkedLine(f)
+      APPENDS_PARKED_LINE.has(stage) && parkedLine(f)
         ? [line, parkedLine(f)].filter(Boolean).join(" ")
         : line,
   };
