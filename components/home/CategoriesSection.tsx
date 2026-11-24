@@ -1,82 +1,125 @@
-"use client";
-
-import { motion } from "framer-motion";
-import { ChevronRight, LucideIcon } from "lucide-react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { CATEGORIES } from "./data";
+import { domainPath } from "@/lib/explore/domain-slug";
+import { cn } from "@/utils/tailwind";
+import { FIELD_GROUPS, GOAL_LINKS, type FieldGroup } from "./fields";
 
-function CategoryCard({
-  category,
-  consultantCount,
-  index,
-}: {
-  category: { icon: LucideIcon; name: string; color: string };
-  /** Verified consultants in the domain of this name, or 0 when there is no
-   *  such domain yet. Zero renders no line rather than "0 experts" (#1490). */
-  consultantCount: number;
-  index: number;
-}) {
-  const Icon = category.icon;
+const SPAN_CLASSES: Record<number, string> = {
+  2: "lg:col-span-2",
+  3: "lg:col-span-3",
+  5: "lg:col-span-5",
+};
 
+/** Wide-narrow, then narrow-wide, on five columns; the last tile stretches to close an unfinished row. */
+function tileSpans(count: number): number[] {
+  const spans = Array.from({ length: count }, (_, i) =>
+    i % 4 === 0 || i % 4 === 3 ? 3 : 2,
+  );
+  const remainder = spans.reduce((sum, span) => sum + span, 0) % 5;
+  if (remainder > 0) spans[count - 1] += 5 - remainder;
+  return spans;
+}
+
+function expertCount(count: number): string {
+  return count === 1 ? "1 expert" : `${count} experts`;
+}
+
+function GroupTile({
+  group,
+  domains,
+  span,
+}: Readonly<{
+  group: FieldGroup;
+  domains: { name: string; count: number }[];
+  span: number;
+}>) {
+  const wide = span > 2;
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.9 }}
-      whileInView={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.4, delay: index * 0.05 }}
-      viewport={{ once: true }}
+    <article
+      className={cn(
+        "relative isolate flex min-h-[22rem] flex-col justify-between overflow-hidden rounded-3xl bg-zinc-900 p-7 text-white md:p-9",
+        SPAN_CLASSES[span],
+      )}
     >
-      <Link
-        href={`/explore/experts?domain=${encodeURIComponent(category.name.toLowerCase())}`}
-      >
-        <Card className="group cursor-pointer border border-border bg-card hover:border-foreground/40 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-2">
-          <CardContent className="p-6 flex items-center gap-4">
-            <div
-              className={`w-12 h-12 rounded-xl ${category.color} flex items-center justify-center group-hover:scale-110 transition-transform`}
-            >
-              <Icon className="w-6 h-6 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h3 className="font-semibold text-foreground truncate">
-                {category.name}
-              </h3>
-              {consultantCount > 0 && (
-                <p className="text-sm text-muted-foreground truncate">
-                  {consultantCount === 1
-                    ? "1 expert"
-                    : `${consultantCount} experts`}
-                </p>
-              )}
-            </div>
-            <ChevronRight className="w-5 h-5 text-muted-foreground ml-auto group-hover:translate-x-1 transition-transform shrink-0" />
-          </CardContent>
-        </Card>
-      </Link>
-    </motion.div>
+      <Image
+        src={group.photo.src}
+        alt=""
+        fill
+        sizes={
+          wide
+            ? "(min-width: 1024px) 60vw, 100vw"
+            : "(min-width: 1024px) 40vw, 100vw"
+        }
+        className="-z-10 object-cover"
+      />
+      {/* Darkest behind the text: from the left on wide tiles, from the top on narrow ones. */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 -z-10",
+          wide
+            ? "bg-gradient-to-r from-black/85 via-black/55 to-black/15"
+            : "bg-gradient-to-b from-black/85 via-black/50 to-black/25",
+        )}
+      />
+
+      <div className={cn(wide && "lg:max-w-[55%]")}>
+        <h3 className="text-2xl font-semibold tracking-tight md:text-3xl">
+          {group.title}
+        </h3>
+        <p className="mt-3 text-base leading-relaxed text-zinc-200">
+          {group.benefit}
+        </p>
+        <ul className="mt-5 flex flex-wrap gap-x-6 gap-y-2">
+          {domains.map(({ name, count }) => (
+            <li key={name}>
+              <Link
+                href={domainPath(name)}
+                className="group inline-flex items-center gap-1.5 text-sm font-medium underline decoration-white/40 underline-offset-4 transition-colors hover:decoration-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                {name}
+                <span className="text-zinc-300">· {expertCount(count)}</span>
+                <ArrowUpRight
+                  aria-hidden="true"
+                  className="h-4 w-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </article>
   );
 }
 
 export function CategoriesSection({
   consultantsByDomain,
-}: {
-  /** Verified consultant counts keyed by lowercased domain name (#1490). */
+}: Readonly<{
+  /** Verified consultant counts keyed by lowercased domain name. */
   consultantsByDomain: Record<string, number>;
-}) {
+}>) {
+  // A tile shows while any of its domains has verified experts, and lists only those domains.
+  const groups = FIELD_GROUPS.map((group) => ({
+    group,
+    domains: group.domains
+      .map((name) => ({
+        name,
+        count: consultantsByDomain[name.toLowerCase()] ?? 0,
+      }))
+      .filter(({ count }) => count > 0),
+  })).filter(({ domains }) => domains.length > 0);
+  const spans = tileSpans(groups.length);
+
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-white to-zinc-50 relative overflow-hidden">
       <div className="absolute inset-0 grid-pattern-dark opacity-30" />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center mb-12"
-        >
+        <div className="text-center mb-12">
           <Badge
             variant="secondary"
             className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
@@ -89,39 +132,51 @@ export function CategoriesSection({
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Find experts in your field and start learning from the best
           </p>
-        </motion.div>
+        </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {CATEGORIES.map((category, index) => (
-            <CategoryCard
-              key={category.name}
-              category={category}
-              consultantCount={
-                consultantsByDomain[category.name.toLowerCase()] ?? 0
-              }
-              index={index}
+        <div className="grid gap-4 lg:grid-cols-5">
+          {groups.map(({ group, domains }, index) => (
+            <GroupTile
+              key={group.title}
+              group={group}
+              domains={domains}
+              span={spans[index]}
             />
           ))}
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          viewport={{ once: true }}
-          className="text-center mt-10"
-        >
-          <Link href="/explore/experts">
-            <Button
-              variant="outline"
-              size="lg"
-              className="border-border hover:bg-muted"
-            >
-              View All Categories
-              <ChevronRight className="ml-2 w-4 h-4" />
-            </Button>
-          </Link>
-        </motion.div>
+        <div className="mt-10 flex flex-col items-center gap-4">
+          <p className="text-sm font-medium text-muted-foreground">
+            Or start from a goal
+          </p>
+          <ul className="flex flex-wrap justify-center gap-2">
+            {GOAL_LINKS.map(({ label, href, icon: Icon }) => (
+              <li key={label}>
+                <Link
+                  href={href}
+                  className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-foreground/30 hover:bg-muted"
+                >
+                  <Icon aria-hidden="true" className="h-4 w-4" />
+                  {label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="text-center mt-10">
+          <Button
+            variant="outline"
+            size="lg"
+            className="border-border hover:bg-muted"
+            asChild
+          >
+            <Link href="/explore/experts">
+              View all experts
+              <ChevronRight aria-hidden="true" className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
       </div>
     </section>
   );
