@@ -500,7 +500,7 @@ async function readPageReports(
       deletedAt: null,
       flowReason: { in: CLASSIFIED_REPORT_REASONS },
     },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    orderBy: [{ flowReasonAt: "asc" }, { id: "asc" }],
     select: {
       ...OUTCOME_REPORT_FIELDS,
       appointmentOccurrenceId: true,

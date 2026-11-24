@@ -131,6 +131,23 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     expect(json.intents).toEqual([]);
   });
 
+  it("returns the session the thread is about, which the client names on its next turn", async () => {
+    mockedFindThread.mockResolvedValue({
+      id: "case-1",
+      requesterUserId: "u1",
+      activeChannel: "SELF_SERVE",
+      appointmentOccurrenceId: "occ-1",
+      messages: [],
+    });
+    const res = await GET(req("GET"), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(mockedFindThread.mock.calls[0][0].select).toMatchObject({
+      appointmentOccurrenceId: true,
+    });
+    expect((await res.json()).data.appointmentOccurrenceId).toBe("occ-1");
+  });
+
   it("accepts uuid ids identically", async () => {
     const uuid = "329c0b89-0648-4f8e-82a4-25811cdea440";
     const res = await GET(req("GET"), {
@@ -289,20 +306,43 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       mockedRunTurn.mockResolvedValue({ messages: [], actions: [] });
     });
 
-    it("the intent turn the thread sends names the page's session and parses through the route's schema", () => {
-      const sent = supportTurnBody(
-        { category: "NO_SHOW", chosenLabel: "No-show", clientTurnId: "t-1" },
-        "occ-ended",
-      );
-      expect(SupportTurnSchema.parse(sent)).toEqual({
+    it("every turn the thread sends names its session and parses through the route's schema", () => {
+      // A new intent prefers the session the page was opened for.
+      expect(
+        SupportTurnSchema.parse(
+          supportTurnBody(
+            {
+              category: "NO_SHOW",
+              chosenLabel: "No-show",
+              clientTurnId: "t-1",
+            },
+            { thread: "occ-other", page: "occ-ended" },
+          ),
+        ),
+      ).toEqual({
         category: "NO_SHOW",
         clientTurnId: "t-1",
         appointmentOccurrenceId: "occ-ended",
       });
-      // A follow-up turn carries no session: only the intent turn picks the case.
+      // An answer names the session of the thread it answers, whatever the page says.
       expect(
-        supportTurnBody({ chosenOptionId: "expert" }, "occ-ended"),
-      ).toEqual({ chosenOptionId: "expert" });
+        SupportTurnSchema.parse(
+          supportTurnBody(
+            { chosenOptionId: "expert", chosenLabel: "The expert" },
+            { thread: "occ-ended", page: "occ-other" },
+          ),
+        ),
+      ).toEqual({
+        chosenOptionId: "expert",
+        appointmentOccurrenceId: "occ-ended",
+      });
+      // A booking-wide thread names none.
+      expect(
+        supportTurnBody(
+          { userMessage: "Hello" },
+          { thread: null, page: "occ-ended" },
+        ),
+      ).toEqual({ userMessage: "Hello" });
     });
 
     it("passes an ended session of this booking through to the turn", async () => {

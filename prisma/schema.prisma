@@ -384,6 +384,8 @@ model SupportCase {
   currentNodeId   String?           @db.VarChar(64)
   /// The no-show flow terminal's reason (SupportFlowReasonEnum); a reason that counts for a verdict is never replaced.
   flowReason      String?           @db.VarChar(64)
+  /// When `flowReason` was answered; it moves only with the reason, and the report window is judged on it.
+  flowReasonAt    DateTime?         @db.Timestamptz
   activeChannel   SupportChannel    @default(SELF_SERVE)
   issueType       SupportIssueType?
   priority        SupportPriority   @default(MEDIUM)

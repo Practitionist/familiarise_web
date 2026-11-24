@@ -78,6 +78,7 @@ export async function GET(
         category: true,
         flowKey: true,
         currentNodeId: true,
+        appointmentOccurrenceId: true,
         requesterUserId: true,
         ackDueAt: true,
         acknowledgedAt: true,

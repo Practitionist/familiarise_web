@@ -43,7 +43,7 @@ it("holds a closed verdict the expert disputed inside its window and lists it fo
     where: { id: supportCase.id },
     data: {
       flowReason: "provider_attended",
-      createdAt: new Date(Date.now() - 48 * HOUR_MS),
+      flowReasonAt: new Date(Date.now() - 48 * HOUR_MS),
     },
   });
 

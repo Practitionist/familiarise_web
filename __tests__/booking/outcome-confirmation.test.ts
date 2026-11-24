@@ -288,7 +288,7 @@ const filed = (flowReason: string, requesterUserId: string): Row => ({
   flowReason,
   requesterUserId,
   ownershipScope: "PERSONAL",
-  createdAt: hoursAgo(49),
+  flowReasonAt: hoursAgo(49),
   deletedAt: null,
 });
 
@@ -319,7 +319,7 @@ describe("participant reports", () => {
       hostAbsent("a", {
         outcomeAt: hoursAgo(10),
         supportCases: [
-          { ...filed("provider_no_show", "priya"), createdAt: hoursAgo(9) },
+          { ...filed("provider_no_show", "priya"), flowReasonAt: hoursAgo(9) },
         ],
       }),
     );
@@ -331,12 +331,68 @@ describe("participant reports", () => {
     expect(matchesWhere(row("a"), needsHumanWhere(NOW))).toBe(false);
   });
 
+  it("judges a report by when its reason was answered, not when its case was opened", async () => {
+    occurrences.rows.push(
+      // Opened inside the window, answered an hour after it closed: no effect.
+      verdict("late", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            createdAt: hoursAgo(49),
+            flowReasonAt: hoursAgo(1),
+          },
+        ],
+      }),
+      // Answered before the session ended: no effect.
+      verdict("beforeEnd", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            createdAt: at(-10),
+            flowReasonAt: at(-5),
+          },
+        ],
+      }),
+      // Opened before the session ended, answered after it: a dispute.
+      verdict("early", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            createdAt: at(-10),
+            flowReasonAt: hoursAgo(49),
+          },
+        ],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 2, disputed: 1 });
+    expect(row("late").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("beforeEnd").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("early").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("stamps past a dispute reason on an org operator's case, which counts for nothing", async () => {
+    occurrences.rows.push(
+      verdict("a", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            ownershipScope: "ORG_OPERATIONS",
+          },
+        ],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("a").outcomeConfirmedAt).toEqual(NOW);
+  });
+
   it("does not stamp an open window on an agreement the wrong side filed", async () => {
     occurrences.rows.push(
       hostAbsent("a", {
         outcomeAt: hoursAgo(10),
         supportCases: [
-          { ...filed("provider_no_show", "hannah"), createdAt: hoursAgo(9) },
+          { ...filed("provider_no_show", "hannah"), flowReasonAt: hoursAgo(9) },
         ],
       }),
     );
@@ -352,7 +408,10 @@ describe("participant reports", () => {
         {
           outcomeAt: hoursAgo(10),
           supportCases: [
-            { ...filed("provider_no_show", "priya"), createdAt: hoursAgo(9) },
+            {
+              ...filed("provider_no_show", "priya"),
+              flowReasonAt: hoursAgo(9),
+            },
           ],
         },
         { attendanceCorroboratedSessionIds: ["s-2"] },

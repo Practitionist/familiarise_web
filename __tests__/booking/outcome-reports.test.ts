@@ -33,7 +33,7 @@ const report = (
   flowReason,
   requesterUserId: by,
   ownershipScope: "PERSONAL",
-  createdAt: new Date("2026-11-24T09:00:00Z"),
+  flowReasonAt: new Date("2026-11-24T09:00:00Z"),
   deletedAt: null,
   ...overrides,
 });
@@ -98,11 +98,12 @@ describe("a report that does not count", () => {
     ).toBe("silent");
   });
 
-  it("filed after the window closed, or before the booked end, or deleted", () => {
+  it("answered after the window closed, before the booked end, or never, or deleted", () => {
     const v = verdict("LEARNER_ABSENT");
     for (const overrides of [
-      { createdAt: new Date(CLOSES.getTime() + 1) },
-      { createdAt: new Date(END.getTime() - 1) },
+      { flowReasonAt: new Date(CLOSES.getTime() + 1) },
+      { flowReasonAt: new Date(END.getTime() - 1) },
+      { flowReasonAt: null },
       { deletedAt: VERDICT_AT },
     ]) {
       expect(
@@ -112,12 +113,12 @@ describe("a report that does not count", () => {
   });
 });
 
-it("counts a report filed before the verdict was written", () => {
+it("counts a report answered before the verdict was written", () => {
   const early = new Date("2026-11-23T12:00:00Z");
   expect(early < VERDICT_AT).toBe(true);
   expect(
     judgeReports(
-      [report("provider_no_show", "priya", { createdAt: early })],
+      [report("provider_no_show", "priya", { flowReasonAt: early })],
       verdict("HOST_ABSENT"),
     ),
   ).toBe("agreed");

@@ -46,6 +46,8 @@ export interface SupportThread {
   activeChannel: string;
   category?: string;
   currentNodeId: string | null;
+  /** The session this thread is about; every later turn names it. */
+  appointmentOccurrenceId?: string | null;
   resolvedAt?: string | null;
   csatRating?: number | null;
   hasMore?: boolean;
@@ -92,6 +94,7 @@ interface TurnResult {
   actions: SupportAction[];
   outcomeId?: string | null;
   replyByAt?: string | null;
+  appointmentOccurrenceId?: string | null;
 }
 
 /** One turn's payload, kept so a failed send can be repeated verbatim. */
@@ -108,12 +111,18 @@ export interface TurnVars {
   chosenLabel?: string;
 }
 
-/** The POST body of one turn; an intent turn names the session it is about, when the page was opened for one. */
+/**
+ * The POST body of one turn. Every turn names the session of the thread it answers; a new intent prefers the
+ * session the page was opened for.
+ */
 export function supportTurnBody(
   { chosenLabel: _chosenLabel, ...body }: TurnVars,
-  occurrenceId: string | undefined,
+  sessions: { thread?: string | null; page?: string },
 ) {
-  return body.category && occurrenceId
+  const occurrenceId = body.category
+    ? (sessions.page ?? sessions.thread)
+    : sessions.thread;
+  return occurrenceId
     ? { ...body, appointmentOccurrenceId: occurrenceId }
     : body;
 }
@@ -275,8 +284,11 @@ export function useSupportThread(
 
   const turn = useMutation({
     mutationFn: async (vars: TurnVars): Promise<TurnResult> => {
-      const body = supportTurnBody(vars, occurrenceId);
       const current = qc.getQueryData<ThreadData>(queryKey)?.thread;
+      const body = supportTurnBody(vars, {
+        thread: current?.appointmentOccurrenceId,
+        page: occurrenceId,
+      });
       if (
         current?.activeChannel === "HUMAN" &&
         current.id !== "local" &&
@@ -375,6 +387,10 @@ export function useSupportThread(
             status: result.status,
             activeChannel: result.activeChannel,
             currentNodeId: result.currentNodeId,
+            // Kept before the refetch, so an option pressed at once still answers this session.
+            ...(result.appointmentOccurrenceId !== undefined
+              ? { appointmentOccurrenceId: result.appointmentOccurrenceId }
+              : {}),
             messages: merged.thread.messages.map((m) =>
               m.pending ? { ...m, pending: false } : m,
             ),

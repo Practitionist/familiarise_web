@@ -80,16 +80,17 @@ export interface OutcomeReport {
   flowReason: string | null;
   requesterUserId: string;
   ownershipScope: string;
-  createdAt: Date;
+  /** When the reason was answered, which may be long after the case was opened. */
+  flowReasonAt: Date | null;
   deletedAt: Date | null;
 }
 
 /** The verdict a report is about, with who may report on each side. */
 export interface ReportedVerdict {
   outcome: NegativeMoneyOutcome;
-  /** The booked end; a report counts from here. */
+  /** The booked end; a reason answered from here counts. */
   endsAt: Date;
-  /** `outcomeAt` plus the report window; a report counts up to here. */
+  /** `outcomeAt` plus the report window; a reason answered up to here counts. */
   windowClosesAt: Date;
   hostUserIds: readonly string[];
   /** Live learner seat holders of the appointment. */
@@ -105,8 +106,9 @@ export function countedEffect(
   if (!effect || report.deletedAt) return null;
   // An org operator's case goes to ops with no effect on the verdict.
   if (report.ownershipScope === "ORG_OPERATIONS") return null;
-  if (report.createdAt < verdict.endsAt) return null;
-  if (report.createdAt > verdict.windowClosesAt) return null;
+  const answeredAt = report.flowReasonAt;
+  if (!answeredAt || answeredAt < verdict.endsAt) return null;
+  if (answeredAt > verdict.windowClosesAt) return null;
   const by = report.requesterUserId;
   const isHost = verdict.hostUserIds.includes(by);
   const onSide =

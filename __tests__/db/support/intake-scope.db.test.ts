@@ -112,11 +112,13 @@ describe("a no-show report on a past session", () => {
       appointmentId: booking.appointmentId,
     });
 
-    await runSupportTurn(booking.appointmentId, learner.userId, {
+    const first = await runSupportTurn(booking.appointmentId, learner.userId, {
       category: "NO_SHOW",
     });
+    // The client names the session the first turn answered on.
     const result = await runSupportTurn(booking.appointmentId, learner.userId, {
       chosenOptionId: "expert",
+      appointmentOccurrenceId: first?.appointmentOccurrenceId ?? undefined,
     });
 
     const report = await prisma.supportCase.findFirstOrThrow({
@@ -127,6 +129,7 @@ describe("a no-show report on a past session", () => {
       appointmentOccurrenceId: booking.occurrenceId,
       scopeKey: `OCCURRENCE:${booking.occurrenceId}`,
       flowReason: "provider_no_show",
+      flowReasonAt: expect.any(Date),
       activeChannel: "HUMAN",
     });
     const other = await prisma.supportCase.findUniqueOrThrow({

@@ -60,7 +60,10 @@ export interface RunTurnInput {
   urgent?: boolean;
   /** "This didn't fix it" on a resolved human conversation. */
   reopen?: boolean;
-  /** The ended session a NO_SHOW report is about; the route has checked it. Defaults to the last ended one. */
+  /**
+   * The ended session the turn is about; the route has checked it. A NO_SHOW intent defaults to the last ended
+   * session, and any other turn with a session answers on that session's open case.
+   */
   appointmentOccurrenceId?: string;
   /**
    * Caller reached this appointment only via the org-operator party branch.
@@ -93,6 +96,8 @@ export interface RunTurnResult {
   outcomeId?: string | null;
   /** Committed acknowledgement SLA timestamp in ISO format, when escalated. */
   replyByAt?: string | null;
+  /** The session the thread is about; the client names it on every later turn. */
+  appointmentOccurrenceId?: string | null;
 }
 
 function isUnrecognizedBotMessage(m: {
@@ -173,16 +178,31 @@ export async function runSupportTurn(
     ? await buildSupportContext("pending", appointmentId, userId, "NO_SHOW")
     : null;
   if (noShow && !noShowCtx) return null;
-  const thread = noShowCtx
-    ? (
-        await createOrReuseSupportCase({
-          ...intake,
-          category: "NO_SHOW",
-          appointmentOccurrenceId:
-            input.appointmentOccurrenceId ?? noShowCtx.lastEndedOccurrenceId,
-        })
-      ).supportCase
-    : await openBookingThread(intake, input.category);
+  const thread = await resolveThread(intake, input, noShowCtx);
+  const result = await advanceThread(
+    appointmentId,
+    userId,
+    input,
+    thread,
+    noShowCtx,
+  );
+  // The client sends this session with its next turn, so the answer lands on this case.
+  return (
+    result && {
+      ...result,
+      appointmentOccurrenceId: thread.appointmentOccurrenceId,
+    }
+  );
+}
+
+/** One turn on the thread its caller resolved. */
+async function advanceThread(
+  appointmentId: string,
+  userId: string,
+  input: RunTurnInput,
+  thread: SupportCase,
+  noShowCtx: SupportContext | null,
+): Promise<RunTurnResult | null> {
   if (
     input.clientTurnId &&
     (await prisma.supportCaseMessage.findUnique({
@@ -507,7 +527,54 @@ export async function runSupportTurn(
   };
 }
 
-/** The newest open thread on the booking, else a new one; a new intent on a resolved human conversation starts its own. */
+/** A NO_SHOW intent files on its session; a later turn naming a session answers there; anything else is booking-wide. */
+async function resolveThread(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  input: RunTurnInput,
+  noShowCtx: SupportContext | null,
+): Promise<SupportCase> {
+  if (noShowCtx) {
+    const { supportCase } = await createOrReuseSupportCase({
+      ...intake,
+      category: "NO_SHOW",
+      appointmentOccurrenceId:
+        input.appointmentOccurrenceId ?? noShowCtx.lastEndedOccurrenceId,
+    });
+    return supportCase;
+  }
+  if (!input.category && input.appointmentOccurrenceId)
+    return openSessionThread(intake, input.appointmentOccurrenceId);
+  return openBookingThread(intake, input.category);
+}
+
+/** The requester's newest open case on one session of the booking, else a new one there. */
+async function openSessionThread(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  occurrenceId: string,
+): Promise<SupportCase> {
+  const open = await prisma.supportCase.findFirst({
+    where: {
+      appointmentId: intake.appointmentId,
+      scopeKey: `OCCURRENCE:${occurrenceId}`,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
+      closedAt: null,
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (open) return open;
+  const { supportCase } = await createOrReuseSupportCase({
+    ...intake,
+    category: "OTHER",
+    appointmentOccurrenceId: occurrenceId,
+  });
+  return supportCase;
+}
+
+/** The newest open booking-wide thread, else a new one; a session's own case is reached only through its session. */
 async function openBookingThread(
   intake: CreateSupportCaseInput & { appointmentId: string },
   category: SupportThreadCategory | undefined,
@@ -519,11 +586,13 @@ async function openBookingThread(
       submitterUserId: intake.submitterUserId,
       organizationId: intake.organizationId,
       ownershipScope: intake.ownershipScope,
+      appointmentOccurrenceId: null,
       closedAt: null,
       deletedAt: null,
     },
     orderBy: { createdAt: "desc" },
   });
+  // A new intent on a resolved human conversation starts its own request.
   if (
     previous &&
     !(
@@ -541,8 +610,8 @@ async function openBookingThread(
 }
 
 /**
- * A NO_SHOW terminal's reason, by CAS: it fills an empty reason or replaces one that counts for no verdict,
- * so a later "I was there" is not lost behind a neutral first answer, while a counted reason is never turned around.
+ * A NO_SHOW terminal's reason and when it was answered, by CAS: it fills an empty reason or replaces one that counts
+ * for no verdict, so a later "I was there" is not lost behind a neutral first answer; a counted reason keeps both.
  */
 async function recordFlowReasonTx(
   tx: Tx,
@@ -560,7 +629,7 @@ async function recordFlowReasonTx(
         { flowReason: { notIn: CLASSIFIED_REPORT_REASONS } },
       ],
     },
-    data: { flowReason: parsed.data },
+    data: { flowReason: parsed.data, flowReasonAt: new Date() },
   });
 }
 

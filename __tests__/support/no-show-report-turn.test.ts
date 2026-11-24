@@ -84,6 +84,7 @@ function openCase(overrides: Row): Row {
     activeChannel: "SELF_SERVE",
     currentNodeId: null,
     flowReason: null,
+    flowReasonAt: null,
     priority: "MEDIUM",
     closedAt: null,
     deletedAt: null,
@@ -170,7 +171,10 @@ it("opens the session's own case while another booking thread is open, and the f
   cases.rows.push(other);
   jest.mocked(buildSupportContext).mockResolvedValue(context(false));
 
-  await runSupportTurn("appointment", "learner", { category: "NO_SHOW" });
+  const first = await runSupportTurn("appointment", "learner", {
+    category: "NO_SHOW",
+  });
+  expect(first?.appointmentOccurrenceId).toBe("occ-ended");
   expect(createOrReuseSupportCase).toHaveBeenCalledWith(
     expect.objectContaining({
       category: "NO_SHOW",
@@ -181,11 +185,48 @@ it("opens the session's own case while another booking thread is open, and the f
   expect(noShow).toMatchObject({ scopeKey: "OCCURRENCE:occ-ended" });
   expect(other).toMatchObject({ category: "PAYMENT_STATUS", flowReason: null });
 
+  // The client names the session the first turn answered on.
   const result = await runSupportTurn("appointment", "learner", {
     chosenOptionId: "expert",
+    appointmentOccurrenceId: "occ-ended",
   });
   expect(result).toMatchObject({ threadId: noShow.id, escalated: true });
   expect(noShow.flowReason).toBe("provider_no_show");
+  expect(noShow.flowReasonAt).toBeInstanceOf(Date);
+});
+
+it("an answer lands on the case of the session it names, and a turn naming none touches neither", async () => {
+  const session = (id: string) =>
+    openCase({
+      id: `case-${id}`,
+      category: "NO_SHOW",
+      scopeKey: `OCCURRENCE:${id}`,
+      appointmentOccurrenceId: id,
+      currentNodeId: "start",
+    });
+  // B is the newer case, so a newest-open-case lookup would pick it.
+  const [a, b] = [session("occ-a"), session("occ-b")];
+  cases.rows.push(a, b);
+  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  const on = (c: Row) =>
+    db.supportCaseMessage.rows.filter((m) => m.caseId === c.id).length;
+
+  const answered = await runSupportTurn("appointment", "learner", {
+    chosenOptionId: "expert",
+    appointmentOccurrenceId: "occ-a",
+  });
+  expect(answered?.threadId).toBe(a.id);
+  expect(a.flowReason).toBe("provider_no_show");
+  expect(b).toMatchObject({ flowReason: null, currentNodeId: "start" });
+  expect(on(b)).toBe(0);
+
+  const sentA = on(a);
+  const loose = await runSupportTurn("appointment", "learner", {
+    userMessage: "Is anyone there?",
+  });
+  expect([a.id, b.id]).not.toContain(loose?.threadId);
+  expect([on(a), on(b)]).toEqual([sentA, 0]);
+  expect(b).toMatchObject({ flowReason: null, currentNodeId: "start" });
 });
 
 it("files on the session the turn names over the default one", async () => {
@@ -200,7 +241,11 @@ it("files on the session the turn names over the default one", async () => {
 it("lets a later 'I was there' replace a neutral first answer, but never turns a counted reason around", async () => {
   jest.mocked(buildSupportContext).mockResolvedValue(context(true));
   await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
-  await runSupportTurn("appointment", "host", { chosenOptionId: "client" });
+  const occ = { appointmentOccurrenceId: "occ-ended" };
+  await runSupportTurn("appointment", "host", {
+    chosenOptionId: "client",
+    ...occ,
+  });
   const noShow = cases.rows[0];
   expect(noShow).toMatchObject({
     status: "RESOLVED",
@@ -209,7 +254,10 @@ it("lets a later 'I was there' replace a neutral first answer, but never turns a
 
   // The neutral first answer gives way, so the dispute reaches the window-close pass.
   await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
-  await runSupportTurn("appointment", "host", { chosenOptionId: "attended" });
+  await runSupportTurn("appointment", "host", {
+    chosenOptionId: "attended",
+    ...occ,
+  });
   expect(cases.rows).toHaveLength(1);
   expect(noShow).toMatchObject({
     activeChannel: "HUMAN",
@@ -217,9 +265,16 @@ it("lets a later 'I was there' replace a neutral first answer, but never turns a
   });
 
   // A counted reason then stands against a later neutral answer.
+  const answeredAt = noShow.flowReasonAt;
   await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
-  await runSupportTurn("appointment", "host", { chosenOptionId: "client" });
-  expect(noShow.flowReason).toBe("provider_attended");
+  await runSupportTurn("appointment", "host", {
+    chosenOptionId: "client",
+    ...occ,
+  });
+  expect(noShow).toMatchObject({
+    flowReason: "provider_attended",
+    flowReasonAt: answeredAt,
+  });
 });
 
 it("stores no reason for a terminal outside the no-show intent", async () => {
