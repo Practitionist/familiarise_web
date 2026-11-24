@@ -1457,13 +1457,15 @@ async function autoCompleteAppointmentsUnlocked(
         );
       });
     }
-    await reportNoticesUnprepared(slotRun.noticesStuck).catch(
-      (error: unknown) => {
-        allErrors.push(
-          `Failed to report sessions stuck on their notices: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-      },
-    );
+    if (slotRun.noticesStuck.length > 0) {
+      await reportNoticesUnprepared(slotRun.noticesStuck).catch(
+        (error: unknown) => {
+          allErrors.push(
+            `Failed to report sessions stuck on their notices: ${error instanceof Error ? error.message : "Unknown error"}`,
+          );
+        },
+      );
+    }
     slotRun.streamFailures.flush();
     slotRun.menteeFailures.flush();
   }
