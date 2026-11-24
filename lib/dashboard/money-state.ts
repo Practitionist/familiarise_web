@@ -840,7 +840,7 @@ function deriveNext(
       if (input.series.exitWait) {
         return {
           kind: "EXIT_SERIES_WAITS",
-          label: exitWaitMessage(input.series.exitWait, zone),
+          label: exitWaitMessage(input.series.exitWait, zone, now),
         };
       }
       return {

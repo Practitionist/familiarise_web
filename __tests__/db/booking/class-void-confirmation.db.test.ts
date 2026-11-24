@@ -231,8 +231,9 @@ describe("the learner's exit while a void's verdict is unconfirmed", () => {
 
     await expect(exit()).rejects.toMatchObject({
       code: "EXIT_WAITS_FOR_VERDICT",
+      // The cut-short void's window, opened a day ago, is still open.
       message: expect.stringContaining(
-        "you can leave the series once that's settled (by ",
+        "You can leave the series once it's settled; the report window closes ",
       ),
     });
     expect(await refundedPaise(buyer.paymentId)).toBe(0);

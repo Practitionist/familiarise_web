@@ -11,7 +11,7 @@ import { isNegativeMoneyOutcome, reportWindowClosesAt } from "./misses";
 export interface ExitWait {
   /** The session whose verdict is being confirmed. */
   sessionStartsAt: Date;
-  /** When its report window closes, after which the pass or ops settle it; null when its verdict time is unknown. */
+  /** When its report window closes; a disputed or weak verdict waits for ops past it. Null when its verdict time is unknown. */
   settlesBy: Date | null;
 }
 
@@ -51,11 +51,19 @@ export function exitWaitOf(rows: readonly VoidRow[]): ExitWait | null {
   );
 }
 
-/** The learner's sentence, in their zone: "…your 12 Nov session; … (by 14 Nov, 5:15 pm IST)". */
-export function exitWaitMessage(wait: ExitWait, zone: string): string {
+/**
+ * The learner's sentence, in their zone. A disputed or weak verdict waits for ops
+ * past its window, so the window's close is named as such, never as a settle date.
+ */
+export function exitWaitMessage(
+  wait: ExitWait,
+  zone: string,
+  now: Date,
+): string {
   const clock = zoneClock(zone);
-  const by = wait.settlesBy
-    ? ` (by ${clock.dayMonth(wait.settlesBy)}, ${clock.time(wait.settlesBy)})`
-    : "";
-  return `We're confirming what happened in your ${clock.dayMonth(wait.sessionStartsAt)} session; you can leave the series once that's settled${by}.`;
+  const lead = `We're confirming what happened in your ${clock.dayMonth(wait.sessionStartsAt)} session.`;
+  if (wait.settlesBy && wait.settlesBy > now) {
+    return `${lead} You can leave the series once it's settled; the report window closes ${clock.dayMonth(wait.settlesBy)}, ${clock.time(wait.settlesBy)}, and if it needs a review our team will decide.`;
+  }
+  return `${lead} Our team is reviewing it, and you can leave the series once it's settled.`;
 }

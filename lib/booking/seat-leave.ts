@@ -335,7 +335,11 @@ async function planSeriesExit(
     const zones = await resolveRecipientTimezones([userId], tx);
     throw new BookingRuleError(
       "EXIT_WAITS_FOR_VERDICT",
-      exitWaitMessage(wait, zones.get(userId) ?? DEFAULT_NOTIFICATION_TIMEZONE),
+      exitWaitMessage(
+        wait,
+        zones.get(userId) ?? DEFAULT_NOTIFICATION_TIMEZONE,
+        now,
+      ),
     );
   }
   if (!payment) return { mode: "full" };

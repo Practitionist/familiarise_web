@@ -557,8 +557,8 @@ describe("EXIT_SERIES (#1780 E-5)", () => {
 });
 
 describe("a class exit waiting for a verdict", () => {
-  it("names the session and when it settles, in the viewer's zone, in place of the exit", () => {
-    const input = base({
+  const waiting = (settlesBy: Date) =>
+    base({
       appointmentType: "CLASS",
       request: { status: "SCHEDULED", kind: "CLASS" },
       occurrences: confirmed,
@@ -569,22 +569,33 @@ describe("a class exit waiting for a verdict", () => {
         N: 12,
         exitRight: true,
         undelivered: 6,
+        // 12 Nov 10:00 IST; its verdict's report window closes at `settlesBy`.
         exitWait: {
-          // 12 Nov 10:00 IST; its verdict at 17:15 IST settles 48 hours later.
           sessionStartsAt: new Date("2026-11-12T04:30:00Z"),
-          settlesBy: new Date("2026-11-14T11:45:00Z"),
+          settlesBy,
         },
       },
     });
-    const next = deriveBookingPresentation(input, "CONSULTEE", {
+  const nextFor = (settlesBy: Date) =>
+    deriveBookingPresentation(waiting(settlesBy), "CONSULTEE", {
       viewerZone: "Asia/Kolkata",
       now: NOW,
     }).nextAction;
+
+  it("names the report window's close in the viewer's zone, never a settle date, in place of the exit", () => {
+    // NOW is 20 Sep 14:42 IST; the window closes two days later at the same time.
+    const next = nextFor(new Date(NOW.getTime() + 48 * 3_600_000));
     expect(next).toEqual({
       kind: "EXIT_SERIES_WAITS",
       label:
-        "We're confirming what happened in your 12 Nov session; you can leave the series once that's settled (by 14 Nov, 5:15 pm IST).",
+        "We're confirming what happened in your 12 Nov session. You can leave the series once it's settled; the report window closes 22 Sept, 2:42 pm IST, and if it needs a review our team will decide.",
     });
+  });
+
+  it("drops the date once the window has passed and says our team is reviewing it", () => {
+    expect(nextFor(new Date(NOW.getTime() - 3_600_000)).label).toBe(
+      "We're confirming what happened in your 12 Nov session. Our team is reviewing it, and you can leave the series once it's settled.",
+    );
   });
 });
 
