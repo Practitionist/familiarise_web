@@ -96,6 +96,7 @@ import {
   stampClassEndRefundsOwed,
   type ClassEndSettlement,
 } from "@/lib/payments/operations/event-refunds";
+import { reportNoticesUnprepared } from "@/lib/booking/session-outcome-sweep";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -1146,7 +1147,7 @@ async function decideOneSlot(
   slot: OutcomeSlot,
   ctx: Omit<
     Parameters<typeof decideSlotOutcome>[1],
-    "onUnreadable" | "failures" | "settleDeadlineAt"
+    "onUnreadable" | "onNoticesStuck" | "failures" | "settleDeadlineAt"
   >,
   run: SlotRun,
   settle: { wrappers: Set<string>; decidedHosts: Set<string> },
@@ -1154,6 +1155,7 @@ async function decideOneSlot(
   const decision = await decideSlotOutcome(slot, {
     ...ctx,
     onUnreadable: (id) => run.unreadable.push(id),
+    onNoticesStuck: (id) => run.noticesStuck.push(id),
     failures: run.streamFailures,
     settleDeadlineAt: run.settleDeadlineAt,
   });
@@ -1172,6 +1174,8 @@ interface SlotRun {
   tally: SlotTally;
   /** Sessions parked this run because Stream's record could not be read in time. */
   unreadable: string[];
+  /** Sessions whose negative verdict has waited past the bound for its notices. */
+  noticesStuck: string[];
   /** Stream read failures across every bite, reported once. */
   streamFailures: RunFailureReporter;
   /** Every session's Stream reads must answer by the end of the run's start budget. */
@@ -1391,6 +1395,7 @@ async function autoCompleteAppointmentsUnlocked(
   const slotRun: SlotRun = {
     tally: { completed: 0, unverified: 0, voided: 0, deferred: 0 },
     unreadable: [],
+    noticesStuck: [],
     streamFailures: createRunFailureReporter("stream"),
     settleDeadlineAt: deadlines.settleDeadlineAt,
     menteeFailures: createRunFailureReporter("bookings"),
@@ -1452,6 +1457,13 @@ async function autoCompleteAppointmentsUnlocked(
         );
       });
     }
+    await reportNoticesUnprepared(slotRun.noticesStuck).catch(
+      (error: unknown) => {
+        allErrors.push(
+          `Failed to report sessions stuck on their notices: ${error instanceof Error ? error.message : "Unknown error"}`,
+        );
+      },
+    );
     slotRun.streamFailures.flush();
     slotRun.menteeFailures.flush();
   }

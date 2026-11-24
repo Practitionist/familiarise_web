@@ -95,6 +95,8 @@ export interface OutcomeContext {
   outages: OutageWindow[];
   /** Called once per session parked because Stream's record could not be read in time. */
   onUnreadable?: (occurrenceId: string) => void;
+  /** Called once per session whose notices have failed to prepare for {@link NOTICES_UNPREPARED_ESCALATE_HOURS}. */
+  onNoticesStuck?: (occurrenceId: string) => void;
   /** The run's Stream failure reporter, flushed once per run. */
   failures?: RunFailureReporter;
   /** Epoch ms by which every Stream request of a settle must answer, so in-flight work fits the run. */
@@ -519,6 +521,14 @@ export async function decideSlotOutcome(
       ctx.failures?.add("session-outcome-sweep.notices-unprepared", error, {
         occurrenceId: slot.id,
       });
+      // Decidable since its record settled (else its end); a failure this long is not transient.
+      const decidableAt = room?.attendanceSettledAt ?? slot.endsAt;
+      if (
+        ctx.now.getTime() - decidableAt.getTime() >=
+        NOTICES_UNPREPARED_ESCALATE_HOURS * 3_600_000
+      ) {
+        ctx.onNoticesStuck?.(slot.id);
+      }
       return { kind: "deferred", reason: "notices-unprepared" };
     }
   }
@@ -641,6 +651,30 @@ async function stageMissedRecordingBells(
         }
       : null;
   return { bells, emailArgs };
+}
+
+/** A negative verdict deferred this long for its notices raises a standing finding; it is still never written without them. */
+export const NOTICES_UNPREPARED_ESCALATE_HOURS = 6;
+
+/** One standing finding per run naming the sessions stuck on their notices; a repeat inside the window stays quiet. */
+export async function reportNoticesUnprepared(ids: string[]): Promise<void> {
+  const stuck = [...new Set(ids)];
+  if (stuck.length === 0) return;
+  const message = `${stuck.length} session(s) with a negative verdict deferred over ${NOTICES_UNPREPARED_ESCALATE_HOURS} hours: their notices cannot be prepared, so no verdict is written`;
+  await reportStandingFinding(
+    {
+      key: "session-outcome-sweep:notices-unprepared",
+      ids: [...stuck, `count:${stuck.length}`],
+      message,
+    },
+    () =>
+      reportSentryMessage(message, {
+        subsystem: "bookings",
+        op: "notices-unprepared",
+        level: "warning",
+        extra: { count: stuck.length, sample: stuck.slice(0, 10) },
+      }),
+  );
 }
 
 /** Owner decision — a needs-human item older than this raises a Sentry warning. */
