@@ -54,7 +54,7 @@ import {
 const base = {
   createdAt: new Date("2026-11-11T17:19:08Z"),
   rescheduleRequests: [],
-  _count: { participants: 0 },
+  _count: { participants: 0, occurrences: 0 },
   consultation: null,
   subscription: null,
   webinar: null,
