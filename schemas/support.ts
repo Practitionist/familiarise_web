@@ -90,3 +90,9 @@ export const SupportTurnSchema = z
     message: "Tell us what still isn't fixed",
     path: ["userMessage"],
   });
+
+/** What a booking's support page names when it loads its thread (`GET /api/appointments/[id]/support`). */
+export const SupportThreadQuerySchema = z.object({
+  caseId: z.string().min(1).max(64).optional(),
+  occurrence: z.string().min(1).max(64).optional(),
+});

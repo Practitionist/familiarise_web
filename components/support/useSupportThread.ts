@@ -169,11 +169,18 @@ export function supportTurnBody({
 let localSeq = 0;
 const nextLocalId = () => `local-${++localSeq}`;
 
-/** The one fetcher for this cache entry, so every reader gets one shape. */
+/** The one fetcher for this cache entry, so every reader gets one shape; `view` names the case or session to show. */
 export async function fetchSupportThread(
   appointmentId: string,
+  view: { caseId?: string; occurrenceId?: string } = {},
 ): Promise<ThreadData> {
-  const res = await fetch(`/api/appointments/${appointmentId}/support`);
+  const query = new URLSearchParams({
+    ...(view.caseId ? { caseId: view.caseId } : {}),
+    ...(view.occurrenceId ? { occurrence: view.occurrenceId } : {}),
+  }).toString();
+  const res = await fetch(
+    `/api/appointments/${appointmentId}/support${query ? `?${query}` : ""}`,
+  );
   if (!res.ok) await throwSupportError(res, "thread load");
   const json = await res.json();
   return {
@@ -395,14 +402,20 @@ export function useSupportThread(
         });
         return;
       }
-      // A retry can answer a case the page no longer shows; its result then leaves the shown thread alone.
+      // A retry bound to a case the page no longer shows leaves the shown thread alone.
       const shownId = qc.getQueryData<ThreadData>(queryKey)?.thread?.id;
+      const shownCase = shownId && shownId !== "local" ? shownId : undefined;
       const forOtherCase = Boolean(
-        result.threadId &&
-        shownId &&
-        shownId !== "local" &&
-        shownId !== result.threadId,
+        vars.binding?.caseId && shownCase && vars.binding.caseId !== shownCase,
       );
+      // A fresh turn that landed on another case moves the page to that case.
+      const movedTo =
+        !forOtherCase &&
+        result.threadId &&
+        shownCase &&
+        shownCase !== result.threadId
+          ? result.threadId
+          : undefined;
       if (!forOtherCase) {
         setLastActions(result.actions ?? []);
         if (result.outcomeId !== undefined) {
@@ -412,15 +425,21 @@ export function useSupportThread(
           setLastReplyByAt(result.replyByAt ?? null);
         }
       }
+      const said = vars.userMessage ?? vars.chosenLabel;
       qc.setQueryData<ThreadData>(queryKey, (old) => {
         if (forOtherCase) return old;
         const merged = appendMessages(
-          old,
-          result.messages.map((m) => ({
-            sender: m.sender,
-            body: m.body,
-            metadata: m.metadata ?? null,
-          })),
+          movedTo && old ? { ...old, thread: null } : old,
+          [
+            ...(movedTo && said
+              ? [{ sender: "USER" as const, body: said }]
+              : []),
+            ...result.messages.map((m) => ({
+              sender: m.sender,
+              body: m.body,
+              metadata: m.metadata ?? null,
+            })),
+          ],
         );
         if (!merged.thread) return merged;
         return {
@@ -480,7 +499,14 @@ export function useSupportThread(
       const status = q.state.data?.thread?.status;
       return status === "RESOLVED" || status === "CLOSED" ? false : 15_000;
     },
-    queryFn: () => fetchSupportThread(appointmentId),
+    // A refetch keeps the case the page shows; the first load lets the server choose.
+    queryFn: () => {
+      const shown = qc.getQueryData<ThreadData>(queryKey)?.thread?.id;
+      return fetchSupportThread(appointmentId, {
+        caseId: shown && shown !== "local" ? shown : undefined,
+        occurrenceId,
+      });
+    },
   });
   const data = query.data;
   const thread = data?.thread ?? null;

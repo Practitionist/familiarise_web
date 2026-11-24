@@ -152,6 +152,63 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     expect((await res.json()).data.appointmentOccurrenceId).toBe("occ-1");
   });
 
+  it("shows the booking-wide thread by default, and a session's case only when the page names it", async () => {
+    const { matchesWhere } = jest.requireActual("../fixtures/mem-db");
+    const own = {
+      appointmentId: SLUG,
+      requesterUserId: "u1",
+      submitterUserId: "u1",
+      deletedAt: null,
+      activeChannel: "SELF_SERVE",
+      messages: [],
+    };
+    const rows = [
+      {
+        ...own,
+        id: "case-pay",
+        appointmentOccurrenceId: null,
+        createdAt: new Date("2026-11-20T10:00:00Z"),
+      },
+      {
+        ...own,
+        id: "case-report",
+        appointmentOccurrenceId: "occ-a",
+        createdAt: new Date("2026-11-23T12:00:00Z"),
+      },
+      {
+        ...own,
+        id: "case-foreign",
+        requesterUserId: "u2",
+        submitterUserId: "u2",
+        appointmentOccurrenceId: null,
+        createdAt: new Date("2026-11-24T12:00:00Z"),
+      },
+    ];
+    mockedFindThread.mockImplementation(
+      async (args: { where: Record<string, unknown> }) =>
+        rows
+          .filter((r) => matchesWhere(r, args.where))
+          .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))[0] ?? null,
+    );
+    const shown = async (query = "") => {
+      const res = await GET(
+        new NextRequest(
+          `https://x.test/api/appointments/${SLUG}/support${query}`,
+        ),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      return (await res.json()).data?.id;
+    };
+    expect(await shown()).toBe("case-pay");
+    expect(await shown("?occurrence=occ-a")).toBe("case-report");
+    expect(await shown("?caseId=case-report")).toBe("case-report");
+    // Another person's case is never shown; the default stands.
+    expect(await shown("?caseId=case-foreign")).toBe("case-pay");
+    rows.splice(0, 1);
+    // With no booking-wide thread, the newest session case shows.
+    expect(await shown()).toBe("case-report");
+  });
+
   it("accepts uuid ids identically", async () => {
     const uuid = "329c0b89-0648-4f8e-82a4-25811cdea440";
     const res = await GET(req("GET"), {

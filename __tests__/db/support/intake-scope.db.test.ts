@@ -6,6 +6,7 @@ import {
   patchSupportCaseLifecycle,
 } from "../../../lib/support/case-service";
 import { runSupportTurn } from "../../../lib/support/service";
+import { readShownThread } from "../../../lib/support/shown-thread";
 import {
   HOUR_MS,
   seedConsultee,
@@ -139,6 +140,45 @@ describe("a no-show report on a past session", () => {
       category: "PAYMENT_STATUS",
       flowReason: null,
     });
+  });
+});
+
+describe("the thread a booking's page shows", () => {
+  it("is where a new payment intent lands, with an older payment thread and a newer session report", async () => {
+    const host = await seedHost();
+    const learner = await seedConsultee();
+    const endsAt = new Date(Date.now() - 2 * HOUR_MS);
+    const booking = await seedOneToOne(
+      "consultation",
+      host,
+      learner,
+      { startsAt: new Date(endsAt.getTime() - HOUR_MS), endsAt },
+      {
+        status: "COMPLETED",
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+    );
+    const payment = await seedCase(learner.userId, {
+      category: "PAYMENT_STATUS",
+      appointmentId: booking.appointmentId,
+    });
+    await runSupportTurn(booking.appointmentId, learner.userId, {
+      category: "NO_SHOW",
+    });
+
+    const turn = await runSupportTurn(booking.appointmentId, learner.userId, {
+      category: "PAYMENT_STATUS",
+      userMessage: "I was charged twice",
+    });
+    const shown = await readShownThread(
+      booking.appointmentId,
+      learner.userId,
+      {},
+    );
+    expect(turn?.threadId).toBe(payment.id);
+    expect(shown?.id).toBe(payment.id);
+    expect(shown?.messages.map((m) => m.body)).toContain("I was charged twice");
   });
 });
 

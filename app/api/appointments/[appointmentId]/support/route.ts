@@ -16,7 +16,12 @@ import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
 import { CaseConflictError } from "@/lib/support/case-transitions";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
-import { AppointmentIdParams, SupportTurnSchema } from "@/schemas/support";
+import {
+  AppointmentIdParams,
+  SupportThreadQuerySchema,
+  SupportTurnSchema,
+} from "@/schemas/support";
+import { readShownThread } from "@/lib/support/shown-thread";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -43,7 +48,7 @@ const FlowMessageMetadataSchema = z.object({
 });
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   const id = await parseRouteParams(AppointmentIdParams, params, {
@@ -62,46 +67,20 @@ export async function GET(
         appointmentId,
       });
 
-    const thread = await prisma.supportCase.findFirst({
-      where: {
-        appointmentId,
-        requesterUserId: auth.userId,
-        submitterUserId: auth.userId,
-        deletedAt: null,
-      },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        referenceNumber: true,
-        status: true,
-        activeChannel: true,
-        category: true,
-        flowKey: true,
-        currentNodeId: true,
-        appointmentOccurrenceId: true,
-        requesterUserId: true,
-        ackDueAt: true,
-        acknowledgedAt: true,
-        resolvedAt: true,
-        csatRating: true,
-        csatAt: true,
-        lastMessageAt: true,
-        createdAt: true,
-        updatedAt: true,
-        messages: {
-          where: { isInternal: false },
-          orderBy: { seq: "asc" },
-          take: -201,
-          select: {
-            id: true,
-            seq: true,
-            sender: true,
-            body: true,
-            metadata: true,
-            createdAt: true,
-          },
-        },
-      },
+    const view = SupportThreadQuerySchema.safeParse(
+      Object.fromEntries(req.nextUrl.searchParams),
+    );
+    if (!view.success) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: view.error.flatten(),
+        context: { route: SUPPORT_ROUTE, action: "get", appointmentId },
+      });
+    }
+    const thread = await readShownThread(appointmentId, auth.userId, {
+      caseId: view.data.caseId,
+      occurrenceId: view.data.occurrence,
     });
 
     let intents: { category: string; title: string; escalates?: boolean }[] =

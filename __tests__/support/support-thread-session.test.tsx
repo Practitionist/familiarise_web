@@ -171,3 +171,74 @@ it("retries a failed answer on the case and session it was first sent for after 
     appointmentOccurrenceId: "occ-b",
   });
 });
+
+it("moves the page to the booking thread a fresh intent landed on, and keeps it there on the refetch", async () => {
+  const reads: string[] = [];
+  let threadReads = 0;
+  global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      turnBodies.push(JSON.parse(String(init.body)));
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            threadId: "case-pay",
+            status: "IN_PROGRESS",
+            activeChannel: "SELF_SERVE",
+            currentNodeId: "start",
+            messages: [
+              { sender: "BOT", body: "What happened with the payment?" },
+            ],
+            escalated: false,
+            resolved: false,
+            accepted: true,
+            actions: [],
+            appointmentOccurrenceId: null,
+          },
+        }),
+      };
+    }
+    reads.push(url);
+    if (threadReads++ > 0) return new Promise(() => undefined);
+    // The page opened on the session's no-show report, which has its own messages.
+    const report = shown("case-report", "occ-a").thread!;
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          ...report,
+          messages: [
+            {
+              id: "m-report",
+              seq: 1,
+              sender: "BOT",
+              body: "Who couldn't make it?",
+              createdAt: "2026-11-23T12:00:00.000Z",
+            },
+          ],
+        },
+        intents: [],
+        booking: null,
+      }),
+    };
+  }) as unknown as typeof fetch;
+  const { result } = renderThread("occ-a");
+  await waitFor(() => expect(result.current.thread?.id).toBe("case-report"));
+
+  act(() => {
+    result.current.submitTurn({
+      category: "PAYMENT_STATUS",
+      chosenLabel: "Payment problem",
+    });
+  });
+  await waitFor(() => expect(result.current.thread?.id).toBe("case-pay"));
+  expect(result.current.thread?.appointmentOccurrenceId).toBeNull();
+  expect(result.current.messages.map((m) => m.body)).toEqual([
+    "Payment problem",
+    "What happened with the payment?",
+  ]);
+  await waitFor(() => expect(reads).toHaveLength(2));
+  expect(new URL(reads[1], "https://x.test").searchParams.get("caseId")).toBe(
+    "case-pay",
+  );
+});
