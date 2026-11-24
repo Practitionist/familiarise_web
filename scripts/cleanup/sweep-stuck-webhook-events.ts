@@ -8,11 +8,10 @@ import prisma, { type PrismaLike } from "@/lib/prisma";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import { reclaimStaleProcessingWebhookEvent } from "@/lib/stream/webhook-receipt";
-import { razorpayWebhookEnvelopeSchema } from "@/schemas/webhooks/razorpay";
+import { UNREADABLE_RAZORPAY_EVENT } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   isTerminalWebhookError,
-  permanentFailure,
   TERMINAL_ERROR_PREFIXES,
   type WebhookClaim,
 } from "@/lib/webhooks/event-log";
@@ -160,7 +159,7 @@ async function emitBatchWarningsIfNeeded(
 async function dispatchClaimedStuckEvent(
   ev: StuckWebhookRow,
   claim: WebhookClaim,
-): Promise<string | null> {
+): Promise<void> {
   if (ev.provider === "stream") {
     const parsedStream = streamEventPayloadSchema.safeParse(ev.payload);
     const callCid = parsedStream.success
@@ -175,36 +174,37 @@ async function dispatchClaimedStuckEvent(
         claim,
       ),
     );
-    return null;
+    return;
   }
 
+  // Dispatch parses the stored event itself; a row stored whole (it named no
+  // event) is handed back as it was received.
   const payloadKeys =
     typeof ev.payload === "object" &&
     ev.payload !== null &&
     !Array.isArray(ev.payload)
       ? Object.keys(ev.payload)
       : [];
-  const parsedEnvelope = razorpayWebhookEnvelopeSchema.safeParse({
-    entity: "event",
-    account_id: "swept",
-    event: ev.eventType,
-    contains: payloadKeys,
-    created_at: Math.floor(ev.receivedAt.getTime() / 1000),
-    payload: ev.payload,
-  });
-  if (!parsedEnvelope.success) {
-    return "invalid Razorpay webhook payload";
-  }
-
+  const storedEvent =
+    ev.eventType === UNREADABLE_RAZORPAY_EVENT
+      ? ev.payload
+      : {
+          entity: "event",
+          account_id: "swept",
+          event: ev.eventType,
+          contains: payloadKeys,
+          created_at: Math.floor(ev.receivedAt.getTime() / 1000),
+          payload: ev.payload,
+        };
   await withEventTimeout(ev.eventId, () =>
     processRazorpayWebhookEvent(
-      parsedEnvelope.data,
+      storedEvent,
       ev.eventType,
       ev.eventId,
       claim,
+      ev.receivedAt,
     ),
   );
-  return null;
 }
 
 async function markWebhookEventFailed(
@@ -327,28 +327,7 @@ async function processOneStuckEvent(
   }
 
   try {
-    const invalidReason = await dispatchClaimedStuckEvent(ev, claim);
-    if (invalidReason !== null) {
-      const rotatedClaimedAt = new Date();
-      await prisma.webhookEvent.updateMany({
-        where: {
-          eventId: ev.eventId,
-          processed: false,
-          claimedAt: claim.claimedAt,
-        },
-        data: {
-          processed: false,
-          processedAt: null,
-          claimedAt: rotatedClaimedAt,
-          error: permanentFailure(invalidReason),
-        },
-      });
-      counts.stillFailing++;
-      counts.stillFailingIds.push(ev.eventId);
-      counts.errors.push(`${ev.eventId}: ${invalidReason}`);
-      return true;
-    }
-
+    await dispatchClaimedStuckEvent(ev, claim);
     await settleDispatchedEventOutcome(
       ev,
       claim,

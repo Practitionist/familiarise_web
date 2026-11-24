@@ -43,7 +43,7 @@ import {
   razorpayPayoutErrorSchema,
   fundAccountValidationEntitySchema,
   disputeUpdateEntitySchema,
-  type RazorpayWebhookEnvelope,
+  razorpayWebhookEnvelopeSchema,
 } from "@/schemas/webhooks/razorpay";
 import { handleFundAccountValidationWebhook } from "@/lib/payments/payouts/reverse-penny-drop";
 import {
@@ -71,11 +71,8 @@ const refundEntitySchema = z.object({
   amount: z.number(),
   currency: z.string().optional(),
   status: z.string(),
-  speed_requested: z.enum(["normal", "optimum"]).nullable().optional(),
-  speed_processed: z
-    .enum(["normal", "instant", "optimum"])
-    .nullable()
-    .optional(),
+  speed_requested: z.string().nullable().optional(),
+  speed_processed: z.string().nullable().optional(),
   notes: razorpayNotesSchema,
 });
 
@@ -225,17 +222,32 @@ async function dispatchCapturedPayment(params: {
   await handlePaymentSuccess(orderId, notes, amountPaise, gatewayPaymentId);
 }
 
+/** Events that move or describe money: a shape the handlers cannot read is retried before it is given up. */
+const MONEY_EVENT_PREFIXES = [
+  "payment.",
+  "order.",
+  "refund.",
+  "payout.",
+  "fund_account.validation.",
+];
+
+/** How long after receipt a money event with an unreadable shape stays retryable. */
+const SCHEMA_MISMATCH_RETRY_MS = 24 * 3_600_000;
+
 /**
- * Process a Razorpay webhook event. Called via the route's `after()` callback
- * AND by the stuck-webhook sweeper on replay. Errors are caught and recorded on
- * the WebhookEvent row (via markWebhookEventProcessed) for retry/observability.
+ * Process a stored Razorpay webhook event. Called via the route's `after()`
+ * callback and by the stuck-webhook sweeper on replay. The event arrives as
+ * stored, unvalidated; every parse happens here, and a failure is recorded on
+ * the WebhookEvent row (via markWebhookEventProcessed), never thrown.
  */
 export async function processRazorpayWebhookEvent(
-  event: RazorpayWebhookEnvelope,
+  rawEvent: unknown,
   eventType: string,
   eventId: string,
-  /** The live route's claim on the row; the sweeper re-drive passes none. */
+  /** The caller's claim on the row. */
   claim?: WebhookClaim,
+  /** When the row was first stored; absent on the delivery that stored it. */
+  receivedAt?: Date,
 ): Promise<void> {
   // PII-scrub the payload before logging — Razorpay payloads can carry
   // payer email/phone/contact, partial card/UPI fingerprints, and any
@@ -243,7 +255,7 @@ export async function processRazorpayWebhookEvent(
   // lib/logging/webhook-scrub.ts for the redaction rules.
   console.log(`🔔 Razorpay Webhook Event: ${eventType}`, {
     eventId,
-    payload: scrubWebhookPayload(event.payload),
+    event: scrubWebhookPayload(rawEvent),
   });
   Sentry.logger.info(
     Sentry.logger.fmt`razorpay dispatch: handling ${eventType}`,
@@ -257,6 +269,7 @@ export async function processRazorpayWebhookEvent(
   let deferred = false;
 
   try {
+    const event = razorpayWebhookEnvelopeSchema.parse(rawEvent);
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
@@ -607,24 +620,36 @@ export async function processRazorpayWebhookEvent(
         .slice(0, 5)
         .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
         .join("; ");
-      processingError = permanentFailure(
-        `schema mismatch: ${eventType} — ${detail}`.slice(0, 500),
+      const mismatch = `schema mismatch: ${eventType} — ${detail}`.slice(
+        0,
+        500,
       );
+      // A money event stays in the sweeper's queue for a bounded time, so a
+      // decoder deployed inside it imports the event with no operator step.
+      const retryable =
+        MONEY_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix)) &&
+        Date.now() - (receivedAt?.getTime() ?? Date.now()) <
+          SCHEMA_MISMATCH_RETRY_MS;
+      processingError = retryable ? mismatch : permanentFailure(mismatch);
       console.error(
-        `Razorpay webhook ${eventId} is permanently unprocessable:`,
+        `Razorpay webhook ${eventId} failed schema validation (${retryable ? "retryable" : "permanent"}):`,
         detail,
       );
-      reportSentryError(
-        new Error(`Razorpay ${eventType} payload failed schema validation`),
-        {
-          subsystem: "payments",
-          op: "razorpay.schema_mismatch",
-          expected: true,
-          level: "warning",
-          tags: { provider: "razorpay" },
-          contexts: { dispatch: { eventType, eventId, detail } },
-        },
-      );
+      // Once when first met and once when given up; the sweeper's own run
+      // report covers the re-drives in between.
+      if (!retryable || !receivedAt) {
+        reportSentryError(
+          new Error(`Razorpay ${eventType} payload failed schema validation`),
+          {
+            subsystem: "payments",
+            op: "razorpay.schema_mismatch",
+            expected: true,
+            level: "warning",
+            tags: { provider: "razorpay", permanent: String(!retryable) },
+            contexts: { dispatch: { eventType, eventId, detail } },
+          },
+        );
+      }
     } else {
       processingError = errorMessageOf(handlerError);
       console.error(

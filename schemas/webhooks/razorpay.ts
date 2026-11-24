@@ -250,7 +250,56 @@ export const razorpayBaseEventSchema = z.object({
   event: z.string(),
 });
 
-// Loose envelope schema for idempotency key derivation and entity extraction.
+/** The event type a signed delivery is stored under when its body names no event. */
+export const UNREADABLE_RAZORPAY_EVENT = "unreadable";
+
+const ingressEntitySchema = z.object({
+  entity: z.object({ id: z.string().min(1) }).passthrough(),
+});
+
+/**
+ * All the inbox needs from a signed delivery before it is stored: the event
+ * name and, per payload member, the entity id that keys dedupe. Nothing here
+ * validates a shape a handler depends on.
+ */
+export function readRazorpayIngress(raw: unknown): {
+  eventType: string;
+  accountId: string | undefined;
+  /** What the inbox row stores: the payload member, or the whole body when it names no event. */
+  stored: unknown;
+  entityId: (member: string) => string | undefined;
+} {
+  const envelope = z
+    .object({
+      event: z.string().min(1),
+      account_id: z.string().optional().catch(undefined),
+      payload: z.unknown(),
+    })
+    .safeParse(raw);
+  if (!envelope.success) {
+    return {
+      eventType: UNREADABLE_RAZORPAY_EVENT,
+      accountId: undefined,
+      stored: raw,
+      entityId: () => undefined,
+    };
+  }
+  const members = z
+    .record(z.string(), z.unknown())
+    .catch({})
+    .parse(envelope.data.payload);
+  return {
+    eventType: envelope.data.event,
+    accountId: envelope.data.account_id,
+    stored: envelope.data.payload ?? {},
+    entityId: (member) => {
+      const entity = ingressEntitySchema.safeParse(members[member]);
+      return entity.success ? entity.data.entity.id : undefined;
+    },
+  };
+}
+
+// Loose envelope for entity extraction; enums and flags stay strings here and each handler parses its own entity.
 export const razorpayWebhookEnvelopeSchema = z
   .object({
     event: z.string(),
@@ -291,14 +340,8 @@ export const razorpayWebhookEnvelopeSchema = z
                 amount: z.number().optional(),
                 currency: z.string().optional(),
                 status: z.string().optional(),
-                speed_requested: z
-                  .enum(["normal", "optimum"])
-                  .nullable()
-                  .optional(),
-                speed_processed: z
-                  .enum(["normal", "instant", "optimum"])
-                  .nullable()
-                  .optional(),
+                speed_requested: z.string().nullable().optional(),
+                speed_processed: z.string().nullable().optional(),
                 notes: razorpayNotesSchema,
               })
               .passthrough()
@@ -318,7 +361,7 @@ export const razorpayWebhookEnvelopeSchema = z
                 reason_description: z.string().nullable().optional(),
                 status: z.string().optional(),
                 respond_by: z.number().nullable().optional(),
-                deduct_at_onset: z.boolean().optional(),
+                deduct_at_onset: z.unknown().optional(),
               })
               .passthrough()
               .optional(),

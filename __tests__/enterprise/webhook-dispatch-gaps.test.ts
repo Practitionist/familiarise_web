@@ -191,17 +191,18 @@ describe("dispute lifecycle event routing", () => {
   });
 });
 
-describe("schema mismatch is terminal (FAMILIARISE_WEB-3W)", () => {
-  it("stamps a payment.captured payload missing required fields with the permanent: prefix", async () => {
-    // Before the fix the raw ZodError message was stored, so the sweeper
-    // re-drove the row every tick for the whole 168-hour give-up window.
+describe("schema mismatch ends terminal", () => {
+  it("stamps a payment.captured payload missing required fields with the permanent: prefix once its retry window has passed", async () => {
+    // A money event is re-driven for a day, not for the 168-hour give-up window.
     await processRazorpayWebhookEvent(
       {
         event: "payment.captured",
         payload: { payment: { entity: { id: "pay_S4Priya00000001" } } },
-      } as never,
+      },
       "payment.captured",
       "payment.captured:pay_S4Priya00000001",
+      undefined,
+      new Date(Date.now() - 25 * 3_600_000),
     );
     expect(markWebhookEventProcessed).toHaveBeenCalledTimes(1);
     const [eventId, error] = markWebhookEventProcessed.mock.calls[0];

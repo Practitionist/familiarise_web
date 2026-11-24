@@ -56,16 +56,16 @@ sequenceDiagram
     Route-->>RZP: 400 and a WEBHOOK WARN SystemEvent
   end
   Route->>Route: database reachable? else 503 so Razorpay retries
-  Route->>Route: parse envelope with Zod, else 400
-  Route->>Log: eventId = type:entity:x-razorpay-event-id
+  Route->>Route: read the event name and entity ids, validate nothing
+  Route->>Log: store the raw payload, eventId = type:entity:x-razorpay-event-id
   alt already processed or leased
     Log-->>Route: isNew false
     Route-->>RZP: 200 duplicate
   end
   Route-->>RZP: 200 OK
   Route->>Disp: after() with the claim
-  Disp->>Disp: route by event type
-  Disp->>Log: markWebhookEventProcessed, fenced on claimedAt
+  Disp->>Disp: parse the envelope and the event's entity, route by event type
+  Disp->>Log: markWebhookEventProcessed (done, or the parse or handler error), fenced on claimedAt
   Note over Sweep,Disp: crashed or deferred rows are re-driven here
 ```
 
@@ -84,13 +84,15 @@ stateDiagram-v2
   Failed --> InFlight: delivery or sweep reclaims by CAS
   Deferred --> InFlight: sweep re-drives
   Deferred --> GaveUp: older than 168 hours
-  Failed --> Terminal: schema mismatch, permanent
+  Failed --> Terminal: schema mismatch past its retry window, permanent
   Done --> [*]
   GaveUp --> [*]
   Terminal --> [*]
 ```
 
-A handler answers `DeferSignal` when the event is valid but its subject row does not exist yet: a refund before its capture, a dispute before its payment, a refund bound to a reservation not yet written. The row is left `processed = false`, `error = null` and its `deferCount` rises; that is indistinguishable from a crash, which is exactly why the counter exists. A Zod failure is recorded as `permanent: schema mismatch` and never retried.
+A handler answers `DeferSignal` when the event is valid but its subject row does not exist yet: a refund before its capture, a dispute before its payment, a refund bound to a reservation not yet written. The row is left `processed = false`, `error = null` and its `deferCount` rises; that is indistinguishable from a crash, which is exactly why the counter exists.
+
+**Stored before parsed.** The signature is the only gate on the inbox. A verified delivery is stored and answered 200 whatever its shape, so a field the app has never seen cannot make Razorpay retry for a day or disable the endpoint. The route reads only the event name and the entity ids that key dedupe (`readRazorpayIngress`, `schemas/webhooks/razorpay.ts`) and stores the payload as received. A signed body that names no event, or is not JSON, is stored whole under the event type `unreadable`. Every schema runs inside `processRazorpayWebhookEvent`: the loose envelope (enums and flags are plain strings there), then the strict schema of the one handler the event routes to. A Zod failure is written to the row's `error`. On a money event (`payment.*`, `order.*`, `refund.*`, `payout.*`, `fund_account.validation.*`) it is `schema mismatch: …` and stays in the sweeper's queue for 24 hours from receipt, so a decoder deployed in that time imports the event with no operator step; after that, and at once for any other event, it is `permanent: schema mismatch: …` and is never retried automatically. Sentry hears of it once when first met and once when it turns permanent.
 
 ## 3. Event-to-handler table
 

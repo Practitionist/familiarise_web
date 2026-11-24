@@ -4,13 +4,7 @@ import { after } from "next/server";
 import crypto from "node:crypto";
 import { logWebhookEvent, isDbHealthy } from "../utils";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import {
-  razorpayWebhookEnvelopeSchema,
-  type RazorpayWebhookEnvelope,
-} from "../../../../schemas/webhooks/razorpay";
-// #785 — dispatch switch extracted to a Next-agnostic module so the B5
-// stuck-webhook sweeper (jobs/cleanup/sweep-stuck-webhook-events) can replay
-// crashed events through the exact same handler routing.
+import { readRazorpayIngress } from "../../../../schemas/webhooks/razorpay";
 import { processRazorpayWebhookEvent } from "../razorpay-dispatch";
 import {
   isPayoutEventName,
@@ -124,33 +118,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // M3 FIX: Parse, log, and idempotency-check synchronously (fast path),
-  // then return 200 immediately and process the event asynchronously via
-  // Next.js `after()` to stay within Razorpay's 5-second webhook timeout.
-
-  let event: RazorpayWebhookEnvelope;
-  let eventType: string;
-
+  // The signature is the only gate: a verified delivery is stored whatever
+  // its shape, answered 200, and parsed by dispatch, which records a shape it
+  // cannot read on the stored row.
+  let rawEvent: unknown = body;
   try {
-    const rawJson: unknown = JSON.parse(body);
-    event = razorpayWebhookEnvelopeSchema.parse(rawJson);
-    eventType = event.event;
-  } catch (parseError) {
-    console.error("Razorpay webhook parse error:", parseError);
-    Sentry.captureException(parseError, {
-      tags: { subsystem: "payments" },
-      contexts: { webhook: { provider: "razorpay" } },
-    });
-    return NextResponse.json(
-      { error: "Invalid webhook payload" },
-      { status: 400 },
-    );
+    rawEvent = JSON.parse(body);
+  } catch {
+    // Not JSON: stored as the signed text.
   }
+  const ingress = readRazorpayIngress(rawEvent);
+  const eventType = ingress.eventType;
 
-  // #1861 P4b — IDs only, whichever entity this event actually carries; the
-  // internal Payment.id/appointmentId are not known until dispatch resolves
-  // them, so the gateway's own order id is what's taggable here.
-  const gatewayOrderId = event.payload?.order?.entity?.id;
+  // IDs only: the gateway's own order id is what is known before dispatch.
+  const gatewayOrderId = ingress.entityId("order");
   if (gatewayOrderId) {
     Sentry.getCurrentScope().setTag("gatewayOrderId", gatewayOrderId);
   }
@@ -165,14 +146,14 @@ export async function POST(req: NextRequest) {
     .digest("hex")
     .slice(0, 16);
   const entityId =
-    event.payload?.refund?.entity?.id ||
-    event.payload?.dispute?.entity?.id ||
-    event.payload?.payout?.entity?.id ||
-    event.payload?.["fund_account.validation"]?.entity?.id ||
-    event.payload?.settlement?.entity?.id ||
-    event.payload?.payment?.entity?.id ||
-    event.payload?.order?.entity?.id ||
-    event.account_id ||
+    ingress.entityId("refund") ||
+    ingress.entityId("dispute") ||
+    ingress.entityId("payout") ||
+    ingress.entityId("fund_account.validation") ||
+    ingress.entityId("settlement") ||
+    ingress.entityId("payment") ||
+    ingress.entityId("order") ||
+    ingress.accountId ||
     `body_${bodyHash}`;
   const headerEventId = req.headers.get("x-razorpay-event-id")?.trim() ?? "";
   const razorpayEventId = RAZORPAY_EVENT_ID.test(headerEventId)
@@ -185,7 +166,7 @@ export async function POST(req: NextRequest) {
     "razorpay",
     eventId,
     eventType,
-    event.payload,
+    ingress.stored,
     signature || undefined,
   );
 
@@ -200,7 +181,7 @@ export async function POST(req: NextRequest) {
 
   // Return 200 immediately — process the event asynchronously
   after(async () => {
-    await processRazorpayWebhookEvent(event, eventType, eventId, claim);
+    await processRazorpayWebhookEvent(rawEvent, eventType, eventId, claim);
   });
 
   return NextResponse.json({ status: "ok" });
