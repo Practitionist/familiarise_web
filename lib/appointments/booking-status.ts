@@ -335,6 +335,19 @@ const APPENDS_PARKED_LINE = new Set<BookingStage>([
   "BEING_MOVED",
 ]);
 
+/** A booking waiting on a decision, counted: staff are pointed at the queue, others are told what happens. */
+function waitingLine(parked: number, viewer: StatusViewer): string {
+  const one = parked <= 1;
+  if (viewer === "STAFF") {
+    return one
+      ? "A session is in Sessions that need a decision; settlement waits for it."
+      : `${parked} sessions are in Sessions that need a decision; settlement waits for them.`;
+  }
+  return one
+    ? "Our team is checking what happened in a session. This booking settles once they decide."
+    : `Our team is checking what happened in ${parked} sessions. This booking settles once they decide.`;
+}
+
 /** A live booking keeps its word; its parked sessions are named under it. */
 function parkedLine(f: BookingStatusFacts): string {
   const n = f.parkedSessions ?? 0;
@@ -446,9 +459,7 @@ function reasonOf(
         ? "This session's time has passed. We're confirming what happened."
         : "";
     case "AWAITING_DECISION":
-      return viewer === "STAFF"
-        ? "A session is in Sessions that need a decision; settlement waits for it."
-        : "Our team is checking what happened in a session. This booking settles once they decide.";
+      return waitingLine(f.parkedSessions ?? 1, viewer);
     case "COMPLETED":
       return f.completedNote ?? "";
     case "PAYMENT_LAPSED":

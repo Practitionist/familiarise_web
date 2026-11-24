@@ -370,6 +370,23 @@ describe("a session parked for ops holds its booking's status", () => {
     ).toEqual(["waitingDecision", "inconclusive", "completed"]);
   });
 
+  it("a booking waiting on several sessions counts them", () => {
+    const facts = {
+      kind: "SUBSCRIPTION",
+      status: "COMPLETED",
+      parkedSessions: 5,
+    };
+    expect(bookingStatus(facts, "STAFF").line).toBe(
+      "5 sessions are in Sessions that need a decision; settlement waits for them.",
+    );
+    expect(bookingStatus(facts, "CONSULTEE").line).toBe(
+      "Our team is checking what happened in 5 sessions. This booking settles once they decide.",
+    );
+    expect(bookingStatus({ ...facts, parkedSessions: 1 }, "STAFF").line).toBe(
+      "A session is in Sessions that need a decision; settlement waits for it.",
+    );
+  });
+
   it("an unverified inconclusive or host-absent session is not held; a recorded no-join is", () => {
     const unverified = (outcome: string) => ({
       completionStatus: "UNVERIFIED",
