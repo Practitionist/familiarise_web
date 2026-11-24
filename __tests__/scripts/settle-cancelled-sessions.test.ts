@@ -48,11 +48,16 @@ const state = {
   cancelActor: null as string | null,
 };
 const stamp = jest.fn(async () => ({ count: 1 }));
+/** The where of every occurrence read, in order; the first is the 14-day cohort. */
+const occurrenceReads: unknown[] = [];
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointmentOccurrence: {
-      findMany: async () => state.due,
+      findMany: async (args: { where?: unknown } = {}) => {
+        occurrenceReads.push(args.where);
+        return state.due;
+      },
       findFirst: async () => state.madeUp,
       // Subscription voids of ended plans are a separate, money-free stamp.
       updateMany: async (args: { where: { appointment?: unknown } }) =>
@@ -111,9 +116,11 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { settleCancelledSessions } from "@/scripts/appointments/settle-cancelled-sessions";
+import { matchesWhere, type Where } from "../fixtures/mem-db";
 
 beforeEach(() => {
   jest.clearAllMocks();
+  occurrenceReads.length = 0;
   state.madeUp = null;
   state.due = [CLASS_SESSION];
   state.seatStatus = undefined;
@@ -193,4 +200,33 @@ describe("the delayed refund notice of a host-cancelled session", () => {
     await settleCancelledSessions();
     expect(stagedPayload().requiredNotice).toBeUndefined();
   });
+});
+
+it("leaves an unconfirmed negative void out of the 14-day cohort until it is confirmed; an outage void or a confirmed one is refunded", async () => {
+  await settleCancelledSessions();
+  const cohort = occurrenceReads[0] as Where;
+  const voided = (over: Record<string, unknown>) => ({
+    seatsSettledAt: null,
+    deletedAt: null,
+    completionStatus: "VOIDED",
+    voidedAt: new Date(Date.now() - 15 * 86_400_000),
+    outcomeConfirmedAt: null,
+    appointment: { classId: "cls-1", webinarId: null, consultationId: null },
+    ...over,
+  });
+  // Weak, disputed or not yet judged: the window-close pass never stamped it.
+  expect(matchesWhere(voided({ outcome: "HOST_ABSENT" }), cohort)).toBe(false);
+  expect(matchesWhere(voided({ outcome: "CUT_SHORT" }), cohort)).toBe(false);
+  // Strong and confirmed by the pass, or written by ops, which confirms at once.
+  expect(
+    matchesWhere(
+      voided({ outcome: "CUT_SHORT", outcomeConfirmedAt: new Date() }),
+      cohort,
+    ),
+  ).toBe(true);
+  // An outage attributes nothing to anyone and needs no confirmation.
+  expect(matchesWhere(voided({ outcome: "PLATFORM_OUTAGE" }), cohort)).toBe(
+    true,
+  );
+  expect(matchesWhere(voided({ outcome: null }), cohort)).toBe(true);
 });

@@ -171,6 +171,15 @@ export function confirmableNoShowWhere(
   };
 }
 
+/** A void the 14-day refund may settle: any negative verdict on it is confirmed. Explicit about a null outcome, which NOT would read as NULL. */
+export const SETTLEABLE_VOID_VERDICT = {
+  OR: [
+    { outcome: null },
+    { outcome: { notIn: [...NEGATIVE_MONEY_OUTCOMES] } },
+    { outcomeConfirmedAt: { not: null } },
+  ],
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 /** An applied unconfirmed verdict with a dispute or agreement filed against it: ops see both statements. */
 export const REPORTED_VERDICT = {
   ...APPLIED_UNCONFIRMED,

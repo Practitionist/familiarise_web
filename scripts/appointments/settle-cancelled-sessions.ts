@@ -69,7 +69,7 @@ import {
   stampRefundOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
-import { AWAITING_HUMAN } from "@/lib/booking/misses";
+import { AWAITING_HUMAN, SETTLEABLE_VOID_VERDICT } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -203,6 +203,7 @@ async function settleUnlocked(
 /**
  * The cohort: a host-cancelled class session or a voided class, webinar or
  * consultation session whose make-up window is over; not yet settled.
+ * A void whose negative verdict is unconfirmed waits for it.
  * Subscription voids settle with their plan instead.
  */
 function dueWhere(now: Date): Prisma.AppointmentOccurrenceWhereInput {
@@ -219,6 +220,7 @@ function dueWhere(now: Date): Prisma.AppointmentOccurrenceWhereInput {
       {
         completionStatus: OccurrenceCompletionStatus.VOIDED,
         voidedAt: { lt: windowOver },
+        AND: [SETTLEABLE_VOID_VERDICT],
         appointment: {
           OR: [
             { classId: { not: null } },
