@@ -125,7 +125,7 @@ These are short records of the owner decisions that shaped the support system: t
 
 - **Status:** Accepted 2026-11-24, implemented (steps 1 to 3 of the report-window build).
 - **Context.** A negative session verdict (`HOST_ABSENT`, `CUT_SHORT`, `LEARNER_ABSENT`) waits 48 hours for strong evidence before it is confirmed, and a participant's report may speed it up or block it. That needs a report a job can read, not a conversation.
-- **Decision.** The no-show turn files its own `SupportCase` on the scope `OCCURRENCE:<id>`, stores the flow terminal's reason in `SupportCase.flowReason` (a counted reason is never replaced), offers "I was there" to both sides, and counts a report from the session's booked end to 48 hours after the verdict. No second report table.
+- **Decision.** The no-show turn files its own `SupportCase` on the scope `OCCURRENCE:<id>`, stores the flow terminal's reason in `SupportCase.flowReason` (a counted reason is never replaced), offers "I was there" to both sides, and counts a report whose reason was answered (`SupportCase.flowReasonAt`) from the session's booked end to 48 hours after the verdict. Every later turn of a session's thread names that session, so an answer cannot land on another session's report. No second report table.
 - **Cost.** One nullable column and one index, and a no-show conversation no longer shares the booking's open thread. A report changes only whether a verdict is confirmed; it cannot create one.
 - **See** [intake and flows](01-intake-and-flows.md#a-no-show-report) and [the report-window record](../decisions/2026-11-23-session-outcome-report-window.md).
 
