@@ -101,7 +101,8 @@ function groupProgress(
   const live = liveOccurrences(occurrences);
   return {
     total: live.length,
-    completed: live.filter((s) => isOccurrenceOver(s, now)).length,
+    // A parked session is over but not done: it waits on ops.
+    completed: live.filter((s) => isOccurrenceOver(s, now) && !s.parked).length,
   };
 }
 

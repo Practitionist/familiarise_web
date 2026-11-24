@@ -622,6 +622,7 @@ async function labelsEverywhere(
     },
     progress: page.sessionProgress,
     timeline: page.timeline.map((step) => step.label),
+    learnerProgress: learnerRow?.group,
     parkedRows: {
       learnerList: learnerRow?.occurrences.filter((o) => o.parked).length,
       page: pageVm.occurrences.filter((o) => o.parked).length,
@@ -697,11 +698,14 @@ describe("a plan with parked sessions", () => {
     // Each parked session says so on every surface that lists sessions, and the
     // next steps are the session ahead and ops' decision, never Completed.
     expect({
+      learnerProgress: labels.learnerProgress,
       parkedRows: labels.parkedRows,
       nextSession: labels.timeline.includes("Next session"),
       opsStep: labels.timeline.includes("Our team decides 2 sessions"),
       completedStep: labels.timeline.includes("Completed"),
     }).toEqual({
+      // Two parked sessions are over but not done; one is still ahead.
+      learnerProgress: { total: 3, completed: 0 },
       parkedRows: { learnerList: 2, page: 2, staffDrawer: 2 },
       nextSession: true,
       opsStep: true,

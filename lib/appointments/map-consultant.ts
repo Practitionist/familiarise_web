@@ -349,7 +349,10 @@ function mapGroup(
   const { title, counterpart, status } = eventFacts(first, consultantId);
   // #1554 — progress is counted over live occurrence rows, not wrappers.
   const live = liveOccurrences(occurrences);
-  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
+  // A parked session is over but not done: it waits on ops.
+  const completed = live.filter(
+    (s) => isOccurrenceOver(s, now) && !s.parked,
+  ).length;
   const target = nextActionableChild(children, now);
   const source = first.subscription?.bookingSource ?? null;
   const facts = listStatusFacts(first, occurrences, {
