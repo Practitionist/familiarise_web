@@ -45,8 +45,8 @@ describe("every sweep refund carries a dedupeKey", () => {
   });
 
   // The no-show refund is an owed marker; the marker's key is the dedupeKey.
-  it("scripts/appointments/detect-consultant-no-shows.ts", () => {
-    const src = read("scripts/appointments/detect-consultant-no-shows.ts");
+  it("lib/booking/consultant-no-show.ts", () => {
+    const src = read("lib/booking/consultant-no-show.ts");
     expect(refundCallSites(src)).toEqual([]);
     expect(src).toContain("key: `consultant-no-show:${paymentId}`");
     expect(src).toContain("driveRefundOwed(noShowRefundOwed(");

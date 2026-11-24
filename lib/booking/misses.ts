@@ -142,6 +142,35 @@ export const AGREED_VERDICT = {
   })),
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+/** A consultation's host no-show, parked UNVERIFIED until its confirmation runs the no-show claim. */
+export const PROPOSED_CONSULTANT_NO_SHOW = {
+  deletedAt: null,
+  isTentative: false,
+  completionStatus: "UNVERIFIED",
+  outcome: "HOST_ABSENT",
+  outcomeConfirmedAt: null,
+  appointment: { consultationId: { not: null } },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A proposed consultant no-show whose window closed, or that the learner's report agrees with. */
+export function confirmableNoShowWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  const closedBefore = new Date(
+    now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000,
+  );
+  return {
+    ...PROPOSED_CONSULTANT_NO_SHOW,
+    OR: [
+      { outcomeAt: { lt: closedBefore } },
+      {
+        outcomeAt: { not: null },
+        supportCases: reportCaseWhere([...REPORT_EFFECT.HOST_ABSENT.agree]),
+      },
+    ],
+  };
+}
+
 /** An applied unconfirmed verdict with a dispute or agreement filed against it: ops see both statements. */
 export const REPORTED_VERDICT = {
   ...APPLIED_UNCONFIRMED,

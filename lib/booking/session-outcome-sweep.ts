@@ -34,7 +34,10 @@ import {
   SETTLE_MEETING_SELECT,
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
-import type { RunFailureReporter } from "@/lib/observability/run-failures";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import { isPastNoShowHandoff, NO_SHOW_GRACE_MINUTES } from "./attendance";
 import {
   classifySessionOutcome,
@@ -54,6 +57,7 @@ import {
 import {
   AGREED_VERDICT,
   agedNeedsHumanWhere,
+  confirmableNoShowWhere,
   isNegativeMoneyOutcome,
   needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
@@ -72,6 +76,7 @@ import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
+import { confirmConsultantNoShow } from "./consultant-no-show";
 
 export const OUTCOME_SLOT_SELECT = {
   id: true,
@@ -505,8 +510,8 @@ export async function decideSlotOutcome(
         });
   let to: OccurrenceCompletionStatus = verdict.completionStatus;
   if (verdict.outcome === "HOST_ABSENT" && slot.appointment.consultationId) {
-    // D5 — the detector cancels and refunds a consultation host no-show; one it
-    // declined parks UNVERIFIED for ops after the handoff instead of voiding.
+    // D5 — the detector proposes a consultation host no-show; past the handoff
+    // this pass parks the same proposal, UNVERIFIED, instead of voiding.
     if (
       !isPastNoShowHandoff(
         noShowHandoffAnchor(slot.endsAt, room?.attendanceSettledAt ?? null),
@@ -795,7 +800,13 @@ const OUTCOME_CONFIRM_PAGE = 100;
 export function confirmableVerdictWhere(
   now: Date,
 ): Prisma.AppointmentOccurrenceWhereInput {
-  return { OR: [unconfirmedClosedVerdictWhere(now), AGREED_VERDICT] };
+  return {
+    OR: [
+      unconfirmedClosedVerdictWhere(now),
+      AGREED_VERDICT,
+      confirmableNoShowWhere(now),
+    ],
+  };
 }
 
 /** Select on `Appointment`: who may report on each side of its sessions. */
@@ -833,6 +844,7 @@ const CONFIRM_SELECT = {
   id: true,
   startsAt: true,
   endsAt: true,
+  completionStatus: true,
   outcome: true,
   outcomeAt: true,
   meeting: {
@@ -848,7 +860,7 @@ const CONFIRM_SELECT = {
     where: { deletedAt: null, flowReason: { in: CLASSIFIED_REPORT_REASONS } },
     select: OUTCOME_REPORT_FIELDS,
   },
-  appointment: { select: REPORT_PARTIES_SELECT },
+  appointment: { select: { ...REPORT_PARTIES_SELECT, consultationId: true } },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
 type ConfirmRow = Prisma.AppointmentOccurrenceGetPayload<{
@@ -882,7 +894,12 @@ function isStrongVerdict(
 }
 
 export interface OutcomeConfirmRun {
+  /** Stamped confirmed this run, the consultant no-shows claimed among them. */
   confirmed: number;
+  /** Consultant no-shows confirmed and claimed: cancelled, refund owed and driven, strike written. */
+  claimed: number;
+  /** Strong no-show proposals whose booking no longer meets the detector's rules: left for ops. */
+  declined: number;
   /** Judged weak this run: left unconfirmed on the needs-human list for ops. */
   weak: number;
   /** Disputed by the accused party: left unconfirmed on the needs-human list for ops. */
@@ -963,13 +980,41 @@ function disputeSinceReadWhere(
   };
 }
 
-/** Judges one page and stamps its strong verdicts that are closed or agreed and not disputed; false when the page's outage read was capped. */
+/** The CAS that confirms one judged row: still a candidate, the same outcome, and no dispute in its own window. */
+function confirmGuard(
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  row: {
+    id: string;
+    outcome: NegativeMoneyOutcome;
+    endsAt: Date;
+    outcomeAt: Date;
+  },
+): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    AND: [
+      where,
+      { id: row.id, outcome: row.outcome },
+      { supportCases: { none: disputeSinceReadWhere(row.outcome, row) } },
+    ],
+  };
+}
+
+/** A consultation's proposed host no-show: confirming it runs the no-show claim, not a bare stamp. */
+const isNoShowProposal = (row: ConfirmRow) =>
+  row.completionStatus === "UNVERIFIED" &&
+  row.outcome === "HOST_ABSENT" &&
+  row.appointment.consultationId !== null;
+
+type PageResult = "judged" | "capped" | "out-of-time";
+
+/** Judges one page and confirms its strong verdicts that are closed or agreed and not disputed. */
 async function confirmPage(
   rows: ConfirmRow[],
   where: Prisma.AppointmentOccurrenceWhereInput,
   now: Date,
   run: OutcomeConfirmRun,
-): Promise<boolean> {
+  ctx: { pastDeadline: () => boolean; failures: RunFailureReporter },
+): Promise<PageResult> {
   const outages = await readOutageWindows(
     prisma,
     new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
@@ -980,7 +1025,7 @@ async function confirmPage(
     run.errors.push(
       `Outage read hit its ${OUTAGE_READ_CAP}-row cap; closed verdicts left unconfirmed`,
     );
-    return false;
+    return "capped";
   }
   const closedBefore = now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000;
   const strong: {
@@ -988,6 +1033,7 @@ async function confirmPage(
     outcome: NegativeMoneyOutcome;
     endsAt: Date;
     outcomeAt: Date;
+    claim: boolean;
   }[] = [];
   for (const row of rows) {
     if (!isNegativeMoneyOutcome(row.outcome) || !row.outcomeAt) continue;
@@ -1006,6 +1052,7 @@ async function confirmPage(
         outcome: row.outcome,
         endsAt: row.endsAt,
         outcomeAt: row.outcomeAt,
+        claim: isNoShowProposal(row),
       });
     } else {
       run.weak++;
@@ -1013,25 +1060,39 @@ async function confirmPage(
   }
   // One CAS per row, so each is held only by a dispute in its own window; a relabel or confirm since the read skips it too.
   const counts = await Promise.all(
-    strong.map((row) =>
-      prisma.appointmentOccurrence.updateMany({
-        where: {
-          AND: [
-            where,
-            { id: row.id, outcome: row.outcome },
-            {
-              supportCases: {
-                none: disputeSinceReadWhere(row.outcome, row),
-              },
-            },
-          ],
-        },
-        data: { outcomeConfirmedAt: now },
-      }),
-    ),
+    strong
+      .filter((row) => !row.claim)
+      .map((row) =>
+        prisma.appointmentOccurrence.updateMany({
+          where: confirmGuard(where, row),
+          data: { outcomeConfirmedAt: now },
+        }),
+      ),
   );
   run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
-  return true;
+  // A no-show's claim drives a refund, so it runs one at a time inside the pass's share.
+  for (const row of strong.filter((r) => r.claim)) {
+    if (ctx.pastDeadline()) return "out-of-time";
+    try {
+      const result = await confirmConsultantNoShow(row.id, {
+        now,
+        guard: confirmGuard(where, row),
+        errors: run.errors,
+        failures: ctx.failures,
+      });
+      if (result.kind === "claimed") {
+        run.confirmed++;
+        run.claimed++;
+      } else if (result.kind === "declined") {
+        run.declined++;
+      }
+    } catch (error) {
+      run.errors.push(
+        `Failed to claim the consultant no-show on ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return "judged";
 }
 
 /**
@@ -1045,6 +1106,8 @@ export async function confirmClosedOutcomes(
 ): Promise<OutcomeConfirmRun> {
   const run: OutcomeConfirmRun = {
     confirmed: 0,
+    claimed: 0,
+    declined: 0,
     weak: 0,
     disputed: 0,
     errors: [],
@@ -1063,6 +1126,7 @@ export async function confirmClosedOutcomes(
     );
     return run;
   }
+  const failures = createRunFailureReporter("bookings");
   try {
     while (!pastDeadline()) {
       // "query", not a join: a join reads nested timestamps in the session zone.
@@ -1078,18 +1142,25 @@ export async function confirmClosedOutcomes(
         after = null;
         break;
       }
-      const judged = await confirmPage(rows, where, now, run);
+      const page = await confirmPage(rows, where, now, run, {
+        pastDeadline,
+        failures,
+      });
+      // Claims the deadline cut keep the cursor before this page, so the next run starts with them.
+      if (page === "out-of-time") break;
       // A capped page stays unconfirmed, but the cursor moves past it so it cannot stall the scan.
       after =
         rows.length < OUTCOME_CONFIRM_PAGE
           ? null
           : { outcomeAt: last.outcomeAt, id: last.id };
-      if (!judged || !after) break;
+      if (page === "capped" || !after) break;
     }
   } catch (error) {
     run.errors.push(
       `Failed to confirm closed session outcomes: ${error instanceof Error ? error.message : String(error)}`,
     );
+  } finally {
+    failures.flush();
   }
   run.checkpoint = after ? encodeCursor(after) : null;
   return run;

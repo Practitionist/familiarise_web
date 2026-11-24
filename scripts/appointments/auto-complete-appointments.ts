@@ -1411,7 +1411,7 @@ async function autoCompleteAppointmentsUnlocked(
     checkpoint = confirms.checkpoint;
     allErrors.push(...confirms.errors);
     console.log(
-      `   Negative verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} weak and ${confirms.disputed} disputed left for ops`,
+      `   Negative verdicts: ${confirms.confirmed} confirmed (${confirms.claimed} consultant no-shows claimed), ${confirms.weak} weak, ${confirms.disputed} disputed and ${confirms.declined} declined no-shows left for ops`,
     );
     rounds = await drainRounds(
       { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline },

@@ -31,6 +31,16 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 jest.mock("../../lib/booking/class-sessions", () => ({
   onClassSessionVoided: jest.fn(),
 }));
+jest.mock("../../lib/booking/consultant-no-show", () => ({
+  confirmConsultantNoShow: jest.fn(async () => ({
+    kind: "claimed",
+    refunded: true,
+    held: null,
+  })),
+  readNoShowClaim: jest.fn(async () => ({ consultationId: "cons-a" })),
+  claimNoShowTx: jest.fn(async () => ({ held: null })),
+  settleClaimedNoShow: jest.fn(async () => ({ refunded: true })),
+}));
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { matchesWhere, type memTable, type Row } from "../fixtures/mem-db";
@@ -50,6 +60,12 @@ import {
 } from "@/lib/backoffice/session-outcomes";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { readJobCheckpoint } from "@/lib/cron/with-cron-lock";
+import {
+  claimNoShowTx,
+  confirmConsultantNoShow,
+  readNoShowClaim,
+  settleClaimedNoShow,
+} from "@/lib/booking/consultant-no-show";
 
 type Table = ReturnType<typeof memTable>;
 const occurrences = prisma.appointmentOccurrence as unknown as Table;
@@ -153,6 +169,8 @@ describe("the window-close pass", () => {
     const run = await confirmClosedOutcomes(NOW, () => false);
     expect(run).toEqual({
       confirmed: 1,
+      claimed: 0,
+      declined: 0,
       weak: 2,
       disputed: 0,
       errors: [],
@@ -497,7 +515,7 @@ describe("the ops confirm door", () => {
     expect(row("a").outcomeConfirmedAt).toBeNull();
   });
 
-  it("refuses a parked UNVERIFIED verdict, which ops decide through set-outcome", async () => {
+  it("refuses a parked UNVERIFIED verdict other than a consultation's no-show, which ops decide through set-outcome", async () => {
     occurrences.rows.push(
       verdict("a", { completionStatus: "UNVERIFIED", outcome: "HOST_ABSENT" }),
     );
@@ -580,5 +598,115 @@ describe("set-outcome", () => {
       outcome: "HELD",
       outcomeConfirmedAt: null,
     });
+  });
+});
+
+/** A consultation's proposed host no-show: Hannah never joined, Priya waited the hour. */
+function proposal(id: string, overrides: Row = {}): Row {
+  return verdict(
+    id,
+    {
+      completionStatus: "UNVERIFIED",
+      outcome: "HOST_ABSENT",
+      appointment: {
+        ...(verdict(id).appointment as Row),
+        consultationId: `cons-${id}`,
+      },
+      ...overrides,
+    },
+    { presences: [{ userId: "priya", joinedAt: at(0), leftAt: at(60) }] },
+  );
+}
+
+describe("a proposed consultant no-show", () => {
+  it("is claimed at the window close on strong, silent evidence, with the pass's own guard", async () => {
+    occurrences.rows.push(proposal("a"));
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 1, claimed: 1, weak: 0 });
+    expect(confirmConsultantNoShow).toHaveBeenCalledTimes(1);
+    const [id, opts] = jest.mocked(confirmConsultantNoShow).mock.calls[0];
+    expect(id).toBe("a");
+    // The claim's CAS re-checks the candidate, the outcome and the dispute window, like a bare stamp.
+    expect(matchesWhere(row("a"), opts.guard)).toBe(true);
+    row("a").supportCases = [filed("provider_attended", "hannah")];
+    expect(matchesWhere(row("a"), opts.guard)).toBe(false);
+    // The pass never stamps a proposal itself: the claim does, in its transaction.
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("is claimed early when the learner agrees, and not while the window is open and silent", async () => {
+    occurrences.rows.push(
+      proposal("agreed", {
+        outcomeAt: hoursAgo(5),
+        supportCases: [filed("provider_no_show", "priya")],
+      }),
+      proposal("open", { outcomeAt: hoursAgo(5) }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.claimed).toBe(1);
+    expect(
+      jest.mocked(confirmConsultantNoShow).mock.calls.map((c) => c[0]),
+    ).toEqual(["agreed"]);
+  });
+
+  it("is never claimed when the consultant disputes it, or on weak evidence", async () => {
+    occurrences.rows.push(
+      proposal("disputed", {
+        supportCases: [filed("provider_attended", "hannah")],
+      }),
+      proposal("weak", {
+        meeting: {
+          ...(proposal("weak").meeting as Row),
+          attendanceCorroboratedSessionIds: ["s-2"],
+        },
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ claimed: 0, disputed: 1, weak: 1 });
+    expect(confirmConsultantNoShow).not.toHaveBeenCalled();
+  });
+
+  it("counts a declined claim for ops, and keeps the cursor before a page whose claims the deadline cut", async () => {
+    occurrences.rows.push(proposal("a"));
+    jest
+      .mocked(confirmConsultantNoShow)
+      .mockResolvedValueOnce({ kind: "declined" });
+    expect(await confirmClosedOutcomes(NOW, () => false)).toMatchObject({
+      claimed: 0,
+      declined: 1,
+    });
+    // Two checks before the page is read; the third, before the claim, is past the deadline.
+    let checks = 0;
+    const run = await confirmClosedOutcomes(NOW, () => checks++ > 1);
+    expect(run.claimed).toBe(0);
+    expect(run.checkpoint).toBeNull();
+  });
+
+  it("ops Confirm runs the claim in the door's transaction and drives the refund after the commit", async () => {
+    occurrences.rows.push(proposal("a"));
+    const result = await confirmSessionOutcome(tx, {
+      occurrenceId: "a",
+      outcome: "HOST_ABSENT",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    expect(readNoShowClaim).toHaveBeenCalledWith(tx, "a");
+    expect(claimNoShowTx).toHaveBeenCalledWith(
+      tx,
+      { consultationId: "cons-a" },
+      { now: NOW, actorUserId: "ops-1" },
+    );
+    expect(settleClaimedNoShow).not.toHaveBeenCalled();
+    await result.afterCommit?.();
+    expect(settleClaimedNoShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("ops Confirm refuses a proposal whose booking no longer qualifies, claiming nothing", async () => {
+    occurrences.rows.push(proposal("a"));
+    jest.mocked(readNoShowClaim).mockResolvedValueOnce(null);
+    await expect(
+      confirmSessionOutcome(tx, { occurrenceId: "a", outcome: "HOST_ABSENT" }),
+    ).rejects.toMatchObject({ code: "NO_SHOW_NOT_CLAIMABLE" });
+    expect(claimNoShowTx).not.toHaveBeenCalled();
   });
 });

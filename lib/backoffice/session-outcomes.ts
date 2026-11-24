@@ -47,8 +47,16 @@ import {
   isAgedNeedsHuman,
   isNegativeMoneyOutcome,
   needsHumanWhere,
+  PROPOSED_CONSULTANT_NO_SHOW,
   reportWindowClosesAt,
 } from "@/lib/booking/misses";
+import {
+  claimNoShowTx,
+  readNoShowClaim,
+  settleClaimedNoShow,
+} from "@/lib/booking/consultant-no-show";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
   transitionOccurrenceCompletion,
@@ -323,9 +331,14 @@ export async function confirmSessionOutcome(
   args: {
     occurrenceId: string;
     outcome: OccurrenceOutcome;
+    actorUserId?: string | null;
     now?: Date;
   },
-) {
+): Promise<{
+  before: Prisma.InputJsonValue;
+  after: { outcome: OccurrenceOutcome; outcomeConfirmedAt: string };
+  afterCommit?: () => Promise<unknown>;
+}> {
   const now = args.now ?? new Date();
   const { outcome } = args;
   if (!isNegativeMoneyOutcome(outcome)) {
@@ -334,6 +347,14 @@ export async function confirmSessionOutcome(
       "Only a host-absent, cut-short or learner-absent verdict needs a confirmation.",
     );
   }
+  const proposal =
+    outcome === "HOST_ABSENT"
+      ? await tx.appointmentOccurrence.findFirst({
+          where: { id: args.occurrenceId, ...PROPOSED_CONSULTANT_NO_SHOW },
+          select: { id: true },
+        })
+      : null;
+  if (proposal) return confirmNoShowProposal(tx, args.occurrenceId, args, now);
   const { count } = await tx.appointmentOccurrence.updateMany({
     where: {
       id: args.occurrenceId,
@@ -358,6 +379,50 @@ export async function confirmSessionOutcome(
   return {
     before: { outcome, outcomeConfirmedAt: null },
     after: { outcome, outcomeConfirmedAt: now.toISOString() },
+  };
+}
+
+/** A consultant no-show proposal: confirming it runs the no-show claim in the door's transaction, the refund after the commit. */
+async function confirmNoShowProposal(
+  tx: Tx,
+  occurrenceId: string,
+  args: { actorUserId?: string | null },
+  now: Date,
+) {
+  const claim = await readNoShowClaim(tx, occurrenceId);
+  if (!claim) {
+    throw new OpsRefusal(
+      "NO_SHOW_NOT_CLAIMABLE",
+      "This booking no longer qualifies for the no-show refund; decide it with Set outcome.",
+    );
+  }
+  let held;
+  try {
+    ({ held } = await claimNoShowTx(tx, claim, {
+      now,
+      actorUserId: args.actorUserId ?? null,
+    }));
+  } catch (error) {
+    if (error instanceof IllegalTransitionError) {
+      throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+    }
+    throw error;
+  }
+  return {
+    before: { outcome: "HOST_ABSENT", outcomeConfirmedAt: null },
+    after: {
+      outcome: "HOST_ABSENT" as const,
+      outcomeConfirmedAt: now.toISOString(),
+    },
+    // The owed marker committed with the claim, so a lost drive is retried by the owed-refund sweep.
+    afterCommit: async () => {
+      const failures = createRunFailureReporter("admin");
+      try {
+        await settleClaimedNoShow(claim, held, { errors: [], failures });
+      } finally {
+        failures.flush();
+      }
+    },
   };
 }
 
@@ -593,11 +658,13 @@ export async function readSessionsNeedingHuman({
       aged: isAgedNeedsHuman(row, now),
       // Stays offered once settled: a settled re-read only recomputes the verdict from the stored rows.
       canRereadAttendance: !!row.meeting && now <= rereadDeadline(row.endsAt),
-      // An applied negative verdict nobody confirmed; a parked UNVERIFIED one is decided through set-outcome.
+      // An applied negative verdict nobody confirmed, or a consultation's proposed no-show; other parked rows use set-outcome.
       canConfirm:
         isNegativeMoneyOutcome(row.outcome) &&
         row.outcomeConfirmedAt === null &&
-        row.completionStatus !== "UNVERIFIED",
+        (row.completionStatus !== "UNVERIFIED" ||
+          (row.outcome === "HOST_ABSENT" &&
+            row.appointment.appointmentType === "CONSULTATION")),
       reports: reports.get(row.id) ?? [],
       booking: {
         type: row.appointment.appointmentType,

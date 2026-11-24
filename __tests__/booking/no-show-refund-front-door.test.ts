@@ -3,24 +3,10 @@
  */
 
 /**
- * E2E-audit P1 — consultant no-show refunds must go through the booking
- * front door, and must not skip credit-funded bookings.
- *
- * Two defects, one job (`detect-consultant-no-shows`, hourly):
- *
- * 1. It refunded via raw `refundPayment`, which only understands gateway
- *    intents. An ORG-FUNDED booking carries an internal intent id
- *    (org_wallet_ / org_invoice_ / org_license_), so the call threw
- *    UNKNOWN_GATEWAY *after* the booking had already been claimed as
- *    CANCELLED — stranding a PENDING refund placeholder until the reconcile
- *    cron failed it a day later. `refundBookingPayment` is the front door
- *    that splits the gateway / in-ledger-org / credits rails (doctrine
- *    rule 3).
- *
- * 2. Both the candidate query and the payment picker required `amount > 0`,
- *    so a session paid entirely out of referral credits was invisible to the
- *    job: the consultant no-showed, and the consultee got neither a
- *    cancellation nor their credits back.
+ * The consultant no-show detector proposes and moves no money: it parks each
+ * judged session UNVERIFIED with its verdict. The claim that runs once the
+ * HOST_ABSENT verdict is confirmed refunds through the booking front door,
+ * never the raw gateway path, and does not skip a credit-funded booking.
  */
 
 import "../booking-algorithm/setup";
@@ -71,6 +57,7 @@ jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     consultation: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({
         status: "APPROVED",
@@ -138,6 +125,8 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
+import { confirmConsultantNoShow } from "../../lib/booking/consultant-no-show";
+import { createRunFailureReporter } from "../../lib/observability/run-failures";
 import { SWEEP_START_DEADLINE_MS } from "../../lib/cron/run-deadline";
 import {
   CONSULTANT_USER,
@@ -190,10 +179,62 @@ function mockIncident(startsAt: string, endsAt: string) {
 
 function expectNoShowSkipped(result: NoShowRun) {
   expect(result.detected).toBe(0);
+  expect(
+    prisma.appointmentOccurrence.updateManyAndReturn,
+  ).not.toHaveBeenCalled();
   expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
   expect(prisma.systemEvent.create).not.toHaveBeenCalled();
   expect(refundBookingPayment).not.toHaveBeenCalled();
 }
+
+/** The proposal's write for one session: SCHEDULED -> UNVERIFIED with its verdict, unconfirmed. */
+const proposalWrites = () =>
+  (
+    prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
+  ).mock.calls.map(([args]) => args);
+
+/** The claim read's row for a proposed no-show on `occ-1`, in CLAIM_SELECT's shape. */
+function proposedClaimRow(payment: { id: string }) {
+  return {
+    id: "cons-1",
+    status: "APPROVED",
+    consultationPlan: {
+      title: "Career strategy",
+      consultantProfileId: "cp-1",
+      consultantProfile: {
+        userId: CONSULTANT_USER,
+        user: { name: "Consultant" },
+      },
+    },
+    requestedBy: { userId: CONSULTEE_USER, user: { name: "Consultee" } },
+    appointment: {
+      id: "apt-1",
+      organizationId: null,
+      payment: [{ id: payment.id, currency: "INR" }],
+      occurrences: [
+        {
+          id: "occ-1",
+          startsAt: new Date("2026-09-01T10:00:00Z"),
+          deletedAt: null,
+          isTentative: false,
+          completionStatus: "UNVERIFIED",
+          outcome: "HOST_ABSENT",
+          outcomeConfirmedAt: null,
+          seatsSettledAt: null,
+          meeting: { presences: [{ userId: CONSULTEE_USER }] },
+        },
+      ],
+    },
+  };
+}
+
+const confirmOcc1 = (errors: string[] = []) =>
+  confirmConsultantNoShow("occ-1", {
+    now: new Date("2026-09-04T12:00:00Z"),
+    guard: { id: "the-pass-guard" },
+    errors,
+    failures: createRunFailureReporter("bookings"),
+  });
 
 describe("consultant no-show refunds", () => {
   beforeEach(() => {
@@ -224,8 +265,8 @@ describe("consultant no-show refunds", () => {
 
     const result = await detectConsultantNoShows({ maxCandidates: 10 });
 
-    expect(result.refunded).toBe(30);
-    expect(refundBookingPayment).toHaveBeenCalledTimes(30);
+    expect(result.detected).toBe(30);
+    expect(proposalWrites()).toHaveLength(30);
   });
 
   it("bounds each candidate's Stream reads by the run's start budget", async () => {
@@ -242,12 +283,39 @@ describe("consultant no-show refunds", () => {
     });
   });
 
-  it("refunds through the front door, never the raw gateway path", async () => {
+  it("proposes the no-show and writes no refund, owed marker, cancel or strike", async () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
       noShowCandidate({ id: "pay-1", amount: 150000 }),
     ]);
 
     const result = await detectConsultantNoShows();
+
+    expect(result.detected).toBe(1);
+    expect(proposalWrites()).toEqual([
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "occ-1",
+          completionStatus: { in: ["SCHEDULED"] },
+        }),
+        data: expect.objectContaining({
+          completionStatus: "UNVERIFIED",
+          outcome: "HOST_ABSENT",
+          outcomeConfirmedAt: null,
+        }),
+      }),
+    ]);
+    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(prisma.systemEvent.create).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("the confirmed claim refunds through the front door, never the raw gateway path", async () => {
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(
+      proposedClaimRow({ id: "pay-1" }),
+    );
+
+    const result = await confirmOcc1();
 
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     expect(refundBookingPayment).toHaveBeenCalledWith(
@@ -257,11 +325,19 @@ describe("consultant no-show refunds", () => {
         reason: expect.stringContaining("no-show"),
       }),
     );
-    // The whole point of the fix: org-funded intents die inside refundPayment.
+    // Org-funded intents die inside refundPayment.
     expect(refundPayment).not.toHaveBeenCalled();
-    expect(result.detected).toBe(1);
-    expect(result.refunded).toBe(1);
-    // D10 — the claim's transaction writes the expert's strike.
+    expect(result).toEqual({ kind: "claimed", refunded: true, held: null });
+    // The strike session's CAS carries the caller's guard, and stamps the confirmation with the cancel.
+    const [strikeMove] = (
+      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
+    ).mock.calls[0];
+    expect(strikeMove.where.AND[0]).toEqual({ id: "the-pass-guard" });
+    expect(strikeMove.data).toMatchObject({
+      completionStatus: "CANCELLED",
+      outcomeConfirmedAt: expect.any(Date),
+    });
+    // The claim's transaction writes the expert's strike.
     expect(prisma.systemEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         correlationId: "expert-reliability:cp-1",
@@ -269,24 +345,21 @@ describe("consultant no-show refunds", () => {
     });
   });
 
-  it("handles a fully credit-funded booking (amount 0) instead of skipping it", async () => {
-    // Pre-fix this row was filtered out at BOTH the candidate query and the
-    // payment picker, so the booking was never even cancelled.
-    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
-      noShowCandidate({ id: "pay-free", amount: 0 }),
-    ]);
+  it("claims a fully credit-funded booking (amount 0) instead of skipping it", async () => {
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(
+      proposedClaimRow({ id: "pay-free" }),
+    );
     refundBookingPayment.mockResolvedValue({
       amountRefundedPaise: 0,
       rail: "CREDITS",
     });
 
-    const result = await detectConsultantNoShows();
+    const result = await confirmOcc1();
 
     expect(refundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "pay-free" }),
     );
-    expect(result.detected).toBe(1);
-    expect(result.refunded).toBe(1);
+    expect(result).toMatchObject({ kind: "claimed", refunded: true });
     // And the booking itself was cancelled, not left live.
     expect(prisma.consultation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -295,8 +368,8 @@ describe("consultant no-show refunds", () => {
     );
   });
 
-  // The cohort reads live slots; the claim's CAS judges only undecided SCHEDULED ones.
-  it("scopes the cohort to live slots and the claim's CAS to undecided SCHEDULED occurrences", async () => {
+  // The cohort reads live slots; the proposal's CAS judges only undecided SCHEDULED ones.
+  it("scopes the cohort to live slots and the proposal's CAS to undecided SCHEDULED occurrences", async () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
       noShowCandidate({ id: "pay-1", amount: 150000 }),
     ]);
@@ -323,20 +396,9 @@ describe("consultant no-show refunds", () => {
     expect(query.include.appointment.include.occurrences.orderBy).toEqual({
       startsAt: "asc",
     });
-    const [claim] = (prisma.consultation.updateMany as jest.Mock).mock.calls[0];
-    expect(claim.where.appointment.occurrences.some).toMatchObject({
-      id: { in: ["occ-1"] },
-      deletedAt: null,
-      completionStatus: "SCHEDULED",
-      outcome: null,
-      isTentative: false,
-    });
-    expect(claim.where.appointment.occurrences.none).toEqual(decidedOrParked);
-    const [release] = (
-      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
-    ).mock.calls[0];
+    const [release] = proposalWrites();
     expect(release.where).toMatchObject({
-      id: { in: ["occ-1"] },
+      id: "occ-1",
       deletedAt: null,
       outcome: null,
       isTentative: false,
@@ -371,30 +433,10 @@ describe("consultant no-show refunds", () => {
     const result = await detectConsultantNoShows();
 
     expect(result.detected).toBe(1);
-    expect(result.refunded).toBe(1);
-    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
-    // Only the live rebooked session is judged, so only its record is settled.
+    // Only the live rebooked session is judged, so only its record is settled and proposed.
     expect(mockSettle).toHaveBeenCalledTimes(1);
     expect(mockSettle.mock.calls[0][0].occurrenceId).toBe("occ-new");
-    const [claim] = (prisma.consultation.updateMany as jest.Mock).mock.calls[0];
-    expect(claim.where.appointment.occurrences.some.id).toEqual({
-      in: ["occ-new"],
-    });
-    const [release] = (
-      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
-    ).mock.calls[0];
-    expect(release.where.id).toEqual({ in: ["occ-new"] });
-    expect(prisma.systemEvent.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        context: expect.objectContaining({ occurrenceIds: ["occ-new"] }),
-      }),
-    });
-    expect(mockSendCancelledEmail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        startsAt: new Date("2026-09-08T10:00:00Z"),
-      }),
-      expect.any(Number),
-    );
+    expect(proposalWrites().map((w) => w.where.id)).toEqual(["occ-new"]);
   });
 
   it("does not judge a rebooked occurrence that itself overlaps a declared incident", async () => {
@@ -413,7 +455,7 @@ describe("consultant no-show refunds", () => {
     ["HELD", { completionStatus: "COMPLETED", outcome: "HELD" }],
     ["UNVERIFIED", { completionStatus: "UNVERIFIED", outcome: "INCONCLUSIVE" }],
   ])(
-    "does not refund when a decided %s sibling exists",
+    "does not propose when a decided %s sibling exists",
     async (_label, sibling) => {
       const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
       candidate.appointment.occurrences = [
@@ -426,8 +468,8 @@ describe("consultant no-show refunds", () => {
 
       const result = await detectConsultantNoShows();
 
+      expect(result.detected).toBe(0);
       expectNoShowSkipped(result);
-      expect(prisma.payment.updateMany).not.toHaveBeenCalled();
     },
   );
 
@@ -443,15 +485,14 @@ describe("consultant no-show refunds", () => {
     expect(paymentFilter).not.toHaveProperty("amount");
   });
 
-  it("records a durable system event when the refund fails", async () => {
-    // Pre-fix a refund failure existed only in this job's stdout, so ops had
-    // no signal that a cancelled booking still owed money.
-    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
-      noShowCandidate({ id: "pay-boom", amount: 150000 }),
-    ]);
+  it("records a durable system event when the confirmed claim's refund fails", async () => {
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(
+      proposedClaimRow({ id: "pay-boom" }),
+    );
     refundBookingPayment.mockRejectedValue(new Error("gateway refused"));
+    const errors: string[] = [];
 
-    const result = await detectConsultantNoShows();
+    const result = await confirmOcc1(errors);
 
     expect(recordSystemError).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -460,8 +501,24 @@ describe("consultant no-show refunds", () => {
         context: expect.objectContaining({ paymentId: "pay-boom" }),
       }),
     );
-    expect(result.refunded).toBe(0);
-    expect(result.success).toBe(false);
+    expect(result).toMatchObject({ kind: "claimed", refunded: false });
+    expect(errors).toHaveLength(1);
+  });
+
+  it("declines a proposal whose booking holds a decided sibling, writing nothing", async () => {
+    const row = proposedClaimRow({ id: "pay-1" });
+    row.appointment.occurrences.push({
+      ...row.appointment.occurrences[0],
+      id: "occ-held",
+      completionStatus: "COMPLETED",
+      outcome: "HELD",
+    });
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(row);
+
+    expect(await confirmOcc1()).toEqual({ kind: "declined" });
+    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+    expect(prisma.systemEvent.create).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("neither claims nor strikes a session inside a declared incident", async () => {
