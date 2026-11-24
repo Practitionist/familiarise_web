@@ -171,6 +171,15 @@ export function confirmableNoShowWhere(
   };
 }
 
+/** An unsettled void whose negative verdict nobody confirmed: no refund path may settle it yet. */
+export const UNCONFIRMED_NEGATIVE_VOID = {
+  completionStatus: "VOIDED",
+  deletedAt: null,
+  seatsSettledAt: null,
+  outcome: { in: [...NEGATIVE_MONEY_OUTCOMES] },
+  outcomeConfirmedAt: null,
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 /** A void the 14-day refund may settle: any negative verdict on it is confirmed. Explicit about a null outcome, which NOT would read as NULL. */
 export const SETTLEABLE_VOID_VERDICT = {
   OR: [

@@ -69,7 +69,12 @@ import {
   stampRefundOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
-import { AWAITING_HUMAN, SETTLEABLE_VOID_VERDICT } from "@/lib/booking/misses";
+import {
+  AWAITING_HUMAN,
+  isNegativeMoneyOutcome,
+  SETTLEABLE_VOID_VERDICT,
+  UNCONFIRMED_NEGATIVE_VOID,
+} from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -755,8 +760,25 @@ async function settleCompletedPlanVoids(
             }
             const rows = await tx.appointmentOccurrence.findMany({
               where: { appointmentId, isTentative: false, deletedAt: null },
-              select: { completionStatus: true, seatsSettledAt: true },
+              select: {
+                completionStatus: true,
+                seatsSettledAt: true,
+                outcome: true,
+                outcomeConfirmedAt: true,
+              },
             });
+            // A void whose verdict is unconfirmed waits for ops or the window-close pass.
+            if (
+              rows.some(
+                (row) =>
+                  row.completionStatus === OccurrenceCompletionStatus.VOIDED &&
+                  row.seatsSettledAt === null &&
+                  isNegativeMoneyOutcome(row.outcome) &&
+                  row.outcomeConfirmedAt === null,
+              )
+            ) {
+              throw new PlanWaiting();
+            }
             const voids = rows.filter(
               (row) =>
                 row.completionStatus === OccurrenceCompletionStatus.VOIDED &&
@@ -818,7 +840,9 @@ function voidOfRefundedPlanWhere() {
 function completedPlanWithVoidWhere() {
   return {
     status: AppointmentStatus.COMPLETED,
-    appointment: { occurrences: { some: UNSETTLED_VOID } },
+    appointment: {
+      occurrences: { some: UNSETTLED_VOID, none: UNCONFIRMED_NEGATIVE_VOID },
+    },
   } satisfies Prisma.SubscriptionWhereInput;
 }
 
@@ -1069,7 +1093,8 @@ async function settleEndedPlan(
               throw new PlanWaiting();
             }
             // A session still SCHEDULED or parked for ops could yet count as
-            // delivered, and an open reschedule could still place one.
+            // delivered, a void whose verdict is unconfirmed could yet be overturned,
+            // and an open reschedule could still place one.
             const undecided = await tx.appointmentOccurrence.count({
               where: {
                 appointmentId,
@@ -1080,6 +1105,7 @@ async function settleEndedPlan(
                     deletedAt: null,
                   },
                   AWAITING_HUMAN,
+                  UNCONFIRMED_NEGATIVE_VOID,
                 ],
               },
             });
