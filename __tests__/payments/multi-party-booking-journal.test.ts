@@ -440,6 +440,7 @@ describe("#773 multi-party booking journal", () => {
     // being replayed — postLedgerTxn's fast-path must dedupe on the key.
     mockedTx.ledgerTransaction.findUnique.mockResolvedValue({
       id: "ltxn-existing",
+      entries: [],
     });
 
     const ownerId = await createEarningsFromPayment({
