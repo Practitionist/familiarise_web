@@ -126,7 +126,10 @@ it("a late refund.processed claims the FAILED placeholder its notes name and cle
     where: { id: payment.id },
     select: { refundOwedKey: true, refundOwedPaise: true },
   });
-  expect(after).toEqual({ refundOwedKey: null, refundOwedPaise: null });
+  expect(after).toMatchObject({
+    refundOwedKey: null,
+    refundOwedPaise: null,
+  });
 });
 
 it("books the refund of the captured gateway payment and nothing for another attempt on the same order", async () => {
