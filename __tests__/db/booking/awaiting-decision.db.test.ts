@@ -122,6 +122,10 @@ import {
   readAppointmentDetail,
   scopeAppointmentDetail,
 } from "../../../lib/data/appointment-detail";
+import {
+  orgActorStatus,
+  orgActorStatusFacts,
+} from "../../../lib/appointments/org-actor-status";
 import { listAppointmentsScoped } from "../../../lib/api/scope/list-appointments";
 import { getStaffAppointments } from "../../../lib/data/staff-appointments";
 import { readCaseBooking } from "../../../lib/support/case-workspace";
@@ -600,6 +604,24 @@ async function labelsEverywhere(
       limit: 100,
     } as Parameters<typeof getStaffAppointments>[0])
   ).appointments.find((a) => a.id === b.appointmentId);
+  // The org operator detail's status, from the same read and helpers its page uses.
+  const raw = (await readAppointmentDetail(b.appointmentId))!.appointment;
+  const orgDetail = orgActorStatus({
+    kind: raw.appointmentType,
+    status:
+      raw.consultation?.status ??
+      raw.subscription?.status ??
+      raw.webinar?.status ??
+      raw.class?.status ??
+      raw.trial?.status ??
+      null,
+    source:
+      raw.consultation?.bookingSource ??
+      raw.subscription?.bookingSource ??
+      null,
+    reschedule: null,
+    ...orgActorStatusFacts(raw, now),
+  });
   const caseRow = await readCaseBooking(b.appointmentId, {
     id: b.learner.userId,
     name: "Learner",
@@ -612,6 +634,7 @@ async function labelsEverywhere(
     page: page.bookingState.label,
     pageChip: appointmentStatusChip(pageVm, "consultee").label,
     orgList: orgRow && rowStatus(orgRow as unknown as AppointmentRow).label,
+    orgDetail: orgDetail?.label,
     staffList: staff && staffStatus(staff).label,
     caseDrawer: caseRow && caseBookingStatus(caseRow)?.label,
     nextAction: page.nextAction.kind,
@@ -619,6 +642,7 @@ async function labelsEverywhere(
       learnerList: learnerRow && appointmentStatusLine(learnerRow, "consultee"),
       page: page.bookingState.why,
       staffDrawer: staff && staffStatusLine(staff),
+      orgDetail: orgDetail?.line,
     },
     progress: page.sessionProgress,
     timeline: page.timeline.map((step) => step.label),
@@ -663,6 +687,7 @@ describe("a stored COMPLETED booking with a parked session reads honestly everyw
       expertList: "Completed",
       page: "Completed",
       orgList: "Completed",
+      orgDetail: "Completed",
       staffList: "Completed",
       caseDrawer: "Completed",
     });
@@ -676,6 +701,7 @@ const EVERYWHERE_WAITING = {
   page: word,
   pageChip: word,
   orgList: word,
+  orgDetail: word,
   staffList: word,
   caseDrawer: word,
   nextAction: "NONE",
@@ -689,9 +715,11 @@ describe("a plan with parked sessions", () => {
       expertList: "Confirmed",
       page: "Confirmed",
       orgList: "Confirmed",
+      orgDetail: "Confirmed",
       staffList: "Confirmed",
     });
     const line = "2 sessions are waiting on a decision.";
+    expect(labels.lines.orgDetail).toBe(line);
     expect(labels.lines.learnerList).toBe(line);
     expect(labels.lines.page).toContain(line);
     expect(labels.lines.staffDrawer).toBe(line);
@@ -721,6 +749,7 @@ describe("a plan with parked sessions", () => {
       page: word,
       pageChip: word,
       orgList: word,
+      orgDetail: word,
       staffList: word,
     });
   });
