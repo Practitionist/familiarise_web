@@ -361,7 +361,7 @@ async function loadAppointmentDetail(appointmentId: string) {
     expertProfileIsPublic: host ? isPublicExpertProfile(host) : false,
     appointment: {
       ...row,
-      awaitingDecision: parked.occurrences > 0,
+      parkedSessions: parked.occurrences,
       payment: appointment.payment.map(({ paymentIntent, ...p }) => ({
         ...p,
         gatewayOrderMinted: !isPreMintIntent(paymentIntent),

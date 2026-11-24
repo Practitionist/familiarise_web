@@ -183,7 +183,7 @@ describe("a session parked for ops holds its booking's status", () => {
     const facts = {
       kind: "SUBSCRIPTION",
       status: "COMPLETED",
-      awaitingDecision: true,
+      parkedSessions: 1,
     };
     for (const viewer of [
       "CONSULTEE",
@@ -201,7 +201,7 @@ describe("a session parked for ops holds its booking's status", () => {
     const webinar = {
       kind: "WEBINAR",
       status: "COMPLETED",
-      awaitingDecision: true,
+      parkedSessions: 1,
     };
     expect(bookingStatus(webinar, "CONSULTANT").label).toBe(WAITING);
     expect(
@@ -209,13 +209,12 @@ describe("a session parked for ops holds its booking's status", () => {
         staffRow({
           type: "webinar",
           status: "completed",
-          awaitingDecision: true,
+          parkedSessions: 1,
         }),
       ).label,
     ).toBe(WAITING);
     expect(
-      bookingStatus({ ...webinar, awaitingDecision: false }, "CONSULTANT")
-        .label,
+      bookingStatus({ ...webinar, parkedSessions: 0 }, "CONSULTANT").label,
     ).toBe("Completed");
   });
 
@@ -232,7 +231,7 @@ describe("a session parked for ops holds its booking's status", () => {
           kind: "CONSULTATION",
           status: "APPROVED",
           sessions: over,
-          awaitingDecision: true,
+          parkedSessions: 1,
         },
         "CONSULTEE",
       ).label,
@@ -240,7 +239,7 @@ describe("a session parked for ops holds its booking's status", () => {
     const plan = {
       kind: "SUBSCRIPTION",
       status: "APPROVED",
-      awaitingDecision: true,
+      parkedSessions: 1,
     };
     expect(bookingStatus({ ...plan, sessions: over }, "CONSULTEE").label).toBe(
       "Confirmed",
@@ -251,9 +250,48 @@ describe("a session parked for ops holds its booking's status", () => {
     ).toBe(WAITING);
     // A read without sessions (the back office) knows a one-session booking is over.
     expect(
-      staffStatus(staffRow({ status: "approved", awaitingDecision: true }))
-        .label,
+      staffStatus(staffRow({ status: "approved", parkedSessions: 1 })).label,
     ).toBe(WAITING);
+  });
+
+  it("a live booking keeps its word and names its parked sessions under it", () => {
+    const live = { live: 8, allTentative: false, done: false };
+    const plan = {
+      kind: "SUBSCRIPTION",
+      status: "APPROVED",
+      sessions: live,
+      parkedSessions: 2,
+    };
+    for (const viewer of ["CONSULTEE", "CONSULTANT", "STAFF"] as const) {
+      expect(bookingStatus(plan, viewer)).toMatchObject({
+        label: "Confirmed",
+        line: "2 sessions are waiting on a decision.",
+      });
+    }
+    // A plan waiting for its next placement keeps its prompt first.
+    expect(
+      bookingStatus(
+        { ...plan, planWait: "NEXT_CYCLE" as const, nextBatch: 2 },
+        "CONSULTANT",
+      ).line,
+    ).toBe(
+      "Week done. Schedule the next 2. 2 sessions are waiting on a decision.",
+    );
+    // The host's own live class keeps its event word, with the line.
+    expect(
+      bookingStatus(
+        {
+          kind: "CLASS",
+          status: "SCHEDULED",
+          sessions: live,
+          parkedSessions: 1,
+        },
+        "CONSULTANT",
+      ),
+    ).toMatchObject({
+      label: "Scheduled",
+      line: "1 session is waiting on a decision.",
+    });
   });
 
   it("an unverified inconclusive or host-absent session is not held; a recorded no-join is", () => {

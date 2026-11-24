@@ -53,8 +53,8 @@ export interface OrgActorDetailProps {
     /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
     source?: string | null;
     paid?: boolean;
-    /** A session is parked for ops. */
-    awaitingDecision?: boolean;
+    /** Sessions parked for ops. */
+    parkedSessions?: number;
     reschedule?: OpenRescheduleInput | null;
     expertName: string | null;
     learnerName: string | null;
@@ -184,7 +184,7 @@ export function OrgActorDetail({
             source: meta.source,
             paid: meta.paid,
             reschedule: meta.reschedule,
-            awaitingDecision: meta.awaitingDecision,
+            parkedSessions: meta.parkedSessions,
           },
           "ORG_ADMIN",
         ),

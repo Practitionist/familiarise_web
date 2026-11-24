@@ -7,29 +7,29 @@ export const PARKED_SESSIONS_COUNT = {
   occurrences: { where: AWAITING_HUMAN },
 } satisfies Prisma.AppointmentCountOutputTypeSelect;
 
-/** Moves a read's parked count onto the row as `awaitingDecision`. */
-export function withAwaitingDecision<
+/** Moves a read's parked count onto the row as `parkedSessions`. */
+export function withParkedSessions<
   T extends { _count: { occurrences: number } },
->(row: T): Omit<T, "_count"> & { awaitingDecision: boolean } {
+>(row: T): Omit<T, "_count"> & { parkedSessions: number } {
   const { _count, ...rest } = row;
-  return { ...rest, awaitingDecision: _count.occurrences > 0 };
+  return { ...rest, parkedSessions: _count.occurrences };
 }
 
 /**
- * The appointments among `ids` holding a session parked for ops
- * ({@link AWAITING_HUMAN}); the status function reads them "Waiting on a decision".
+ * Sessions parked for ops ({@link AWAITING_HUMAN}) per appointment among `ids`,
+ * in one statement; an appointment with none is absent.
  */
-export async function appointmentsAwaitingDecision(
+export async function parkedSessionCounts(
   db: Pick<PrismaLike, "appointmentOccurrence">,
   ids: readonly string[],
-): Promise<Set<string>> {
-  if (ids.length === 0) return new Set();
-  const rows = await db.appointmentOccurrence.findMany({
+): Promise<Map<string, number>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db.appointmentOccurrence.groupBy({
+    by: ["appointmentId"],
     where: {
       AND: [{ appointmentId: { in: [...new Set(ids)] } }, AWAITING_HUMAN],
     },
-    select: { appointmentId: true },
-    distinct: ["appointmentId"],
+    _count: { _all: true },
   });
-  return new Set(rows.map((row) => row.appointmentId));
+  return new Map(rows.map((row) => [row.appointmentId, row._count._all]));
 }

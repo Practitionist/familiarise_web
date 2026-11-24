@@ -67,8 +67,8 @@ export const staffAppointmentSchema = z.object({
   free: z.boolean(),
   /** The booking was soft-deleted; it is still listed, marked removed. */
   removed: z.boolean(),
-  /** A session is parked for ops, so the booking waits on that decision. */
-  awaitingDecision: z.boolean(),
+  /** Sessions parked for ops; any makes a finished booking wait on that decision. */
+  parkedSessions: z.number().int().nonnegative(),
   hasIssue: z.boolean(),
   issueType: z.enum(STAFF_ISSUE_TYPES).nullable(),
   payment: z

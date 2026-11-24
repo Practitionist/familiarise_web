@@ -101,8 +101,8 @@ export interface BookingStatusFacts {
     /** Every session's time has passed with no outcome recorded yet. */
     awaitingOutcome?: boolean;
   };
-  /** A session is parked for ops (`AWAITING_HUMAN`); the booking settles only once they decide. */
-  awaitingDecision?: boolean;
+  /** Sessions parked for ops (`AWAITING_HUMAN`); the booking settles only once they decide. */
+  parkedSessions?: number;
   /** A plan's end has passed; until then held sessions never complete the plan. */
   planEnded?: boolean;
   /** A paid plan waiting for its first or its next placement. */
@@ -264,7 +264,8 @@ function stageOf(
       : { stage: "CANCELLED", cause };
   }
   // A parked session outranks a stored COMPLETED: nothing settles until ops decide.
-  if (status === "COMPLETED" && f.awaitingDecision) {
+  const parked = (f.parkedSessions ?? 0) > 0;
+  if (status === "COMPLETED" && parked) {
     return { stage: "AWAITING_DECISION" };
   }
   if (COMPLETED_FAMILY.has(status)) return { stage: "COMPLETED" };
@@ -286,7 +287,7 @@ function stageOf(
     // A plan completes at its stored end or its plan end, not when the placed sessions are held.
     const finished = kind !== "SUBSCRIPTION" || f.planEnded;
     const over = sessions.done || sessions.awaitingOutcome;
-    if (finished && over && f.awaitingDecision) {
+    if (finished && over && parked) {
       return { stage: "AWAITING_DECISION" };
     }
     if (sessions.done && finished) return { stage: "COMPLETED" };
@@ -294,7 +295,7 @@ function stageOf(
   // A read without sessions still knows a one-session booking with a parked session is over.
   if (
     !sessions &&
-    f.awaitingDecision &&
+    parked &&
     CONFIRMED_FAMILY.has(status) &&
     ONE_SESSION_KINDS.has(kind)
   ) {
@@ -327,6 +328,15 @@ function wordOf(
     default:
       return (f.refunded?.paise ?? 0) > 0 ? "Refunded" : "Cancelled";
   }
+}
+
+/** A live booking keeps its word; its parked sessions are named under it. */
+function parkedLine(f: BookingStatusFacts): string {
+  const n = f.parkedSessions ?? 0;
+  if (n === 0) return "";
+  return n === 1
+    ? "1 session is waiting on a decision."
+    : `${n} sessions are waiting on a decision.`;
 }
 
 function reasonOf(
@@ -426,6 +436,7 @@ function reasonOf(
       if (f.paid && f.sessions?.allTentative) {
         return "Payment received; the session is being locked in.";
       }
+      if (parkedLine(f)) return parkedLine(f);
       return f.sessions?.awaitingOutcome
         ? "This session's time has passed. We're confirming what happened."
         : "";
@@ -524,15 +535,20 @@ export function bookingStatus(
       stage,
       label: eventStatusBadge(status).label,
       tone: EVENT_TONE[status],
-      line: "",
+      line: parkedLine(f),
     };
   }
   const word = wordOf(stage, f, viewer);
+  const line = reasonOf(stage, cause, word, f, viewer, zone, now);
   return {
     stage,
     label: word,
     tone: WORD_TONE[word],
-    line: reasonOf(stage, cause, word, f, viewer, zone, now),
+    // A plan waiting for its next placement keeps its prompt and names the parked sessions after it.
+    line:
+      stage === "AWAITING_ALLOCATION" && parkedLine(f)
+        ? [line, parkedLine(f)].filter(Boolean).join(" ")
+        : line,
   };
 }
 

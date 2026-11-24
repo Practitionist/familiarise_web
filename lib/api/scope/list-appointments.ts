@@ -28,7 +28,7 @@ import { readOrgOwnerUserIds } from "@/lib/enterprise/related-party";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
-import { appointmentsAwaitingDecision } from "@/lib/booking/awaiting-decision";
+import { parkedSessionCounts } from "@/lib/booking/awaiting-decision";
 
 /** Live sessions a list row carries; the rest are counted, not loaded. */
 const LIST_UPCOMING_OCCURRENCES = 3;
@@ -391,7 +391,7 @@ export async function listAppointmentsScoped(
     params.scope.kind === "org"
       ? readOrgOwnerUserIds(prisma, params.scope.orgId)
       : null,
-    appointmentsAwaitingDecision(
+    parkedSessionCounts(
       prisma,
       items.map((a) => a.id),
     ),
@@ -427,7 +427,7 @@ export async function listAppointmentsScoped(
       return {
         ...a,
         occurrences: latestById.get(a.id) ?? a.occurrences,
-        awaitingDecision: parked.has(a.id),
+        parkedSessions: parked.get(a.id) ?? 0,
         // Org lists flag sessions an OWNER of this org delivered on its money
         // (the `payment` include is already this org's funded rails only).
         relatedParty:

@@ -196,7 +196,7 @@ export async function readCaseBooking(
     seatStatus: a.participants[0]?.status ?? null,
     facts: {
       ...caseStatusFacts(a, grants.showPayment),
-      awaitingDecision: a._count.occurrences > 0,
+      parkedSessions: a._count.occurrences,
     },
   };
 }

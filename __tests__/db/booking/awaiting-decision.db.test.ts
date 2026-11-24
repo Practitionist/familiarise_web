@@ -128,9 +128,15 @@ import { mapConsulteeEvents } from "../../../lib/appointments/map-consultee";
 import { mapConsultantAppointments } from "../../../lib/appointments/map-consultant";
 import { mapAppointmentDetail } from "../../../lib/appointments/map-detail";
 import { toPresentationInput } from "../../../lib/appointments/presentation-input";
-import { appointmentStatusChip } from "../../../lib/appointments/occurrences";
+import {
+  appointmentStatusChip,
+  appointmentStatusLine,
+} from "../../../lib/appointments/occurrences";
 import { deriveBookingPresentation } from "../../../lib/dashboard/money-state";
-import { staffStatus } from "../../../components/dashboard/shared/OperatorAppointmentsClient";
+import {
+  staffStatus,
+  staffStatusLine,
+} from "../../../components/dashboard/shared/OperatorAppointmentsClient";
 import {
   rowStatus,
   type AppointmentRow,
@@ -443,6 +449,58 @@ async function parkedConsultation(
   return { host, learner, appointmentId: seeded.appointmentId };
 }
 
+/** A paid plan with two parked past sessions; a live one still has a session ahead. */
+async function parkedPlan(planEnded: boolean) {
+  const host = await seedHost();
+  const learner = await seedConsultee();
+  const start = Date.now() - 4 * DAY_MS;
+  const seeded = await seedOneToOne(
+    "subscription",
+    host,
+    learner,
+    { startsAt: new Date(start), endsAt: new Date(start + HOUR_MS) },
+    {
+      status: "APPROVED",
+      isTentative: false,
+      completionStatus: "UNVERIFIED",
+      payment: { status: "SUCCEEDED", expiresAt: null },
+    },
+  );
+  await prisma.appointmentOccurrence.update({
+    where: { id: seeded.occurrenceId },
+    data: { outcome: "NOBODY_JOINED" },
+  });
+  const extra = [
+    { ordinal: 2, at: start + 2 * DAY_MS, parked: true },
+    ...(planEnded
+      ? []
+      : [{ ordinal: 3, at: start + 9 * DAY_MS, parked: false }]),
+  ];
+  for (const row of extra) {
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId: seeded.appointmentId,
+        ordinal: row.ordinal,
+        startsAt: new Date(row.at),
+        endsAt: new Date(row.at + HOUR_MS),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+        ...(row.parked && {
+          completionStatus: "UNVERIFIED",
+          outcome: "NOBODY_JOINED",
+        }),
+      },
+    });
+  }
+  await prisma.subscription.update({
+    where: { id: seeded.subscriptionId! },
+    data: {
+      planEndsAt: new Date(Date.now() + (planEnded ? -1 : 20) * DAY_MS),
+    },
+  });
+  return { host, learner, appointmentId: seeded.appointmentId };
+}
+
 /** The chip each list and detail reader gives the booking. */
 async function labelsEverywhere(
   b: Awaited<ReturnType<typeof parkedConsultation>>,
@@ -505,6 +563,13 @@ async function labelsEverywhere(
     staffList: staff && staffStatus(staff).label,
     caseDrawer: caseRow && caseBookingStatus(caseRow)?.label,
     nextAction: page.nextAction.kind,
+    lines: {
+      learnerList: learnerRow && appointmentStatusLine(learnerRow, "consultee"),
+      page: page.bookingState.why,
+      staffDrawer: staff && staffStatusLine(staff),
+    },
+    progress: page.sessionProgress,
+    timeline: page.timeline.map((step) => step.label),
   };
 }
 
@@ -513,14 +578,14 @@ describe("a stored COMPLETED booking with a parked session reads honestly everyw
     const labels = await labelsEverywhere(
       await parkedConsultation("COMPLETED", "NOBODY_JOINED", true),
     );
-    expect(labels).toEqual(EVERYWHERE_WAITING);
+    expect(labels).toMatchObject(EVERYWHERE_WAITING);
   });
 
   it("a live booking whose session ran inconclusive waits too, never Completed", async () => {
     const labels = await labelsEverywhere(
       await parkedConsultation("APPROVED", "INCONCLUSIVE", false),
     );
-    expect(labels).toEqual(EVERYWHERE_WAITING);
+    expect(labels).toMatchObject(EVERYWHERE_WAITING);
   });
 
   it("a free no-join completes, so it reads Completed", async () => {
@@ -549,6 +614,22 @@ const EVERYWHERE_WAITING = {
   caseDrawer: word,
   nextAction: "NONE",
 };
+
+describe("a plan with parked sessions", () => {
+  it("still running keeps its word everywhere and names the 2 parked sessions", async () => {
+    const labels = await labelsEverywhere(await parkedPlan(false));
+    expect(labels).toMatchObject({
+      learnerList: "Confirmed",
+      expertList: "Confirmed",
+      page: "Confirmed",
+      staffList: "Confirmed",
+    });
+    const line = "2 sessions are waiting on a decision.";
+    expect(labels.lines.learnerList).toBe(line);
+    expect(labels.lines.page).toContain(line);
+    expect(labels.lines.staffDrawer).toBe(line);
+  });
+});
 
 describe("the staff list's Completed tab leaves out a booking waiting on a decision", () => {
   const staffView = async (status: string | null) => {

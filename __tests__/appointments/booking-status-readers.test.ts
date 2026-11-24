@@ -30,7 +30,10 @@ jest.mock("@/lib/prisma", () => {
       count: () => Promise.resolve((mockRows.appointment ?? []).length),
     },
     user: { findMany: () => Promise.resolve([]) },
-    appointmentOccurrence: { findMany: () => Promise.resolve([]) },
+    appointmentOccurrence: {
+      findMany: () => Promise.resolve([]),
+      groupBy: () => Promise.resolve([]),
+    },
     consulteeProfile: {
       findUnique: () => Promise.resolve({ userId: "u-l" }),
     },

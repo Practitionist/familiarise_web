@@ -478,7 +478,7 @@ export async function getStaffAppointments(
       bookingSource: headline.bookingSource,
       free,
       removed,
-      awaitingDecision: row._count.occurrences > 0,
+      parkedSessions: row._count.occurrences,
       hasIssue,
       issueType,
       payment: payment

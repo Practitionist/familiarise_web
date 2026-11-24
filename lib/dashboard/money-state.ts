@@ -207,8 +207,8 @@ export interface BookingPresentationInput {
    * widen their `where` as well as their `select` where a reason matters.
    */
   history?: HistoryEdgeInput[];
-  /** A session is parked for ops (`appointmentsAwaitingDecision`); the booking waits on that decision. */
-  awaitingDecision?: boolean;
+  /** Sessions parked for ops, counted by the reader with `AWAITING_HUMAN`. */
+  parkedSessions?: number;
   /** How the booking began: a pay-first checkout hold or a submitted request. */
   source?: string | null;
   /** The open reschedule proposal; null when none is open. */
@@ -511,7 +511,7 @@ function statusFacts(
     allocateBy: allocateDeadline(input.payments),
     nextBatch: input.entitlement?.nextBatch ?? 0,
     history: input.history,
-    awaitingDecision: input.awaitingDecision,
+    parkedSessions: input.parkedSessions,
     completedNote: planEndedShortWhy(input),
     names: input.names,
   };

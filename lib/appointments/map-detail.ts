@@ -264,7 +264,7 @@ export function mapAppointmentDetail(
     refunded: listStatusFacts(appointment, occurrences).refunded,
     payDeadline: pendingDeadline ?? null,
     payLapsed: paymentsLapsed(appointment.payment),
-    awaitingDecision: holdFacts.awaitingDecision,
+    parkedSessions: holdFacts.parkedSessions,
     bookingSource:
       appointment.consultation?.bookingSource ??
       appointment.subscription?.bookingSource ??

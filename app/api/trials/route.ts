@@ -58,7 +58,7 @@ import {
 } from "@/utils/appointmentlock";
 import {
   PARKED_SESSIONS_COUNT,
-  withAwaitingDecision,
+  withParkedSessions,
 } from "@/lib/booking/awaiting-decision";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 
@@ -281,8 +281,7 @@ export async function GET(request: NextRequest) {
     const data = trials
       .map((trial) => ({
         ...trial,
-        appointment:
-          trial.appointment && withAwaitingDecision(trial.appointment),
+        appointment: trial.appointment && withParkedSessions(trial.appointment),
       }))
       .map((trial) =>
         isStaffNonParty(

@@ -24,7 +24,7 @@ import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
 import {
   PARKED_SESSIONS_COUNT,
-  withAwaitingDecision,
+  withParkedSessions,
 } from "@/lib/booking/awaiting-decision";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -99,13 +99,13 @@ export class ConsulteeProfileNotFoundError extends Error {
  * Read the consultee's event union for a resolved scope. Returns the
  * inner payload shape (NOT wrapped in `{ data, success }`).
  */
-/** The booking's parked-session count, as the `awaitingDecision` the status chip reads. */
+/** The booking's parked-session count, as the `parkedSessions` the status chip reads. */
 function stampParked<
   T extends { appointment: { _count: { occurrences: number } } | null },
 >(row: T) {
   return {
     ...row,
-    appointment: row.appointment && withAwaitingDecision(row.appointment),
+    appointment: row.appointment && withParkedSessions(row.appointment),
   };
 }
 

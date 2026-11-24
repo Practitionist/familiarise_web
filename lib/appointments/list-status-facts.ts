@@ -79,8 +79,8 @@ export function listStatusFacts(
           reason?: string | null;
           createdAt?: Date | string | null;
         }> | null;
-        /** Stamped by the reader from `appointmentsAwaitingDecision`. */
-        awaitingDecision?: boolean;
+        /** Stamped by the reader with `PARKED_SESSIONS_COUNT`. */
+        parkedSessions?: number;
       }
     | null
     | undefined,
@@ -96,7 +96,7 @@ export function listStatusFacts(
   | "refunded"
   | "unpaidLinkSeen"
   | "history"
-  | "awaitingDecision"
+  | "parkedSessions"
 > {
   const payments = appointment?.payment ?? [];
   const charged = payments.filter(
@@ -136,7 +136,7 @@ export function listStatusFacts(
     payDeadline: open[0] ?? (appointment?.payment ? null : undefined),
     payLapsed: paymentsLapsed(payments),
     unpaidLinkSeen: unpaidLinkSeen(payments),
-    awaitingDecision: appointment?.awaitingDecision,
+    parkedSessions: appointment?.parkedSessions,
     history: appointment?.statusHistory
       ? appointment.statusHistory.map((e) => ({ ...e }))
       : undefined,
@@ -158,12 +158,12 @@ export function trialHoldFacts(trial: {
   appointment?: Parameters<typeof listStatusFacts>[0];
 }): Pick<
   AppointmentVM,
-  "paid" | "payDeadline" | "payLapsed" | "awaitingDecision"
+  "paid" | "payDeadline" | "payLapsed" | "parkedSessions"
 > {
   const facts = listStatusFacts(trial.appointment, []);
   return {
     paid: facts.paid,
-    awaitingDecision: facts.awaitingDecision,
+    parkedSessions: facts.parkedSessions,
     payDeadline: trial.paymentDueAt
       ? toDate(trial.paymentDueAt)
       : facts.payDeadline,

@@ -377,7 +377,7 @@ function mapGroup(
     ),
     bookingSource: source,
     ...facts,
-    awaitingDecision: children.some((c) => c.awaitingDecision),
+    parkedSessions: children.reduce((n, c) => n + (c.parkedSessions ?? 0), 0),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: { total: live.length, completed },

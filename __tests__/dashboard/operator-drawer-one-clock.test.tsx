@@ -60,7 +60,7 @@ const appointment = {
   bookingSource: "DIRECT_CHECKOUT",
   free: false,
   removed: false,
-  awaitingDecision: false,
+  parkedSessions: 0,
   hasIssue: false,
   issueType: null,
   payment: {

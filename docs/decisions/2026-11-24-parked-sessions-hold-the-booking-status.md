@@ -17,12 +17,14 @@ The shared database held 7 bookings stored `COMPLETED` with 16 parked sessions, 
 ## Decision
 
 1. **A parked session is not held.** `isOccurrenceHeld` returns false for an `UNVERIFIED` session whose outcome is in `PARKED_OUTCOMES` (`INCONCLUSIVE`, `HOST_ABSENT`; the list `AWAITING_HUMAN` itself uses). A paid no-join is still held by this test, which knows nothing of payments; the stage below covers it.
-2. **"Waiting on a decision" is the eighth word.** The stage `AWAITING_DECISION` (tone caution) is derived from the fact `awaitingDecision`, which every reader computes with the database predicate itself: the `_count` entry `PARKED_SESSIONS_COUNT` in the same statement, or `appointmentsAwaitingDecision` (`lib/booking/awaiting-decision.ts`) where the read already counts sessions for another reason. The stage wins over:
+2. **"Waiting on a decision" is the eighth word.** The stage `AWAITING_DECISION` (tone caution) is derived from the fact `parkedSessions`, the booking's number of parked sessions, which every reader computes with the database predicate itself: the `_count` entry `PARKED_SESSIONS_COUNT` in the same statement, or `parkedSessionCounts` (`lib/booking/awaiting-decision.ts`, one `groupBy`) where the read already counts sessions for another reason. The stage wins over:
    - a stored `COMPLETED` booking (not `CONVERTED`);
-   - a booking that would read Completed or "We're confirming what happened" because every session is over, except a subscription before its plan end, which stays Confirmed;
+   - a booking that would read Completed or "We're confirming what happened" because every session is over, except a subscription before its plan end, which stays Confirmed (the lists read the plan end as the page does, with `subscriptionIsOver`);
    - on a read without sessions, a one-session booking (consultation, trial, webinar).
 
-   A host's own webinar or class shows the word too, instead of its event word. The learner and expert read "Our team is checking what happened in a session. This booking settles once they decide."; staff read that the session is in Sessions that need a decision. The booking page offers no "Rate this session" while it waits.
+   A host's own webinar or class shows the word too, instead of its event word. The learner and expert read "Our team is checking what happened in a session. This booking settles once they decide."; staff read that the session is in Sessions that need a decision. The booking page offers no "Rate this session" while it waits, its timeline's next step reads "Our team decides what happened" instead of "Completed", and its "N completed" count leaves out the parked sessions (`isCompletedOccurrence` still counts them as held for the entitlement).
+
+   **A live booking keeps its word (owner decision, 2026-11-24).** An active subscription or a scheduled class with sessions still ahead, or before its plan end, keeps its stored word ("Confirmed", or the host's "Scheduled"), because its future sessions are still on. Its parked sessions read "Waiting on a decision" at session level, and the booking names them in its reason line: "2 sessions are waiting on a decision." That line shows under the badge on the learner and expert booking pages, on the list rows that print the reason line, and in the staff drawer. A plan waiting for its next placement keeps its prompt first ("Week done. Schedule the next 2. 2 sessions are waiting on a decision."). The seed's subscription `a253a6cd` is the example: Confirmed, with 2 parked sessions named.
 
 3. **Every completing write repeats the guard.** The five CASes carry `appointment: { occurrences: { none: AWAITING_HUMAN } }` in their WHERE (`NO_PARKED_SESSION`), so a session parked after the cohort read makes the write match zero rows and the booking stays open for the next run. `transitionWebinarEvent` and `transitionClassEvent` take `whereAnd` for this, as `transitionTrial` already did.
 
@@ -38,6 +40,8 @@ Priya paid ₹1,500.00 (150000 paise) for a consultation on Monday 23 November 2
 ## Where it is enforced
 
 - `bookingStatus` and `isOccurrenceHeld`, pinned by `__tests__/appointments/booking-status-surfaces.test.ts`.
+- The booking page's count and timeline step, and the live-booking line on the learner list, booking page and staff drawer, pinned through the real readers by `__tests__/db/booking/awaiting-decision.db.test.ts`.
+- The parked count adds no statement to the booking-page read: it is a `LEFT JOIN LATERAL` inside the one joined statement, and on the shared data it runs in about 0.25 ms on four index scans.
 - The readers: `lib/data/consultant-appointments.ts`, `lib/data/consultee-events-read.ts`, `app/api/trials/route.ts`, `lib/data/appointment-detail.ts`, `lib/api/scope/list-appointments.ts`, `lib/data/staff-appointments.ts`, `lib/support/case-workspace.ts`; pinned through their real output on Postgres by `__tests__/db/booking/awaiting-decision.db.test.ts`.
 - The five CASes and the appointment lock around them, pinned by the same database suite: a park through the ops door, uncommitted while auto-complete reads, keeps a consultation and a webinar open and stages no completion notice.
 - The staff Completed tab and its count, pinned by the same database suite.

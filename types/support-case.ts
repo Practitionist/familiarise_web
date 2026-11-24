@@ -88,8 +88,8 @@ export interface CaseBookingFacts {
   payLapsed?: boolean;
   /** Landed refunds summed, as the lists show them; absent without payments.read. */
   refunded?: { paise: number; currency: string; at: string | null } | null;
-  /** A session is parked for ops, so the booking waits on that decision. */
-  awaitingDecision?: boolean;
+  /** Sessions parked for ops, as the lists count them. */
+  parkedSessions?: number;
   reschedule: {
     by: "CONSULTANT" | "REQUESTER";
     proposedStartsAt: string | null;

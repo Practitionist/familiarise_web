@@ -618,7 +618,7 @@ export async function readConsultantAppointmentsPage(
   // Include appointments with 0 slots (push them to the end)
   const stamped = appointments.map((row) => ({
     ...row,
-    awaitingDecision: row._count.occurrences > 0,
+    parkedSessions: row._count.occurrences,
   }));
   const sorted = stamped.sort((a, b) => {
     const aTime = a.occurrences?.[0]?.startsAt;

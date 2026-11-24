@@ -69,7 +69,17 @@ const getTypeIcon = (type: string) => {
 
 /** The row's one status: a 1:1 by its booking words, a webinar or class as an event. */
 export function staffStatus(appointment: StaffAppointment) {
-  const { label, tone } = bookingStatus(
+  const { label, tone } = staffBookingStatus(appointment);
+  return { label, tone };
+}
+
+/** The drawer's line under the badge, such as the sessions waiting on a decision. */
+export function staffStatusLine(appointment: StaffAppointment): string {
+  return staffBookingStatus(appointment).line;
+}
+
+function staffBookingStatus(appointment: StaffAppointment) {
+  return bookingStatus(
     {
       kind: appointment.type.toUpperCase(),
       status: appointment.status.toUpperCase(),
@@ -84,7 +94,7 @@ export function staffStatus(appointment: StaffAppointment) {
           ? appointment.payment.expiresAt
           : undefined,
       eventView: true,
-      awaitingDecision: appointment.awaitingDecision,
+      parkedSessions: appointment.parkedSessions,
       reschedule: appointment.reschedule
         ? {
             by:
@@ -99,7 +109,6 @@ export function staffStatus(appointment: StaffAppointment) {
     },
     "STAFF",
   );
-  return { label, tone };
 }
 
 const TABS = [
@@ -618,6 +627,11 @@ export function OperatorAppointmentsClient({
                     />
                   )}
                 </div>
+                {staffStatusLine(selectedAppointment) && (
+                  <p className="text-sm text-muted-foreground">
+                    {staffStatusLine(selectedAppointment)}
+                  </p>
+                )}
 
                 {/* Participants */}
                 <div className="grid gap-4 sm:grid-cols-2">
