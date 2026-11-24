@@ -32,6 +32,17 @@ jest.mock("../../../lib/novu", () =>
 jest.mock("../../../lib/novu/service", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
 );
+// @react-email/render needs --experimental-vm-modules under Jest; the static markup is the same tree.
+jest.mock("../../../lib/email/render", () => {
+  const { renderToStaticMarkup } =
+    jest.requireActual<typeof import("react-dom/server")>("react-dom/server");
+  return {
+    renderEmail: async (element: import("react").ReactElement) => {
+      const html = renderToStaticMarkup(element);
+      return { html, text: html };
+    },
+  };
+});
 jest.mock("../../../lib/email", () => ({
   ...jest.requireActual("../../../lib/email"),
   sendAppointmentCancelledEmail: jest.fn(async () => ({ sent: 0 })),
