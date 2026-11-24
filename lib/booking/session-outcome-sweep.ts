@@ -31,6 +31,7 @@ import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
 import {
   ATTENDANCE_SETTLE_WAIT_MS,
+  attendanceReadableAt,
   SETTLE_MEETING_SELECT,
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
@@ -85,9 +86,18 @@ export type OutcomeSlot = Prisma.AppointmentOccurrenceGetPayload<{
   select: typeof OUTCOME_SLOT_SELECT;
 }>;
 
+/** One run's Stream reads: once a read is throttled, no later session asks Stream in that run. */
+export interface StreamReadBudget {
+  throttled: boolean;
+  /** Sessions left for a later run because of the throttle, the throttled read's own included. */
+  deferred: number;
+}
+
 export interface OutcomeContext {
   now: Date;
   outages: OutageWindow[];
+  /** Shared by every session of the run; absent, each session reads Stream on its own. */
+  stream?: StreamReadBudget;
   /** Called once per session parked because Stream's record could not be read in time. */
   onUnreadable?: (occurrenceId: string) => void;
   /** The run's Stream failure reporter, flushed once per run. */
@@ -220,16 +230,32 @@ async function slotEvidence(
   ) {
     return { kind: "intervals", intervals: [] };
   }
-  const settled = await settleOccurrenceAttendance(
-    { occurrenceId: slot.id, endsAt: slot.endsAt, meeting },
-    { now: ctx.now, failures: ctx.failures, deadlineAt: ctx.settleDeadlineAt },
-  );
+  const target = { occurrenceId: slot.id, endsAt: slot.endsAt, meeting };
+  // A stored record needs no read, and a room too fresh to read is not asked either.
+  const wouldReadStream =
+    !meeting.attendanceSettledAt && ctx.now >= attendanceReadableAt(target);
+  if (ctx.stream?.throttled && wouldReadStream) {
+    ctx.stream.deferred++;
+    return { kind: "wait" };
+  }
+  const settled = await settleOccurrenceAttendance(target, {
+    now: ctx.now,
+    failures: ctx.failures,
+    deadlineAt: ctx.settleDeadlineAt,
+  });
   if (settled.kind === "settled") {
     return { kind: "intervals", intervals: settled.intervals };
   }
-  // A read cut short by this run's deadline says nothing about Stream: always try again.
+  // A failed request, or a read cut short by this run's deadline, says nothing about the session: always try again.
+  if (settled.kind === "unavailable") {
+    if (settled.throttled && ctx.stream) {
+      ctx.stream.throttled = true;
+      ctx.stream.deferred++;
+    }
+    return { kind: "wait" };
+  }
   if (settled.kind === "out-of-time") return { kind: "wait" };
-  // Past Stream's retention nothing will come back; anything else is retried until the wait ends.
+  // Past Stream's retention nothing will come back; an answer that is not final is retried until the wait ends.
   const waited =
     ctx.now.getTime() - slot.endsAt.getTime() >= ATTENDANCE_SETTLE_WAIT_MS;
   return settled.kind === "expired" || waited

@@ -227,16 +227,23 @@ it.each([
   },
 );
 
+const hoursPastEnd = (hours: number) =>
+  new Date(at(60).getTime() + hours * 3_600_000);
+const FAILED_REQUEST = { kind: "unavailable", throttled: false } as const;
+
 it.each([
-  ["not-final", 71],
-  ["unavailable", 71],
+  [{ kind: "not-final" }, 71],
+  [FAILED_REQUEST, 71],
+  // A request that failed says nothing about the session: it is retried at any age, never parked.
+  [FAILED_REQUEST, 73],
+  [FAILED_REQUEST, 2000],
 ] as const)(
-  "Stream answers %s %i h past the end: deferred, nothing written",
-  async (kind, hours) => {
+  "Stream answers %j %i h past the end: deferred, nothing written",
+  async (settlement, hours) => {
     const target = slot(60);
-    settle.mockResolvedValue({ kind });
+    settle.mockResolvedValue(settlement);
     const d = await decideSlotOutcome(target, {
-      now: new Date(at(60).getTime() + hours * 3_600_000),
+      now: hoursPastEnd(hours),
       outages: [],
     });
     expect(d).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
@@ -244,8 +251,36 @@ it.each([
   },
 );
 
+it("after the first throttled read the run asks Stream nothing more: unsettled sessions wait, a stored record is still judged", async () => {
+  const stream = { throttled: false, deferred: 0 };
+  const ctx = { now: hoursPastEnd(80), outages: [], stream };
+  const first = slot(60);
+  settle.mockResolvedValueOnce({ kind: "unavailable", throttled: true });
+  expect(await decideSlotOutcome(first, ctx)).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(stream).toEqual({ throttled: true, deferred: 1 });
+
+  settle.mockClear();
+  expect(await decideSlotOutcome(slot(60), ctx)).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(settle).not.toHaveBeenCalled();
+  expect(stream.deferred).toBe(2);
+
+  const stored = slot(60);
+  stored.meeting = { ...stored.meeting!, attendanceSettledAt: at(400) };
+  expect(await decideSlotOutcome(stored, ctx)).toMatchObject({
+    kind: "written",
+    to: "COMPLETED",
+  });
+  expect(stream.deferred).toBe(2);
+});
+
 it.each([
-  ["unavailable", 73],
+  ["not-final", 73],
   ["expired", 2],
 ] as const)(
   "Stream answers %s %i h past the end: parked UNVERIFIED as INCONCLUSIVE, no host attribution",

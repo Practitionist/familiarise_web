@@ -72,6 +72,7 @@ import {
   staleNeedsHumanWhere,
   type OutcomeSlot,
   type SlotDecision,
+  type StreamReadBudget,
 } from "@/lib/booking/session-outcome-sweep";
 import {
   createRunFailureReporter,
@@ -1194,7 +1195,7 @@ async function decideOneSlot(
   slot: OutcomeSlot,
   ctx: Omit<
     Parameters<typeof decideSlotOutcome>[1],
-    "onUnreadable" | "failures" | "settleDeadlineAt"
+    "onUnreadable" | "failures" | "settleDeadlineAt" | "stream"
   >,
   run: SlotRun,
   settle: { wrappers: Set<string>; decidedHosts: Set<string> },
@@ -1204,6 +1205,7 @@ async function decideOneSlot(
     onUnreadable: (id) => run.unreadable.push(id),
     failures: run.streamFailures,
     settleDeadlineAt: run.settleDeadlineAt,
+    stream: run.stream,
   });
   if (tallyDecision(run.tally, decision) && slot.appointment.subscriptionId) {
     settle.wrappers.add(slot.appointmentId);
@@ -1224,6 +1226,8 @@ interface SlotRun {
   streamFailures: RunFailureReporter;
   /** Every session's Stream reads must answer by the end of the run's start budget. */
   settleDeadlineAt: number;
+  /** Set by the first throttled read; every later session of the run waits without asking Stream. */
+  stream: StreamReadBudget;
   menteeFailures: RunFailureReporter;
 }
 
@@ -1441,6 +1445,7 @@ async function autoCompleteAppointmentsUnlocked(
     unreadable: [],
     streamFailures: createRunFailureReporter("stream"),
     settleDeadlineAt: deadlines.settleDeadlineAt,
+    stream: { throttled: false, deferred: 0 },
     menteeFailures: createRunFailureReporter("bookings"),
   };
   const parents: ParentPassState[] = PARENT_PASSES.map((pass) => ({
@@ -1499,6 +1504,17 @@ async function autoCompleteAppointmentsUnlocked(
           `Failed to report unreadable sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
       });
+    }
+    // One report for the run, however many sessions the throttle left waiting.
+    if (slotRun.stream.throttled) {
+      slotRun.streamFailures.add(
+        "session-outcome-sweep.stream-throttled",
+        new Error(
+          "Stream throttled an attendance read; the run stopped reading Stream",
+        ),
+        { deferred: slotRun.stream.deferred },
+        { level: "warning" },
+      );
     }
     slotRun.streamFailures.flush();
     slotRun.menteeFailures.flush();
