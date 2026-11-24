@@ -11,7 +11,10 @@
  * "pending") arriving after `refund.processed` downgraded a settled refund to
  * PENDING — manufacturing the unsweepable real-id-PENDING limbo class.
  *
- * Guard under test:
+ * Guards under test:
+ *   - an event is booked only on a payment that reached SUCCEEDED and only when
+ *     it refunds that row's captured gateway payment; anything else books
+ *     nothing and records one system event per gateway refund;
  *   - PENDING is the only state a gateway event may leave, except that a late
  *     `refund.processed` settles a FAILED row (the money left after all);
  *   - otherwise SUCCEEDED / FAILED / CANCELLED are terminal (log-and-return);
@@ -92,7 +95,8 @@ jest.mock("../../lib/stream/revocation-intents", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import type { RefundStatus } from "@prisma/client";
+import type { PaymentStatus, RefundStatus } from "@prisma/client";
+import { recordSystemEvent } from "../../lib/enterprise/system-events";
 
 /** The refund fields the handler reads and the assertions pin. */
 interface RefundRow {
@@ -108,7 +112,8 @@ interface RefundRow {
 const PAYMENT_ROW = {
   id: "pay_1",
   paymentIntent: "order_1",
-  gatewayPaymentId: "pay_gateway_1",
+  gatewayPaymentId: "pay_gateway_1" as string | null,
+  paymentStatus: "SUCCEEDED" as PaymentStatus,
   userId: "user_1",
   organizationId: null,
   amount: 50_000,
@@ -126,15 +131,35 @@ const SETTLED_OWED = {
   note: "settled by hand",
 };
 
-const store: { refunds: RefundRow[] } = { refunds: [] };
+/** A system event as the handler records it. */
+interface EventRow {
+  severity?: string;
+  correlationId?: string | null;
+  context?: Record<string, unknown> | null;
+}
+
+const store: { refunds: RefundRow[]; events: EventRow[] } = {
+  refunds: [],
+  events: [],
+};
 
 function resetStore() {
   store.refunds = [];
+  store.events = [];
+  PAYMENT_ROW.gatewayPaymentId = "pay_gateway_1";
+  PAYMENT_ROW.paymentStatus = "SUCCEEDED";
 }
 
 function txStub() {
   return {
     user: { findMany: jest.fn(async () => []) },
+    systemEvent: {
+      findFirst: jest.fn(
+        async ({ where }: { where: { correlationId: string } }) =>
+          store.events.find((e) => e.correlationId === where.correlationId) ??
+          null,
+      ),
+    },
     payment: {
       // #1353 — the handler resolves by EITHER id now, so the stub has to be a
       // real matcher rather than a constant: a test that returns the same row
@@ -248,13 +273,135 @@ type TransactionFn = (
 (prisma as unknown as { $transaction: TransactionFn }).$transaction = (fn) =>
   fn(txStub());
 
-import { handleRefundCreated } from "../../app/api/webhooks/utils";
+import { DeferSignal, handleRefundCreated } from "../../app/api/webhooks/utils";
 import { walletCredit } from "../../lib/api/organizations/wallet";
 
 beforeEach(() => {
   jest.clearAllMocks();
   resetStore();
   applyRefundCascade.mockClear().mockResolvedValue({});
+  jest.mocked(recordSystemEvent).mockImplementation(async (event) => {
+    store.events.push(event);
+  });
+});
+
+describe("a refund event is applied only to the payment that was captured", () => {
+  const deliver = (
+    over: {
+      status?: string;
+      eventPaymentId?: string;
+      captured?: boolean;
+    } = {},
+  ) =>
+    handleRefundCreated(
+      "rfnd_evt",
+      "order_1",
+      10_000,
+      "INR",
+      over.status ?? "processed",
+      over.eventPaymentId ?? "pay_gateway_1",
+      undefined,
+      over.captured,
+    );
+
+  const bookedNothing = () => {
+    expect(store.refunds).toHaveLength(0);
+    expect(applyRefundCascade).not.toHaveBeenCalled();
+  };
+
+  test("a refund of another attempt on the same order books nothing and records one event across deliveries", async () => {
+    await deliver({ status: "created", eventPaymentId: "pay_other_attempt" });
+    await deliver({ eventPaymentId: "pay_other_attempt" });
+
+    bookedNothing();
+    expect(store.events).toEqual([
+      expect.objectContaining({
+        severity: "ERROR",
+        correlationId: "refund-unmatched:rfnd_evt",
+        context: expect.objectContaining({
+          gatewayRefundId: "rfnd_evt",
+          orderId: "order_1",
+          gatewayPaymentId: "pay_other_attempt",
+          capturedGatewayPaymentId: "pay_gateway_1",
+          reason: expect.stringContaining("not the captured payment"),
+        }),
+      }),
+    ]);
+  });
+
+  test.each(["EXPIRED", "FAILED"] as const)(
+    "a refund on a %s row books nothing, even when the row holds the refunded attempt's id",
+    async (paymentStatus) => {
+      PAYMENT_ROW.paymentStatus = paymentStatus;
+      PAYMENT_ROW.gatewayPaymentId = "pay_failed_attempt";
+
+      await deliver({ eventPaymentId: "pay_failed_attempt" });
+
+      bookedNothing();
+      expect(store.events).toEqual([
+        expect.objectContaining({
+          severity: "WARN",
+          context: expect.objectContaining({
+            orderId: "order_1",
+            paymentStatus,
+            reason: expect.stringContaining("never captured"),
+          }),
+        }),
+      ]);
+    },
+  );
+
+  test("an embedded captured:false is decisive, whatever the row says", async () => {
+    await deliver({ captured: false });
+    PAYMENT_ROW.paymentStatus = "PENDING";
+    const pending = await handleRefundCreated(
+      "rfnd_evt_2",
+      "order_1",
+      10_000,
+      "INR",
+      "processed",
+      "pay_gateway_1",
+      undefined,
+      false,
+    );
+
+    bookedNothing();
+    expect(pending).toBeUndefined();
+    expect(store.events.map((e) => e.correlationId)).toEqual([
+      "refund-unmatched:rfnd_evt",
+      "refund-unmatched:rfnd_evt_2",
+    ]);
+  });
+
+  test("a PENDING row without that flag defers, so the capture can land first", async () => {
+    PAYMENT_ROW.paymentStatus = "PENDING";
+
+    const result = await deliver();
+
+    expect(result).toBeInstanceOf(DeferSignal);
+    bookedNothing();
+    expect(store.events).toHaveLength(0);
+  });
+
+  test("the captured payment's refund is booked, and so is one on a row with no stored capture id", async () => {
+    await deliver({ captured: true });
+    PAYMENT_ROW.gatewayPaymentId = null;
+    await handleRefundCreated(
+      "rfnd_evt_3",
+      "order_1",
+      5_000,
+      "INR",
+      "processed",
+      "pay_any",
+    );
+
+    expect(store.refunds.map((r) => [r.refundId, r.status])).toEqual([
+      ["rfnd_evt", "SUCCEEDED"],
+      ["rfnd_evt_3", "SUCCEEDED"],
+    ]);
+    expect(applyRefundCascade).toHaveBeenCalledTimes(2);
+    expect(store.events).toHaveLength(0);
+  });
 });
 
 describe("handleRefundCreated status transition guard", () => {

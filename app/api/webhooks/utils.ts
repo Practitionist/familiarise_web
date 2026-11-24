@@ -19,6 +19,8 @@ import {
   EarningsHoldReason,
   PaymentGateway,
   Prisma,
+  PaymentStatus,
+  RefundStatus,
 } from "@prisma/client";
 import {
   getRazorpayClient,
@@ -486,6 +488,88 @@ export {
 // Refund Webhook Handlers
 // ============================================================================
 
+/** A gateway refund event that was not booked, recorded once per gateway refund. */
+interface UnmatchedRefundEvent {
+  gatewayRefundId: string;
+  orderId: string;
+  paymentId: string;
+  paymentStatus: PaymentStatus;
+  gatewayPaymentId: string | null;
+  capturedGatewayPaymentId: string | null;
+  amountPaise: number;
+  severity: "WARN" | "ERROR";
+  reason: string;
+}
+
+const unmatchedRefundCorrelationId = (gatewayRefundId: string) =>
+  `refund-unmatched:${gatewayRefundId}`;
+
+type RefundEventDecision =
+  | { kind: "book" }
+  | { kind: "defer" }
+  | { kind: "refuse"; severity: "WARN" | "ERROR"; reason: string };
+
+/**
+ * A refund event is booked only on a payment that reached SUCCEEDED, and only
+ * when it refunds that row's captured gateway payment. Ids are compared on a
+ * SUCCEEDED row alone: a row that never captured can hold a failed attempt's id.
+ */
+function decideRefundEvent(
+  payment: { paymentStatus: PaymentStatus; gatewayPaymentId: string | null },
+  incoming: RefundStatus,
+  eventPaymentId: string | undefined,
+  eventPaymentCaptured: boolean | undefined,
+): RefundEventDecision {
+  const awaitingCapture = payment.paymentStatus === PaymentStatus.PENDING;
+  // A failed refund moved no money; it only settles a row already held.
+  if (incoming === RefundStatus.FAILED) {
+    return awaitingCapture ? { kind: "defer" } : { kind: "book" };
+  }
+  if (eventPaymentCaptured === false) {
+    return {
+      kind: "refuse",
+      severity: "WARN",
+      reason: "the refunded gateway payment was never captured",
+    };
+  }
+  // The capture may still be on its way: the re-drive decides once it lands.
+  if (awaitingCapture) return { kind: "defer" };
+  if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
+    return {
+      kind: "refuse",
+      severity: "WARN",
+      reason: `the order's payment is ${payment.paymentStatus} and was never captured`,
+    };
+  }
+  if (
+    eventPaymentId &&
+    payment.gatewayPaymentId &&
+    eventPaymentId !== payment.gatewayPaymentId
+  ) {
+    return {
+      kind: "refuse",
+      severity: "ERROR",
+      reason: `it refunds ${eventPaymentId}, not the captured payment ${payment.gatewayPaymentId}`,
+    };
+  }
+  return { kind: "book" };
+}
+
+/** Written after the transaction commits; strict, so a failed insert fails the delivery. */
+async function recordUnmatchedRefundEvent(
+  event: UnmatchedRefundEvent,
+): Promise<void> {
+  const { severity, reason, ...context } = event;
+  await recordSystemEvent({
+    strict: true,
+    category: "PAYMENT",
+    severity,
+    message: `Gateway refund ${event.gatewayRefundId} on order ${event.orderId} was not booked: ${reason}`,
+    context: { ...context, reason },
+    correlationId: unmatchedRefundCorrelationId(event.gatewayRefundId),
+  });
+}
+
 /**
  * Handle refund created/processed event.
  *
@@ -512,6 +596,8 @@ export async function handleRefundCreated(
   status: string,
   providerPaymentId?: string,
   notes?: Record<string, string>,
+  /** The event's embedded payment `captured` flag, when the event carries one. */
+  eventPaymentCaptured?: boolean,
 ) {
   // Serializable + retry — the contract `applyRefundCascade` documents for
   // every driver ("Caller must pass a transaction client; the cascade itself
@@ -529,12 +615,14 @@ export async function handleRefundCreated(
   // #1653 — the refund receipt email rides the same outbox: staged through
   // `tx`, attempted after commit. A retry re-runs the callback, so reset.
   let stagedEmails: StagedRecipientEmail[] = [];
+  let unmatched: UnmatchedRefundEvent | null = null;
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         stagedEmails = [];
         // A retried attempt must not inherit a bell staged by the aborted one.
         stagedNotification = null;
+        unmatched = null;
         // Find the payment (B2C appointment path).
         //
         // #1353 — match on EITHER id. A refund webhook carries only the gateway's
@@ -561,8 +649,40 @@ export async function handleRefundCreated(
           },
         });
 
-        if (payment?.paymentStatus === "PENDING") {
-          return new DeferSignal(`refund_before_capture:${refundId}`);
+        if (payment) {
+          const decision = decideRefundEvent(
+            payment,
+            mapGatewayRefundStatus(status),
+            providerPaymentId,
+            eventPaymentCaptured,
+          );
+          if (decision.kind === "defer") {
+            return new DeferSignal(`refund_before_capture:${refundId}`);
+          }
+          if (decision.kind === "refuse") {
+            // Books nothing; one event per gateway refund, whatever redelivers it.
+            const recorded = await tx.systemEvent.findFirst({
+              where: {
+                category: "PAYMENT",
+                correlationId: unmatchedRefundCorrelationId(refundId),
+              },
+              select: { id: true },
+            });
+            if (!recorded) {
+              unmatched = {
+                gatewayRefundId: refundId,
+                orderId: payment.paymentIntent,
+                paymentId: payment.id,
+                paymentStatus: payment.paymentStatus,
+                gatewayPaymentId: providerPaymentId ?? null,
+                capturedGatewayPaymentId: payment.gatewayPaymentId,
+                amountPaise: amount,
+                severity: decision.severity,
+                reason: decision.reason,
+              };
+            }
+            return;
+          }
         }
 
         if (!payment) {
@@ -1089,6 +1209,7 @@ export async function handleRefundCreated(
       },
     ),
   );
+  if (unmatched) await recordUnmatchedRefundEvent(unmatched);
   await attemptStaged(stagedNotification);
   await attemptStagedEmails(
     stagedEmails,

@@ -17,6 +17,7 @@ const handleRazorpayPayoutWebhook = jest.fn().mockResolvedValue(undefined);
 const handleDisputeUpdated = jest.fn().mockResolvedValue(undefined);
 const markWebhookEventProcessed = jest.fn().mockResolvedValue(undefined);
 const handlePaymentSuccess = jest.fn().mockResolvedValue(undefined);
+const handleRefundCreated = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("../../app/api/webhooks/utils", () => ({
   __esModule: true,
@@ -24,7 +25,7 @@ jest.mock("../../app/api/webhooks/utils", () => ({
   handlePaymentSuccess: (...args: unknown[]) => handlePaymentSuccess(...args),
   handleOrgPaymentSuccess: jest.fn(),
   handleOrgPaymentFailure: jest.fn(),
-  handleRefundCreated: jest.fn(),
+  handleRefundCreated: (...args: unknown[]) => handleRefundCreated(...args),
   handleDisputeCreated: jest.fn(),
   handleDisputeUpdated: (...args: unknown[]) => handleDisputeUpdated(...args),
   markWebhookEventProcessed: (...args: unknown[]) =>
@@ -278,4 +279,50 @@ describe("order.paid carries the payment entity (#1582 F-P0-01)", () => {
       "pay_OrderPaid000001",
     );
   });
+});
+
+describe("refund events carry the refunded payment through to the handler", () => {
+  const refundEnvelope = (payment: Record<string, unknown>) => ({
+    event: "refund.processed",
+    payload: {
+      refund: {
+        entity: {
+          id: "rfnd_test_1",
+          payment_id: "pay_test_1",
+          amount: 5_000,
+          currency: "INR",
+          status: "processed",
+        },
+      },
+      payment: {
+        entity: { id: "pay_test_1", order_id: "order_test_1", ...payment },
+      },
+    },
+  });
+
+  it.each([
+    [{ captured: false }, false],
+    [{ captured: true }, true],
+    [{}, undefined],
+  ])(
+    "passes the payment id and embedded captured flag %j",
+    async (payment, captured) => {
+      await processRazorpayWebhookEvent(
+        refundEnvelope(payment) as never,
+        "refund.processed",
+        "refund.processed:rfnd_test_1",
+      );
+
+      expect(handleRefundCreated).toHaveBeenCalledWith(
+        "rfnd_test_1",
+        "order_test_1",
+        5_000,
+        "INR",
+        "processed",
+        "pay_test_1",
+        {},
+        captured,
+      );
+    },
+  );
 });
