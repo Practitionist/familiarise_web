@@ -108,8 +108,9 @@ const extendPlan = jest.fn(async () => true);
 jest.mock("../../lib/booking/platform-incidents", () => ({
   ...jest.requireActual("../../lib/booking/platform-incidents"),
   enumerateIncident: jest.fn(async () => true),
-  // The claim report has its own suite.
+  // The claim report has its own suites.
   reportClaimedNoShows: jest.fn(async () => []),
+  incidentsWithUnreportedClaims: jest.fn(async () => []),
   extendPlanForIncident: (...a: unknown[]) => extendPlan(...(a as [])),
   freeTrialPair: jest.fn(async () => true),
 }));

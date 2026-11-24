@@ -25,7 +25,7 @@ import {
   extendPlanForIncident,
   freeTrialPair,
   hasUnreportedClaims,
-  recentIncidentWhere,
+  incidentsWithUnreportedClaims,
   reportClaimedNoShows,
   type IncidentRow,
 } from "@/lib/booking/platform-incidents";
@@ -128,8 +128,7 @@ export async function hasPlatformIncidentWork(
     select: { id: true },
   });
   if (remedy) return true;
-  if (outOfTime()) return true;
-  return hasUnreportedClaims(db, now);
+  return hasUnreportedClaims(db, now, outOfTime);
 }
 
 /**
@@ -141,15 +140,13 @@ async function reportRecentClaims(
   pastDeadline: () => boolean,
   incidentId: string | null,
 ): Promise<void> {
-  const incidents = await prisma.platformIncident.findMany({
-    where: {
-      ...recentIncidentWhere(now),
-      ...(incidentId ? { id: incidentId } : {}),
-    },
-    select: { id: true, startsAt: true, endsAt: true },
-    orderBy: { endsAt: "desc" },
-    take: INCIDENTS_PER_RUN,
-  });
+  // Only incidents still holding an unreported claim, so older ones are reached run by run.
+  const incidents = await incidentsWithUnreportedClaims(
+    prisma,
+    now,
+    INCIDENTS_PER_RUN,
+    incidentId,
+  );
   for (const incident of incidents) {
     if (pastDeadline()) return;
     const claimed = await reportClaimedNoShows(incident);

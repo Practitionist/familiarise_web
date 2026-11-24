@@ -12,13 +12,17 @@ jest.mock("../../lib/prisma", () => {
     default: {
       appointmentOccurrence: memTable([], "occ"),
       systemEvent: memTable([], "ev"),
+      $queryRaw: jest.fn(async () => []),
     },
   };
 });
 
 import prisma from "@/lib/prisma";
 import { type memTable, type Row } from "../fixtures/mem-db";
-import { reportClaimedNoShows } from "@/lib/booking/platform-incidents";
+import {
+  hasUnreportedClaims,
+  reportClaimedNoShows,
+} from "@/lib/booking/platform-incidents";
 
 type Table = ReturnType<typeof memTable>;
 const occurrences = prisma.appointmentOccurrence as unknown as Table;
@@ -71,4 +75,13 @@ it("reports the 201st claim when the first 200 are already reported, and nothing
     /was claimed inside incident inc-1; check its refund/,
   );
   expect(await reportClaimedNoShows(incident)).toEqual([]);
+});
+
+it("the idle probe answers work without a statement once it is out of time, and none when the read finds nothing", async () => {
+  const queryRaw = prisma.$queryRaw as unknown as jest.Mock;
+  queryRaw.mockClear();
+  expect(await hasUnreportedClaims(prisma, START, () => true)).toBe(true);
+  expect(queryRaw).not.toHaveBeenCalled();
+  expect(await hasUnreportedClaims(prisma, START, () => false)).toBe(false);
+  expect(queryRaw).toHaveBeenCalledTimes(1);
 });

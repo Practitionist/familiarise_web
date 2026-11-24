@@ -495,7 +495,7 @@ export async function enumerateIncident(
 /** How long after an incident ends its claimed no-shows are still looked for: the review period of the ops list. */
 export const CLAIM_REVIEW_DAYS = 30;
 
-/** Consultation sessions a confirmed no-show claim cancelled inside the incident. */
+/** Consultation sessions a confirmed no-show claim cancelled inside the incident; `incidentsWithUnreportedClaims` is its SQL twin. */
 const claimedInside = (incident: IncidentRow) =>
   ({
     startsAt: { lt: incident.endsAt },
@@ -521,15 +521,6 @@ async function reportedClaims(
   return rows.flatMap((r) =>
     r.correlationId ? [r.correlationId.slice(prefix.length)] : [],
   );
-}
-
-/** Incidents ended inside the review period, the window in which a claim can still be found. */
-export function recentIncidentWhere(
-  now: Date,
-): Prisma.PlatformIncidentWhereInput {
-  return {
-    endsAt: { gt: new Date(now.getTime() - CLAIM_REVIEW_DAYS * 86_400_000) },
-  };
 }
 
 /** The claims of this incident not reported yet, at most `take`, so a reported page never hides the rest. */
@@ -562,21 +553,52 @@ async function unreportedClaims(
   });
 }
 
-/** Whether any recent incident has a claimed no-show nobody reported: the ticker's idle probe. */
-export async function hasUnreportedClaims(
-  db: Pick<Tx, "systemEvent" | "appointmentOccurrence" | "platformIncident">,
+/**
+ * Incidents ended inside the review period that still hold a claimed no-show
+ * with no ops item, newest end first, so an older one is reached once the newer
+ * are reported. The SQL twin of `claimedInside`; change both together.
+ */
+export function incidentsWithUnreportedClaims(
+  db: Pick<Tx, "$queryRaw">,
   now: Date,
+  take: number,
+  incidentId: string | null = null,
+): Promise<IncidentRow[]> {
+  const since = new Date(now.getTime() - CLAIM_REVIEW_DAYS * 86_400_000);
+  const only = incidentId ? Prisma.sql`AND i.id = ${incidentId}` : Prisma.empty;
+  return db.$queryRaw<IncidentRow[]>`
+    SELECT i.id, i."startsAt", i."endsAt"
+    FROM "PlatformIncident" i
+    WHERE i."endsAt" > ${since} ${only}
+      AND EXISTS (
+        SELECT 1
+        FROM "AppointmentOccurrence" o
+        JOIN "Appointment" a ON a.id = o."appointmentId"
+        WHERE o."startsAt" < i."endsAt"
+          AND o."endsAt" > i."startsAt"
+          AND o."isTentative" = false
+          AND o."deletedAt" IS NOT NULL
+          AND o."completionStatus" = 'CANCELLED'
+          AND o.outcome = 'HOST_ABSENT'
+          AND o."outcomeConfirmedAt" IS NOT NULL
+          AND a."consultationId" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM system_events e
+            WHERE e."correlationId" = ${INCIDENT_NO_SHOW_CLAIM_PREFIX} || i.id || ':' || o.id
+          )
+      )
+    ORDER BY i."endsAt" DESC, i.id
+    LIMIT ${take}`;
+}
+
+/** Whether any recent incident has a claimed no-show nobody reported: the ticker's idle probe, one statement. */
+export async function hasUnreportedClaims(
+  db: Pick<Tx, "$queryRaw">,
+  now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
-  const incidents = await db.platformIncident.findMany({
-    where: recentIncidentWhere(now),
-    select: { id: true, startsAt: true, endsAt: true },
-    orderBy: { endsAt: "desc" },
-    take: 50,
-  });
-  for (const incident of incidents) {
-    if ((await unreportedClaims(db, incident, 1)).length > 0) return true;
-  }
-  return false;
+  if (outOfTime()) return true;
+  return (await incidentsWithUnreportedClaims(db, now, 1)).length > 0;
 }
 
 /**
