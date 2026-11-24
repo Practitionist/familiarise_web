@@ -252,6 +252,35 @@ it("a proposed negative verdict stages both sides' notices once, inside the writ
   expect(stageNotices).toHaveBeenCalledWith(db, proposal);
 });
 
+it("a proposal whose notices cannot be prepared is deferred, so the next pass writes the verdict and its notices together", async () => {
+  const failures = { add: jest.fn(), flush: jest.fn() };
+  prepareProposed.mockRejectedValueOnce(new Error("recipient read timed out"));
+
+  const first = await decideSlotOutcome(slot(30), {
+    now: at(120),
+    outages: [],
+    failures,
+  });
+  expect(first).toEqual({ kind: "deferred", reason: "notices-unprepared" });
+  // Nothing written: no outcomeAt, so the report window has not started.
+  expect(transition).not.toHaveBeenCalled();
+  expect(stageNotices).not.toHaveBeenCalled();
+  expect(failures.add).toHaveBeenCalledTimes(1);
+
+  const next = await decideSlotOutcome(slot(30), {
+    now: at(130),
+    outages: [],
+    failures,
+  });
+  expect(next).toMatchObject({ kind: "written", to: "VOIDED", moved: true });
+  expect(transition).toHaveBeenCalledTimes(1);
+  expect(transition.mock.calls[0][1].data.outcomeAt).toEqual(at(130));
+  expect(prepareProposed).toHaveBeenLastCalledWith(
+    expect.objectContaining({ outcomeAt: at(130) }),
+  );
+  expect(stageNotices).toHaveBeenCalledTimes(1);
+});
+
 it.each([
   ["a held session", 60, 1],
   ["a lost CAS", 30, 0],

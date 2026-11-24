@@ -63,6 +63,7 @@ import { onClassSessionVoided } from "./class-sessions";
 import {
   prepareProposedOutcomeNotices,
   stageOutcomeNotices,
+  type PreparedOutcomeNotices,
 } from "./outcome-notices";
 
 export const OUTCOME_SLOT_SELECT = {
@@ -103,7 +104,11 @@ export interface OutcomeContext {
 export type SlotDecision =
   | {
       kind: "deferred";
-      reason: "live-overrun" | "no-show-detector" | "attendance-unsettled";
+      reason:
+        | "live-overrun"
+        | "no-show-detector"
+        | "attendance-unsettled"
+        | "notices-unprepared";
     }
   | {
       kind: "written";
@@ -281,24 +286,10 @@ async function writeSlotOutcomeTransaction(
   now: Date,
   /** The room's end as classified (re-checked under lock), and whether an unreadable verdict needs the room still unsettled. */
   fence: { room: RoomFence | null; requireUnsettled: boolean },
+  /** A negative verdict's notices, rendered before the transaction and staged only if this write moves the row. */
+  proposal: PreparedOutcomeNotices | null,
 ): Promise<boolean> {
   const { requireUnsettled } = fence;
-  // Rendered before the transaction; staged in it only when this write moves the row.
-  const proposal = isNegativeMoneyOutcome(verdict.outcome)
-    ? await prepareProposedOutcomeNotices({
-        occurrenceId: slot.id,
-        appointmentId: slot.appointmentId,
-        startsAt: slot.startsAt,
-        outcome: verdict.outcome,
-        outcomeAt: now,
-      }).catch((err: unknown) => {
-        console.error(
-          "[session-outcome-sweep] Failed to prepare the proposed-verdict notices:",
-          err,
-        );
-        return null;
-      })
-    : null;
   const txResult = await prisma.$transaction(
     async (tx) => {
       if (
@@ -513,6 +504,24 @@ export async function decideSlotOutcome(
     to = OccurrenceCompletionStatus.UNVERIFIED;
   }
 
+  // A negative verdict is written only with its notices, so its window never starts unannounced.
+  let proposal: PreparedOutcomeNotices | null = null;
+  if (isNegativeMoneyOutcome(verdict.outcome)) {
+    try {
+      proposal = await prepareProposedOutcomeNotices({
+        occurrenceId: slot.id,
+        appointmentId: slot.appointmentId,
+        startsAt: slot.startsAt,
+        outcome: verdict.outcome,
+        outcomeAt: ctx.now,
+      });
+    } catch (error) {
+      ctx.failures?.add("session-outcome-sweep.notices-unprepared", error, {
+        occurrenceId: slot.id,
+      });
+      return { kind: "deferred", reason: "notices-unprepared" };
+    }
+  }
   const moved = await writeSlotOutcomeTransaction(
     slot,
     presences,
@@ -526,6 +535,7 @@ export async function decideSlotOutcome(
           : null,
       requireUnsettled: evidence.kind === "unreadable",
     },
+    proposal,
   );
   if (moved && evidence.kind === "unreadable") ctx.onUnreadable?.(slot.id);
   return { kind: "written", to, verdict, moved };
