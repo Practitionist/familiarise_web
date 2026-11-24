@@ -61,6 +61,7 @@ const APPOINTMENT = {
   bookingSource: "DIRECT_CHECKOUT",
   free: true,
   removed: false,
+  awaitingDecision: false,
   hasIssue: false,
   issueType: null,
   payment: null,

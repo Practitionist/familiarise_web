@@ -25,6 +25,7 @@ it("ends a lapsed move and returns the booking as it now stands", async () => {
       payment: [],
       participants: [],
       statusHistory: [],
+      _count: { occurrences: 0 },
       rescheduleRequests: [{ expiresAt: new Date(Date.now() - 60_000) }],
     })
     .mockResolvedValueOnce(null);
