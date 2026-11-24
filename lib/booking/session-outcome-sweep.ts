@@ -125,17 +125,77 @@ export type SlotDecision =
       moved: boolean;
     };
 
-/** Rows read per outage source; a read that returns this many may be incomplete. */
-export const OUTAGE_READ_CAP = 200;
+/** Rows read per outage source by the recent-window read. */
+const OUTAGE_READ_CAP = 200;
 
-/** True when either outage source filled its cap, so an overlapping window may be missing. */
-export function outageReadCapped(outages: readonly OutageWindow[]): boolean {
-  const count = (source: OutageWindow["source"]) =>
-    outages.filter((o) => o.source === source).length;
-  return (
-    count("maintenance") >= OUTAGE_READ_CAP ||
-    count("incident") >= OUTAGE_READ_CAP
-  );
+const OUTAGE_SELECTS = {
+  maintenance: { startedAt: true, endedAt: true },
+  incident: { startsAt: true, endsAt: true },
+} as const;
+
+/** Both sources' rows as tagged outage windows. */
+function toOutageWindows(
+  rows: { startedAt: Date | null; endedAt: Date | null }[],
+  incidents: { startsAt: Date; endsAt: Date }[],
+): OutageWindow[] {
+  return [
+    ...rows
+      .filter((r): r is { startedAt: Date; endedAt: Date | null } =>
+        Boolean(r.startedAt),
+      )
+      .map((r) => ({
+        startsAt: r.startedAt,
+        endsAt: r.endedAt,
+        source: "maintenance" as const,
+      })),
+    ...incidents.map((i) => ({
+      startsAt: i.startsAt,
+      endsAt: i.endsAt,
+      source: "incident" as const,
+    })),
+  ];
+}
+
+/**
+ * Every maintenance window and declared incident that overlaps one of the
+ * booked windows, with no row cap: one read per source, an OR of the windows.
+ */
+export async function readOverlappingOutages(
+  db: Pick<Tx, "maintenanceWindow" | "platformIncident">,
+  windows: readonly { startsAt: Date; endsAt: Date }[],
+): Promise<OutageWindow[]> {
+  const distinct = [
+    ...new Map(
+      windows.map((w) => [`${w.startsAt.getTime()}|${w.endsAt.getTime()}`, w]),
+    ).values(),
+  ];
+  if (distinct.length === 0) return [];
+  const [rows, incidents] = await Promise.all([
+    db.maintenanceWindow.findMany({
+      where: {
+        organizationId: null,
+        // An ended window flips to OFF, so only an open one is read by phase.
+        OR: distinct.map((w) => ({
+          startedAt: { lt: w.endsAt },
+          OR: [
+            { endedAt: null, phase: { not: "OFF" as const } },
+            { endedAt: { gt: w.startsAt } },
+          ],
+        })),
+      },
+      select: OUTAGE_SELECTS.maintenance,
+    }),
+    db.platformIncident.findMany({
+      where: {
+        OR: distinct.map((w) => ({
+          startsAt: { lt: w.endsAt },
+          endsAt: { gt: w.startsAt },
+        })),
+      },
+      select: OUTAGE_SELECTS.incident,
+    }),
+  ]);
+  return toOutageWindows(rows, incidents);
 }
 
 /** Platform-wide DEGRADED/OFFLINE windows and declared incidents that overlap [from, now]. */
@@ -154,32 +214,17 @@ export async function readOutageWindows(
           { endedAt: { gt: from } },
         ],
       },
-      select: { startedAt: true, endedAt: true },
+      select: OUTAGE_SELECTS.maintenance,
       take: OUTAGE_READ_CAP,
     }),
     db.platformIncident.findMany({
       where: { endsAt: { gt: from } },
-      select: { startsAt: true, endsAt: true },
+      select: OUTAGE_SELECTS.incident,
       orderBy: { startsAt: "asc" },
       take: OUTAGE_READ_CAP,
     }),
   ]);
-  return [
-    ...rows
-      .filter((r): r is { startedAt: Date; endedAt: Date | null } =>
-        Boolean(r.startedAt),
-      )
-      .map((r) => ({
-        startsAt: r.startedAt,
-        endsAt: r.endedAt,
-        source: "maintenance" as const,
-      })),
-    ...incidents.map((i) => ({
-      startsAt: i.startsAt,
-      endsAt: i.endsAt,
-      source: "incident" as const,
-    })),
-  ];
+  return toOutageWindows(rows, incidents);
 }
 
 type RoomEnd = {
@@ -1035,7 +1080,7 @@ async function confirmClassVoid(
   return true;
 }
 
-type PageResult = "judged" | "capped" | "out-of-time";
+type PageResult = "judged" | "out-of-time";
 
 /** Judges one page and confirms its strong verdicts that are closed or agreed and not disputed. */
 async function confirmPage(
@@ -1045,18 +1090,8 @@ async function confirmPage(
   run: OutcomeConfirmRun,
   ctx: { pastDeadline: () => boolean; failures: RunFailureReporter },
 ): Promise<PageResult> {
-  const outages = await readOutageWindows(
-    prisma,
-    new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
-  );
-  // A capped outage read may have dropped an overlapping window, so nothing is confirmed on it.
-  if (outageReadCapped(outages)) {
-    run.weak += rows.length;
-    run.errors.push(
-      `Outage read hit its ${OUTAGE_READ_CAP}-row cap; closed verdicts left unconfirmed`,
-    );
-    return "capped";
-  }
+  // Every window overlapping a row's booked time, however many the history holds.
+  const outages = await readOverlappingOutages(prisma, rows);
   const closedBefore = now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000;
   const strong: {
     id: string;
@@ -1191,12 +1226,11 @@ export async function confirmClosedOutcomes(
       });
       // Claims the deadline cut keep the cursor before this page, so the next run starts with them.
       if (page === "out-of-time") break;
-      // A capped page stays unconfirmed, but the cursor moves past it so it cannot stall the scan.
       after =
         rows.length < OUTCOME_CONFIRM_PAGE
           ? null
           : { outcomeAt: last.outcomeAt, id: last.id };
-      if (page === "capped" || !after) break;
+      if (!after) break;
     }
   } catch (error) {
     run.errors.push(

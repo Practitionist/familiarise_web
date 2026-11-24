@@ -57,10 +57,7 @@ import {
   UNCONFIRMED_LEARNER_ABSENT,
   unconfirmedClosedVerdictWhere,
 } from "@/lib/booking/misses";
-import {
-  confirmClosedOutcomes,
-  OUTAGE_READ_CAP,
-} from "@/lib/booking/session-outcome-sweep";
+import { confirmClosedOutcomes } from "@/lib/booking/session-outcome-sweep";
 import {
   confirmSessionOutcome,
   setSessionOutcome,
@@ -243,28 +240,52 @@ describe("the window-close pass", () => {
     expect(row("b").outcomeConfirmedAt).toBeNull();
   });
 
-  it("confirms nothing when an outage read fills its cap, since an overlapping window may be missing", async () => {
+  it("sees an incident over a booking however many older incidents the history holds, and confirms the booking none overlaps", async () => {
     const incidents = prisma.platformIncident as unknown as Table;
-    occurrences.rows.push(verdict("strong"));
-    for (let i = 0; i < OUTAGE_READ_CAP; i++) {
+    const DAY = 24 * 60;
+    // "clear" was booked ten days before "hit"; neither overlaps the 250 incidents between them.
+    const shifted = (minutes: number) => at(minutes - 10 * DAY);
+    occurrences.rows.push(
+      verdict(
+        "clear",
+        { startsAt: shifted(0), endsAt: shifted(60) },
+        {
+          endedAt: shifted(62),
+          presences: [
+            { userId: "hannah", joinedAt: shifted(0), leftAt: shifted(60) },
+          ],
+        },
+      ),
+      verdict("hit"),
+    );
+    for (let i = 0; i < 250; i++) {
       incidents.rows.push({
-        id: `pi-${i}`,
-        startsAt: hoursAgo(10),
-        endsAt: hoursAgo(9),
+        id: `pi-${String(i).padStart(3, "0")}`,
+        startsAt: at(-9 * DAY + i * 10),
+        endsAt: at(-9 * DAY + i * 10 + 1),
       });
     }
-    // The stored cursor sits just before the capped page; the run must move past it, not hand it back.
-    const stored = `${hoursAgo(49).toISOString()}|zzz`;
-    jest.mocked(readJobCheckpoint).mockImplementation(async () => stored);
+    // The 251st by start time is the one over "hit".
+    incidents.rows.push({ id: "pi-hit", startsAt: at(10), endsAt: at(20) });
+    // Postgres honours order and take; the in-memory table does not, so page it the same way.
+    const read = incidents.findMany.getMockImplementation()!;
+    incidents.findMany.mockImplementation(async (args) => {
+      const rows = (await read(args)) as Row[];
+      const ordered = [...rows].sort(
+        (a, b) =>
+          (a.startsAt as Date).getTime() - (b.startsAt as Date).getTime(),
+      );
+      const take = (args as unknown as { take?: number }).take;
+      return take ? ordered.slice(0, take) : ordered;
+    });
     try {
       const run = await confirmClosedOutcomes(NOW, () => false);
-      expect(run.confirmed).toBe(0);
-      expect(run.errors).toHaveLength(1);
-      expect(row("strong").outcomeConfirmedAt).toBeNull();
-      // The page was the last, so the scan wraps to the newest instead of revisiting it.
-      expect(run.checkpoint).toBeNull();
+      expect(run).toMatchObject({ confirmed: 1, weak: 1, errors: [] });
+      expect(row("clear").outcomeConfirmedAt).toEqual(NOW);
+      expect(row("hit").outcomeConfirmedAt).toBeNull();
     } finally {
       incidents.rows.splice(0, incidents.rows.length);
+      incidents.findMany.mockImplementation(read);
     }
   });
 
