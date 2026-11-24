@@ -95,7 +95,10 @@ export type OutcomePartiesRow = Prisma.AppointmentGetPayload<{
 }>;
 
 function bookingOf(row: OutcomePartiesRow) {
-  const shapes: [NoticeBooking, { title: string; recordingEnabled: boolean } | undefined][] = [
+  const shapes: [
+    NoticeBooking,
+    { title: string; recordingEnabled: boolean } | undefined,
+  ][] = [
     ["class", row.class?.classPlan],
     ["webinar", row.webinar?.webinarPlan],
     ["consultation", row.consultation?.consultationPlan],
@@ -113,7 +116,9 @@ function refundTextOf(row: OutcomePartiesRow): string | null {
     0,
   );
   const currency = row.payment[0]?.currency;
-  return paise > 0 && currency ? formatNotificationMoney(paise, currency) : null;
+  return paise > 0 && currency
+    ? formatNotificationMoney(paise, currency)
+    : null;
 }
 
 interface Party {

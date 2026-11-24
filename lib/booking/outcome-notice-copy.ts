@@ -122,10 +122,18 @@ export function proposedNoticeCopy(input: ProposedNoticeInput): NoticeCopy {
     "If the call record is incomplete, our team checks it before anything is applied.",
     "Use the link to confirm this or to tell us what happened.",
   ];
-  if (input.hasRecording && outcome === "LEARNER_ABSENT" && side === "learner") {
+  if (
+    input.hasRecording &&
+    outcome === "LEARNER_ABSENT" &&
+    side === "learner"
+  ) {
     lines.push("The session's recording is in your library.");
   }
-  return { subject: SUBJECT[outcome][side], lines, actionLabel: "Report a problem" };
+  return {
+    subject: SUBJECT[outcome][side],
+    lines,
+    actionLabel: "Report a problem",
+  };
 }
 
 export interface ReviewedNoticeInput {
@@ -150,7 +158,8 @@ const NOW_SHOWS: Record<OccurrenceOutcome, Record<NoticeSide, string>> = {
     host: "the participant didn't join",
   },
   PLATFORM_OUTAGE: {
-    learner: "a problem on our side stopped it, so it doesn't count against anyone",
+    learner:
+      "a problem on our side stopped it, so it doesn't count against anyone",
     host: "a problem on our side stopped it, so it doesn't count against anyone",
   },
   NOBODY_JOINED: { learner: "nobody joined it", host: "nobody joined it" },

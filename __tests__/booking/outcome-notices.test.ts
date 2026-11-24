@@ -205,7 +205,7 @@ it("stages one reviewed notice per side that opens the booking", async () => {
       "http://localhost:3000/dashboard/go/auto/appointments/apt-1",
     );
   }
-  expect(rows.find((r) => r.recipients[0] === "learner")!.payload.dateTime).toBe(
-    "Mon, 23 Nov 2026 · 3:30 PM IST",
-  );
+  expect(
+    rows.find((r) => r.recipients[0] === "learner")!.payload.dateTime,
+  ).toBe("Mon, 23 Nov 2026 · 3:30 PM IST");
 });

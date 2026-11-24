@@ -964,7 +964,10 @@ export interface SessionOutcomeNoticeEmailArgs {
   appointmentId: string;
   userIds: string[];
   /** One recipient's words and link, built in their own zone. */
-  noticeFor: (userId: string, zone: string) => { copy: NoticeCopy; href: string };
+  noticeFor: (
+    userId: string,
+    zone: string,
+  ) => { copy: NoticeCopy; href: string };
 }
 
 /** Renders and screens a session-outcome notice before the verdict's transaction stages it. */

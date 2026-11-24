@@ -376,23 +376,21 @@ async function writeSlotOutcomeTransaction(
     },
     { timeout: 15_000 },
   );
-  const [missedRecordingEmails, voidedEmails] = await Promise.all(
-    [
-      txResult.missedRecording?.emailArgs
-        ? stageSessionOutcomeEmails(
-            prisma,
-            txResult.missedRecording.emailArgs,
-          ).catch((err) => {
-            console.error(
-              "[session-outcome-sweep] Failed to stage MISSED_RECORDING emails:",
-              err,
-            );
-            return [];
-          })
-        : Promise.resolve([]),
-      stageClassVoidEmails(txResult.voided),
-    ],
-  );
+  const [missedRecordingEmails, voidedEmails] = await Promise.all([
+    txResult.missedRecording?.emailArgs
+      ? stageSessionOutcomeEmails(
+          prisma,
+          txResult.missedRecording.emailArgs,
+        ).catch((err) => {
+          console.error(
+            "[session-outcome-sweep] Failed to stage MISSED_RECORDING emails:",
+            err,
+          );
+          return [];
+        })
+      : Promise.resolve([]),
+    stageClassVoidEmails(txResult.voided),
+  ]);
   await flushNotificationsAfter(
     {
       bells: [

@@ -88,7 +88,12 @@ const notices = { entityRef: "appointment:apt-1", bells: [], emails: null };
 
 it.each([
   ["a negative verdict ops overturn", "LEARNER_ABSENT", "LEARNER_ABSENT", 1],
-  ["a verdict that changed since the notice was rendered", "HELD", "LEARNER_ABSENT", 0],
+  [
+    "a verdict that changed since the notice was rendered",
+    "HELD",
+    "LEARNER_ABSENT",
+    0,
+  ],
   ["a non-negative verdict", "HELD", "HELD", 0],
 ] as const)(
   "%s stages the reviewed notice %i time(s), in the overturn's transaction",
@@ -96,11 +101,15 @@ it.each([
     const tx = completedTx(stored);
     await setSessionOutcome(tx, {
       occurrenceId: "occ-1",
-      outcome: stored === "HELD" && renderedFrom === "HELD" ? "LEARNER_ABSENT" : "HELD",
+      outcome:
+        stored === renderedFrom && stored === "HELD"
+          ? "LEARNER_ABSENT"
+          : "HELD",
       actorUserId: "ops-1",
       review: { from: renderedFrom, notices: notices as never },
     });
-    expect(stageNotices).toHaveBeenCalledTimes(times);
-    if (times) expect(stageNotices).toHaveBeenCalledWith(tx, notices);
+    expect(stageNotices.mock.calls).toEqual(
+      Array.from({ length: times }, () => [tx, notices]),
+    );
   },
 );

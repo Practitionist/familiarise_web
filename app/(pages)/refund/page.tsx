@@ -230,8 +230,8 @@ export default function RefundPolicyPage() {
                     <li>
                       Either side can report a problem with the record inside
                       that window. If the call record is incomplete, or the
-                      other side disputes it, our team checks it before
-                      anything is applied.
+                      other side disputes it, our team checks it before anything
+                      is applied.
                     </li>
                     <li>
                       Live classes and webinars: a voided session is offered as
@@ -254,11 +254,10 @@ export default function RefundPolicyPage() {
                     <li>
                       A learner no-show is not refunded. We tell you what we
                       recorded and give you 48 hours from our record to report
-                      it if you were there or couldn&apos;t get in, with a
-                      link to the session recording when your plan records
-                      sessions and a recording exists. Our support team can
-                      review and correct the outcome if it was recorded
-                      incorrectly.
+                      it if you were there or couldn&apos;t get in, with a link
+                      to the session recording when your plan records sessions
+                      and a recording exists. Our support team can review and
+                      correct the outcome if it was recorded incorrectly.
                     </li>
                   </ul>
                 </div>
