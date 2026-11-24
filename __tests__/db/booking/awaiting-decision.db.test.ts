@@ -372,7 +372,7 @@ async function labelsEverywhere(
       sponsorOrgName: null,
     }),
     "CONSULTEE",
-    {},
+    { viewerZone: "UTC" },
   );
   const { vm: pageVm } = mapAppointmentDetail(detail, "consultee", now);
   const listed = await listAppointmentsScoped({
