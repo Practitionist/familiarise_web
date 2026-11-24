@@ -72,6 +72,7 @@ function session(extra: Partial<OccurrenceVM> = {}): OccurrenceVM {
     completionStatus: "SCHEDULED",
     meetingEndedAt: null,
     meetingEndedReason: null,
+    parked: false,
     ...extra,
   };
 }

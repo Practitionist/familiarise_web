@@ -6,19 +6,22 @@
 // ≈3.3 s setup + ≈0.31 s/session ⇒ ≈40 sessions/run ⇒ ≈80/h at the 30-min cadence.
 export const SWEEP_START_DEADLINE_MS = 16_000;
 
+/** A start deadline: true once it has passed; `until` is when (ms epoch), for bounding a call by the time left. */
+export type RunDeadline = (() => boolean) & { until?: number };
+
 /** True once a sweep that began at `startedAt` must stop starting rows. */
-export function startDeadline(startedAt: number = Date.now()): () => boolean {
+export function startDeadline(startedAt: number = Date.now()): RunDeadline {
   const until = startedAt + SWEEP_START_DEADLINE_MS;
-  return () => Date.now() >= until;
+  return Object.assign(() => Date.now() >= until, { until });
 }
 
 /** True once `share` of the run's start budget is spent, leaving the rest for a later loop. */
 export function startDeadlineShare(
   share: number,
   startedAt: number = Date.now(),
-): () => boolean {
+): RunDeadline {
   const until = startedAt + SWEEP_START_DEADLINE_MS * share;
-  return () => Date.now() >= until;
+  return Object.assign(() => Date.now() >= until, { until });
 }
 
 /** Preserve committed deletes even when the continuation probe fails. */

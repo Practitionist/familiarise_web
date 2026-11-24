@@ -44,6 +44,12 @@ export const missedAt = (o: {
   voidedAt?: Date | null;
 }): Date | null => o.hostCancelledAt ?? o.voidedAt ?? null;
 
+/** Outcomes that park an UNVERIFIED session for ops on any booking, paid or free. */
+export const PARKED_OUTCOMES = [
+  "INCONCLUSIVE",
+  "HOST_ABSENT",
+] as const satisfies readonly OccurrenceOutcome[];
+
 /**
  * A past session parked for a human (the ops needs-human list): the sweep could
  * not judge it, the detector declined a host no-show, maintenance cut it, or a
@@ -54,7 +60,7 @@ export const AWAITING_HUMAN = {
   completionStatus: "UNVERIFIED",
   deletedAt: null,
   OR: [
-    { outcome: { in: ["INCONCLUSIVE", "HOST_ABSENT"] } },
+    { outcome: { in: [...PARKED_OUTCOMES] } },
     { outcome: null, meeting: { endedReason: "maintenance" } },
     // Nobody joined or no room, on a paid booking; a free one has no money to hold and completes.
     {

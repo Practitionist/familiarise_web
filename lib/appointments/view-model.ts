@@ -47,6 +47,8 @@ export interface OccurrenceLike {
   outcome?: string | null;
   /** A10 soft-delete tombstone (#676) — a set value means the row is gone. */
   deletedAt?: Date | string | null;
+  /** Stamped by the reader: the session is parked for ops (`AWAITING_HUMAN`). */
+  parked?: boolean;
   meeting?: {
     id: string;
     endedAt: Date | string | null;
@@ -98,6 +100,8 @@ export interface OccurrenceVM {
    * people out of their own booking mid-hour.
    */
   meetingEndedReason: string | null;
+  /** Parked for ops: the session reads "Waiting on a decision". */
+  parked: boolean;
 }
 
 export interface PersonVM {
@@ -181,6 +185,10 @@ export interface AppointmentVM {
   unpaidLinkSeen?: boolean;
   /** The booking's EXPIRED edge, where the read carries it, for its end reason. */
   history?: BookingStatusFacts["history"];
+  /** Sessions parked for ops, counted by the reader with `AWAITING_HUMAN`. */
+  parkedSessions?: number;
+  /** A subscription's plan end has passed; until then it never reads finished. */
+  planEnded?: boolean;
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;
   raw: AppointmentVMRaw;
@@ -207,6 +215,7 @@ export function toOccurrenceVM(row: OccurrenceLike): OccurrenceVM {
     outcome: row.outcome ?? null,
     meetingEndedAt: toDateOrNull(row.meeting?.endedAt),
     meetingEndedReason: row.meeting?.endedReason ?? null,
+    parked: row.parked === true,
   };
 }
 

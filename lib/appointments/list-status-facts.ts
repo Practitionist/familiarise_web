@@ -1,4 +1,8 @@
 import type { Prisma } from "@prisma/client";
+import {
+  subscriptionIsOver,
+  type PlanEndShape,
+} from "@/lib/booking/entitlement";
 
 import type { BucketInput } from "./bucket";
 import { openProposalTarget } from "./consultee-affordances";
@@ -79,6 +83,8 @@ export function listStatusFacts(
           reason?: string | null;
           createdAt?: Date | string | null;
         }> | null;
+        /** Stamped by the reader with `PARKED_SESSIONS_COUNT`. */
+        parkedSessions?: number;
       }
     | null
     | undefined,
@@ -94,6 +100,7 @@ export function listStatusFacts(
   | "refunded"
   | "unpaidLinkSeen"
   | "history"
+  | "parkedSessions"
 > {
   const payments = appointment?.payment ?? [];
   const charged = payments.filter(
@@ -133,6 +140,7 @@ export function listStatusFacts(
     payDeadline: open[0] ?? (appointment?.payment ? null : undefined),
     payLapsed: paymentsLapsed(payments),
     unpaidLinkSeen: unpaidLinkSeen(payments),
+    parkedSessions: appointment?.parkedSessions,
     history: appointment?.statusHistory
       ? appointment.statusHistory.map((e) => ({ ...e }))
       : undefined,
@@ -148,14 +156,40 @@ export function listStatusFacts(
   };
 }
 
+/**
+ * A subscription row's plan end has passed, as its booking page reads it;
+ * undefined for other kinds and for a row whose end cannot be resolved.
+ */
+export function planEndedOf(
+  sub:
+    | (Omit<PlanEndShape, "subscriptionPlan"> & {
+        subscriptionPlan: PlanEndShape["subscriptionPlan"] | null;
+      })
+    | null
+    | undefined,
+  now: Date,
+): boolean | undefined {
+  if (!sub) return undefined;
+  const { subscriptionPlan } = sub;
+  if (!sub.planEndsAt && !subscriptionPlan) return undefined;
+  return subscriptionIsOver(
+    { ...sub, subscriptionPlan: subscriptionPlan ?? { durationInMonths: 0 } },
+    now,
+  );
+}
+
 /** A trial's hold: its own due time, else its order's expiry, and whether it lapsed. */
 export function trialHoldFacts(trial: {
   paymentDueAt?: Date | string | null;
   appointment?: Parameters<typeof listStatusFacts>[0];
-}): Pick<AppointmentVM, "paid" | "payDeadline" | "payLapsed"> {
+}): Pick<
+  AppointmentVM,
+  "paid" | "payDeadline" | "payLapsed" | "parkedSessions"
+> {
   const facts = listStatusFacts(trial.appointment, []);
   return {
     paid: facts.paid,
+    parkedSessions: facts.parkedSessions,
     payDeadline: trial.paymentDueAt
       ? toDate(trial.paymentDueAt)
       : facts.payDeadline,

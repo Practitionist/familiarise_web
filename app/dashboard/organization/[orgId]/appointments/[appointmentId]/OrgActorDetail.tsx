@@ -17,10 +17,10 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import {
-  bookingStatus,
   bookingStatusBadge,
   type OpenRescheduleInput,
 } from "@/lib/appointments/booking-status";
+import { orgActorStatus } from "@/lib/appointments/org-actor-status";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
@@ -53,6 +53,10 @@ export interface OrgActorDetailProps {
     /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
     source?: string | null;
     paid?: boolean;
+    /** Sessions parked for ops. */
+    parkedSessions?: number;
+    /** A subscription's plan end has passed. */
+    planEnded?: boolean;
     reschedule?: OpenRescheduleInput | null;
     expertName: string | null;
     learnerName: string | null;
@@ -173,20 +177,8 @@ export function OrgActorDetail({
   const [rescheduleKeyFor] = useState(createSubmissionKeys);
   const showAllocate = Boolean(canAllocate);
   const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
-  const status = meta.status
-    ? bookingStatusBadge(
-        bookingStatus(
-          {
-            kind: meta.kind,
-            status: meta.status,
-            source: meta.source,
-            paid: meta.paid,
-            reschedule: meta.reschedule,
-          },
-          "ORG_ADMIN",
-        ),
-      )
-    : null;
+  const fullStatus = orgActorStatus(meta);
+  const status = fullStatus ? bookingStatusBadge(fullStatus) : null;
 
   const queryClient = useQueryClient();
   const cancel = async () => {
@@ -284,7 +276,18 @@ export function OrgActorDetail({
             items={[
               {
                 label: "Status",
-                value: status ? <StatusBadge {...status} /> : "—",
+                value: status ? (
+                  <div className="space-y-1">
+                    <StatusBadge {...status} />
+                    {fullStatus?.line && (
+                      <p className="text-xs text-muted-foreground">
+                        {fullStatus.line}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  "—"
+                ),
               },
               { label: "Expert", value: meta.expertName ?? "—" },
               { label: "Attendee", value: meta.learnerName ?? "—" },

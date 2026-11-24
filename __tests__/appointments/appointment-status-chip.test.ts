@@ -94,6 +94,7 @@ describe("appointmentStatusChip", () => {
       completionStatus: "SCHEDULED",
       meetingEndedAt: null,
       meetingEndedReason: null,
+      parked: false,
     };
     expect(chip({ occurrences: [occurrence] })).toBe("Confirmed");
     expect(

@@ -18,6 +18,8 @@ export interface BookingOpsView {
     endsAt: string;
     completionStatus: OccurrenceCompletionStatus;
     outcome: OccurrenceOutcome | null;
+    /** Parked for ops (`AWAITING_HUMAN`): it reads "Waiting on a decision". */
+    parked: boolean;
   }[];
   payments: {
     id: string;
