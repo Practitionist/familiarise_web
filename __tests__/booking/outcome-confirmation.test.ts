@@ -741,23 +741,24 @@ describe("a proposed consultant no-show", () => {
 });
 
 describe("a host-attributed class void", () => {
-  it("counts toward the series only when the pass stamps it, in the stamp's transaction", async () => {
-    const classVoid = (id: string, overrides: Row = {}) =>
-      hostAbsent(id, {
-        appointmentId: `apt-${id}`,
-        appointment: {
-          ...(verdict(id).appointment as Row),
-          consultation: null,
-          class: {
-            classPlan: {
-              consultantProfile: { userId: "hannah" },
-              collaborators: [],
-            },
+  const classVoid = (id: string, overrides: Row = {}) =>
+    hostAbsent(id, {
+      appointmentId: `apt-${id}`,
+      appointment: {
+        ...(verdict(id).appointment as Row),
+        consultation: null,
+        class: {
+          classPlan: {
+            consultantProfile: { userId: "hannah" },
+            collaborators: [],
           },
-          classId: `cls-${id}`,
         },
-        ...overrides,
-      });
+        classId: `cls-${id}`,
+      },
+      ...overrides,
+    });
+
+  it("counts toward the series only when the pass stamps it, in the stamp's transaction", async () => {
     occurrences.rows.push(
       classVoid("closed"),
       classVoid("open", { outcomeAt: hoursAgo(5) }),
@@ -771,6 +772,17 @@ describe("a host-attributed class void", () => {
       occurrenceId: "closed",
       confirmedAt: NOW,
     });
+  });
+
+  it("confirms none once the pass is past its deadline, and keeps the cursor before the page", async () => {
+    occurrences.rows.push(classVoid("closed"));
+    // Two checks before the page is read; the third, before the class void, is past the deadline.
+    let checks = 0;
+    const run = await confirmClosedOutcomes(NOW, () => checks++ > 1);
+    expect(run.confirmed).toBe(0);
+    expect(onClassVoidConfirmed).not.toHaveBeenCalled();
+    expect(row("closed").outcomeConfirmedAt).toBeNull();
+    expect(run.checkpoint).toBeNull();
   });
 });
 

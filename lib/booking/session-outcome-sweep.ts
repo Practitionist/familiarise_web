@@ -1075,6 +1075,8 @@ async function confirmPage(
   );
   run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
   for (const row of strong.filter((r) => r.classVoid)) {
+    // Each class void is its own transaction with notices, so it runs inside the pass's share too.
+    if (ctx.pastDeadline()) return "out-of-time";
     try {
       if (await confirmClassVoid(where, row, now)) run.confirmed++;
     } catch (error) {
