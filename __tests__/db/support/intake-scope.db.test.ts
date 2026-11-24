@@ -143,6 +143,70 @@ describe("a no-show report on a past session", () => {
   });
 });
 
+describe("a retried no-show intent", () => {
+  it("answers on the case its first attempt reused, after a newer session ended", async () => {
+    const host = await seedHost();
+    const learner = await seedConsultee();
+    const endsAt = new Date(Date.now() - 4 * HOUR_MS);
+    const booking = await seedOneToOne(
+      "consultation",
+      host,
+      learner,
+      { startsAt: new Date(endsAt.getTime() - HOUR_MS), endsAt },
+      {
+        status: "COMPLETED",
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+    );
+    const { supportCase: reused } = await createOrReuseSupportCase(
+      intakeFor(learner.userId, {
+        category: "NO_SHOW",
+        appointmentId: booking.appointmentId,
+        appointmentOccurrenceId: booking.occurrenceId,
+      }),
+    );
+    const turn = {
+      category: "NO_SHOW" as const,
+      chosenLabel: "The expert didn't join",
+      clientTurnId: randomUUID(),
+    };
+    const first = await runSupportTurn(
+      booking.appointmentId,
+      learner.userId,
+      turn,
+    );
+    expect(first?.threadId).toBe(reused.id);
+
+    const newer = await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId: booking.appointmentId,
+        ordinal: 2,
+        startsAt: new Date(Date.now() - 2 * HOUR_MS),
+        endsAt: new Date(Date.now() - HOUR_MS),
+        consultantProfileId: host.consultantProfileId,
+        completionStatus: "COMPLETED",
+      },
+    });
+    const retry = await runSupportTurn(
+      booking.appointmentId,
+      learner.userId,
+      turn,
+    );
+    expect(retry?.threadId).toBe(reused.id);
+    expect(
+      await prisma.supportCase.count({
+        where: { appointmentOccurrenceId: newer.id },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.supportCaseMessage.count({
+        where: { caseId: reused.id, clientTurnId: turn.clientTurnId },
+      }),
+    ).toBe(1);
+  });
+});
+
 describe("the thread a booking's page shows", () => {
   it("is where a new payment intent lands, with an older payment thread and a newer session report", async () => {
     const host = await seedHost();

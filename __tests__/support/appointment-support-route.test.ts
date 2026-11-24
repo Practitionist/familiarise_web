@@ -452,6 +452,49 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
         expect(mockedRunTurn).not.toHaveBeenCalled();
       },
     );
+
+    it("lets a reply on an upcoming session's case through, leaving the case check to the turn", async () => {
+      const res = await POST(
+        req("POST", {
+          userMessage: "Can we move it to Friday?",
+          caseId: "case-upcoming",
+          appointmentOccurrenceId: "occ-future",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(200);
+      expect(mockedRunTurn).toHaveBeenCalledWith(
+        SLUG,
+        "u1",
+        expect.objectContaining({
+          caseId: "case-upcoming",
+          appointmentOccurrenceId: "occ-future",
+        }),
+      );
+    });
+
+    it("lets a reply naming only an upcoming session of this booking through", async () => {
+      const res = await POST(
+        req("POST", {
+          userMessage: "Is it still on?",
+          appointmentOccurrenceId: "occ-future",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("still refuses a reply naming no case on another booking's session", async () => {
+      const res = await POST(
+        req("POST", {
+          userMessage: "Hello",
+          appointmentOccurrenceId: "occ-foreign",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(400);
+      expect(mockedRunTurn).not.toHaveBeenCalled();
+    });
   });
 
   it("NOT_FOUND envelope when the resolver cannot find the appointment", async () => {

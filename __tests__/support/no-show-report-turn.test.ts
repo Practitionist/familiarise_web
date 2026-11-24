@@ -158,11 +158,29 @@ beforeEach(() => {
   });
   // The in-memory table ignores orderBy; the thread read wants the newest open case.
   cases.findFirst.mockImplementation(async (args: { where?: Where } = {}) => {
+    // A case's messages live in their own table; the lookup by a turn's id reads them through the case.
+    const withMessages = (r: Row) => ({
+      ...r,
+      messages: db.supportCaseMessage.rows.filter((m) => m.caseId === r.id),
+    });
     const newest = cases.rows
-      .filter((r) => matchesWhere(r, args.where))
+      .filter((r) => matchesWhere(withMessages(r), args.where))
       .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))[0];
     return newest ? { ...newest } : null;
   });
+  // The replay check reads the message by its compound unique key, which the in-memory table cannot match.
+  db.supportCaseMessage.findUnique.mockImplementation(
+    async (args: { where: Where }) => {
+      const key = args.where.caseId_clientTurnId as Row | undefined;
+      const hit = key
+        ? db.supportCaseMessage.rows.find(
+            (m) =>
+              m.caseId === key.caseId && m.clientTurnId === key.clientTurnId,
+          )
+        : undefined;
+      return hit ? { ...hit } : null;
+    },
+  );
   emulateIntake();
 });
 
@@ -374,6 +392,11 @@ describe("an answer routed by its case", () => {
       undefined,
     ],
     ["a case on another session than the turn names", {}, "occ-b"],
+    [
+      "the caller's own case in an org operator's scope",
+      { ownershipScope: "ORG_OPERATIONS", organizationId: "org-1" },
+      undefined,
+    ],
   ])(
     "refuses %s with 404 and writes nothing",
     async (_label, overrides, occurrence) => {
@@ -394,4 +417,57 @@ describe("an answer routed by its case", () => {
       expect(db.supportCaseMessage.rows).toHaveLength(0);
     },
   );
+});
+
+it("lets a current org operator answer on their own org case", async () => {
+  db.appointment.findUnique.mockResolvedValue({
+    id: "appointment",
+    appointmentType: "CONSULTATION",
+    organizationId: "org-1",
+  });
+  const orgCase = openCase({
+    id: "case-org",
+    category: "ORG_ADMIN_DISPUTE",
+    organizationId: "org-1",
+    ownershipScope: "ORG_OPERATIONS",
+    activeChannel: "HUMAN",
+    status: "ESCALATED",
+  });
+  cases.rows.push(orgCase);
+  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  const result = await runSupportTurn("appointment", "learner", {
+    userMessage: "Any update on the dispute?",
+    caseId: "case-org",
+    isOrgParty: true,
+  });
+  expect(result?.threadId).toBe("case-org");
+});
+
+it("answers a retried no-show intent on the case its first attempt reused, after a newer session ended", async () => {
+  const reused = openCase({
+    id: "case-reused",
+    category: "NO_SHOW",
+    scopeKey: "OCCURRENCE:occ-ended",
+    appointmentOccurrenceId: "occ-ended",
+  });
+  cases.rows.push(reused);
+  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  const turn = {
+    category: "NO_SHOW" as const,
+    chosenLabel: "The expert didn't join",
+    clientTurnId: "turn-k",
+  };
+  const first = await runSupportTurn("appointment", "learner", turn);
+  expect(first?.threadId).toBe("case-reused");
+  const sent = db.supportCaseMessage.rows.length;
+
+  // A later session has ended since, so the default would now pick it.
+  jest.mocked(buildSupportContext).mockResolvedValue({
+    ...context(false),
+    lastEndedOccurrenceId: "occ-newer",
+  });
+  const retry = await runSupportTurn("appointment", "learner", turn);
+  expect(retry?.threadId).toBe("case-reused");
+  expect(cases.rows).toHaveLength(1);
+  expect(db.supportCaseMessage.rows).toHaveLength(sent);
 });

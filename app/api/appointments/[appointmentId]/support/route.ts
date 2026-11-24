@@ -230,17 +230,19 @@ export async function POST(
       });
     }
 
-    // A report is about a session of this booking that has already ended.
+    // A new intent starts a report on an ended session of this booking; a reply naming its case is checked by the turn.
     const occurrenceId = parsed.data.appointmentOccurrenceId;
+    const startsReport = Boolean(parsed.data.category);
     if (
       occurrenceId &&
+      (startsReport || !parsed.data.caseId) &&
       !(await prisma.appointmentOccurrence.findFirst({
         where: {
           id: occurrenceId,
           appointmentId,
           deletedAt: null,
           completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-          endsAt: { lte: new Date() },
+          ...(startsReport ? { endsAt: { lte: new Date() } } : {}),
         },
         select: { id: true },
       }))
@@ -248,7 +250,9 @@ export async function POST(
       return supportError({
         status: 400,
         code: "VALIDATION_FAILED",
-        message: "That session isn't one of this booking's finished sessions.",
+        message: startsReport
+          ? "That session isn't one of this booking's finished sessions."
+          : "That session isn't one of this booking's sessions.",
         context: {
           route: "appointments.support",
           action: "turn",

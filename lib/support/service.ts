@@ -543,6 +543,22 @@ async function resolveThread(
   noShowCtx: SupportContext | null,
 ): Promise<SupportCase> {
   if (noShowCtx) {
+    // A retry answers on the case its first attempt reused, even if a newer session has ended since.
+    const retried = input.clientTurnId
+      ? await prisma.supportCase.findFirst({
+          where: {
+            appointmentId: intake.appointmentId,
+            requesterUserId: intake.requesterUserId,
+            submitterUserId: intake.submitterUserId,
+            organizationId: intake.organizationId,
+            ownershipScope: intake.ownershipScope,
+            closedAt: null,
+            deletedAt: null,
+            messages: { some: { clientTurnId: input.clientTurnId } },
+          },
+        })
+      : null;
+    if (retried) return retried;
     const { supportCase } = await createOrReuseSupportCase({
       ...intake,
       category: "NO_SHOW",
@@ -557,7 +573,7 @@ async function resolveThread(
   return openBookingThread(intake, input.category);
 }
 
-/** The case a follow-up names, only when it is the caller's own open case on this booking and session. */
+/** The case a follow-up names, only when it is the caller's own open case in this scope, booking and session. */
 async function openNamedCase(
   intake: CreateSupportCaseInput & { appointmentId: string },
   input: RunTurnInput,
@@ -568,6 +584,8 @@ async function openNamedCase(
       appointmentId: intake.appointmentId,
       requesterUserId: intake.requesterUserId,
       submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
       closedAt: null,
       deletedAt: null,
       ...(input.appointmentOccurrenceId
