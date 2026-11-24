@@ -395,23 +395,25 @@ export function useSupportThread(
         });
         return;
       }
-      setLastActions(result.actions ?? []);
-      if (result.outcomeId !== undefined) {
-        setLastOutcomeId(result.outcomeId ?? null);
-      }
-      if (result.replyByAt !== undefined) {
-        setLastReplyByAt(result.replyByAt ?? null);
+      // A retry can answer a case the page no longer shows; its result then leaves the shown thread alone.
+      const shownId = qc.getQueryData<ThreadData>(queryKey)?.thread?.id;
+      const forOtherCase = Boolean(
+        result.threadId &&
+        shownId &&
+        shownId !== "local" &&
+        shownId !== result.threadId,
+      );
+      if (!forOtherCase) {
+        setLastActions(result.actions ?? []);
+        if (result.outcomeId !== undefined) {
+          setLastOutcomeId(result.outcomeId ?? null);
+        }
+        if (result.replyByAt !== undefined) {
+          setLastReplyByAt(result.replyByAt ?? null);
+        }
       }
       qc.setQueryData<ThreadData>(queryKey, (old) => {
-        // A retry can answer a case the page no longer shows; the refetch then shows what is current.
-        const shownId = old?.thread?.id;
-        if (
-          result.threadId &&
-          shownId &&
-          shownId !== "local" &&
-          shownId !== result.threadId
-        )
-          return old;
+        if (forOtherCase) return old;
         const merged = appendMessages(
           old,
           result.messages.map((m) => ({

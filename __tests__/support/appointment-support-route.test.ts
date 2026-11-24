@@ -277,6 +277,18 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     );
   });
 
+  it("forwards the case a follow-up names to the turn, which checks it is the caller's own", async () => {
+    mockedRunTurn.mockResolvedValue({ messages: [], actions: [] });
+    await POST(req("POST", { chosenOptionId: "expert", caseId: "case-a" }), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(mockedRunTurn).toHaveBeenCalledWith(
+      SLUG,
+      "u1",
+      expect.objectContaining({ chosenOptionId: "expert", caseId: "case-a" }),
+    );
+  });
+
   it("VALIDATION_FAILED envelope when the turn has nothing actionable", async () => {
     const res = await POST(req("POST", {}), {
       params: Promise.resolve({ appointmentId: SLUG }),
