@@ -105,6 +105,8 @@ interface LockRetryConfig {
   driftFactor: number;
   /** Bounds each Redis call; a stalled call fails the acquire at once, never retried. */
   callTimeoutMs?: number;
+  /** Epoch ms past which the acquire makes no Redis call and no retry wait; out of time reads as contention. */
+  deadlineAt?: number;
 }
 
 const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
@@ -194,6 +196,13 @@ async function withCallTimeout<T>(
   }
 }
 
+/** The next Redis call's bound: the smaller of the per-call bound and the time left before `deadlineAt`. */
+function callBound(config: LockRetryConfig): number | undefined {
+  if (config.deadlineAt === undefined) return config.callTimeoutMs;
+  const left = config.deadlineAt - Date.now();
+  return Math.min(config.callTimeoutMs ?? left, left);
+}
+
 async function acquireLockWithRetry(
   key: string,
   ttl: number,
@@ -205,10 +214,14 @@ async function acquireLockWithRetry(
   const startTime = Date.now();
 
   for (let attempt = 0; attempt <= config.retryCount; attempt++) {
+    const bound = callBound(config);
+    if (bound !== undefined && bound <= 0) {
+      throw new LockContentionError(key, attempt);
+    }
     try {
       const result = await withCallTimeout(
         client.set(key, value, { nx: true, px: effectiveTTL }),
-        config.callTimeoutMs,
+        bound,
       );
 
       if (result === "OK") {
@@ -236,6 +249,12 @@ async function acquireLockWithRetry(
 
       if (attempt < config.retryCount) {
         const delay = calculateRetryDelay(attempt, config);
+        if (
+          config.deadlineAt !== undefined &&
+          Date.now() + delay >= config.deadlineAt
+        ) {
+          throw new LockContentionError(key, attempt + 1);
+        }
         console.log(
           JSON.stringify({
             event: "lock_retry",
@@ -248,6 +267,8 @@ async function acquireLockWithRetry(
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     } catch (error: unknown) {
+      // Out of time after a refused SET: no key of ours to clean up.
+      if (error instanceof LockContentionError) throw error;
       console.error(
         JSON.stringify({
           event: "lock_error",
@@ -286,7 +307,15 @@ async function acquireGuarded(
   context: string,
   config: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
-  if (!(await checkRedisHealth())) {
+  const probeBound = callBound(config);
+  if (probeBound !== undefined && probeBound <= 0) {
+    throw new LockContentionError(key, 0);
+  }
+  // A stalled PING reads as Redis unavailable; the abandoned probe settles into the health cache on its own.
+  const healthy = await withCallTimeout(checkRedisHealth(), probeBound).catch(
+    () => false,
+  );
+  if (!healthy) {
     throw new BookingLockUnavailableError(context);
   }
 
