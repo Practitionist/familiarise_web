@@ -256,7 +256,7 @@ it("a claim that waited on the consultation's lock while an incident was declare
   }
 });
 
-it("an incident declared after a claim committed lists the claimed no-show for ops", async () => {
+it("a claim that committed after its incident was enumerated and settled is still listed for ops on a later pass", async () => {
   const room = await seedNoShow(10);
   const proposed = await propose(room);
   await confirmClosedOutcomes(
@@ -264,7 +264,15 @@ it("an incident declared after a claim committed lists the claimed no-show for o
     () => false,
   );
   expect((await moneyOf(room)).status).toBe("CANCELLED");
-  const incident = await declareIncident(room);
+  // The incident's pass read no claim and closed; the claim committed after that read.
+  const incident = await prisma.platformIncident.update({
+    where: { id: (await declareIncident(room)).id },
+    data: {
+      enumeratedAt: new Date(),
+      reportedAt: new Date(),
+      settledAt: new Date(),
+    },
+  });
   try {
     await settlePlatformIncidentForOne(incident.id);
     await settlePlatformIncidentForOne(incident.id);

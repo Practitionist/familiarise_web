@@ -492,24 +492,57 @@ export async function enumerateIncident(
   }
 }
 
-/**
- * The incident's own record of a no-show claim that won the race against it:
- * the claim re-reads outages after its row lock, so this catches only an
- * incident committed after that read, whose session the walk can no longer void.
- */
-export async function reportClaimedNoShows(
-  incident: IncidentRow,
+/** How long after an incident ends its claimed no-shows are still looked for: the review period of the ops list. */
+export const CLAIM_REVIEW_DAYS = 30;
+
+/** Consultation sessions a confirmed no-show claim cancelled inside the incident. */
+const claimedInside = (incident: IncidentRow) =>
+  ({
+    startsAt: { lt: incident.endsAt },
+    endsAt: { gt: incident.startsAt },
+    isTentative: false,
+    deletedAt: { not: null },
+    completionStatus: "CANCELLED",
+    outcome: "HOST_ABSENT",
+    outcomeConfirmedAt: { not: null },
+    appointment: { consultationId: { not: null } },
+  }) satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** The sessions of this incident already reported, read from their ops items. */
+async function reportedClaims(
+  db: Pick<Tx, "systemEvent">,
+  incidentId: string,
 ): Promise<string[]> {
-  const claimed = await prisma.appointmentOccurrence.findMany({
+  const prefix = `${INCIDENT_NO_SHOW_CLAIM_PREFIX}${incidentId}:`;
+  const rows = await db.systemEvent.findMany({
+    where: { correlationId: { startsWith: prefix } },
+    select: { correlationId: true },
+  });
+  return rows.flatMap((r) =>
+    r.correlationId ? [r.correlationId.slice(prefix.length)] : [],
+  );
+}
+
+/** Incidents ended inside the review period, the window in which a claim can still be found. */
+export function recentIncidentWhere(
+  now: Date,
+): Prisma.PlatformIncidentWhereInput {
+  return {
+    endsAt: { gt: new Date(now.getTime() - CLAIM_REVIEW_DAYS * 86_400_000) },
+  };
+}
+
+/** The claims of this incident not reported yet, at most `take`, so a reported page never hides the rest. */
+async function unreportedClaims(
+  db: Pick<Tx, "systemEvent" | "appointmentOccurrence">,
+  incident: IncidentRow,
+  take: number,
+) {
+  const reported = await reportedClaims(db, incident.id);
+  return db.appointmentOccurrence.findMany({
     where: {
-      startsAt: { lt: incident.endsAt },
-      endsAt: { gt: incident.startsAt },
-      isTentative: false,
-      deletedAt: { not: null },
-      completionStatus: "CANCELLED",
-      outcome: "HOST_ABSENT",
-      outcomeConfirmedAt: { not: null },
-      appointment: { consultationId: { not: null } },
+      ...claimedInside(incident),
+      ...(reported.length > 0 ? { id: { notIn: reported } } : {}),
     },
     select: {
       id: true,
@@ -525,8 +558,36 @@ export async function reportClaimedNoShows(
       },
     },
     orderBy: { id: "asc" },
-    take: 200,
+    take,
   });
+}
+
+/** Whether any recent incident has a claimed no-show nobody reported: the ticker's idle probe. */
+export async function hasUnreportedClaims(
+  db: Pick<Tx, "systemEvent" | "appointmentOccurrence" | "platformIncident">,
+  now: Date,
+): Promise<boolean> {
+  const incidents = await db.platformIncident.findMany({
+    where: recentIncidentWhere(now),
+    select: { id: true, startsAt: true, endsAt: true },
+    orderBy: { endsAt: "desc" },
+    take: 50,
+  });
+  for (const incident of incidents) {
+    if ((await unreportedClaims(db, incident, 1)).length > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * The incident's own record of a no-show claim that won the race against it.
+ * Re-run on every pass while the incident is recent, so a claim committed after
+ * one pass's read is reported by the next; one ops item per session.
+ */
+export async function reportClaimedNoShows(
+  incident: IncidentRow,
+): Promise<string[]> {
+  const claimed = await unreportedClaims(prisma, incident, 200);
   const reported: string[] = [];
   for (const occ of claimed) {
     const correlationId = `${INCIDENT_NO_SHOW_CLAIM_PREFIX}${incident.id}:${occ.id}`;
@@ -539,7 +600,7 @@ export async function reportClaimedNoShows(
       strict: true,
       category: "BOOKING",
       severity: "WARN",
-      message: `A consultant no-show was refunded and struck inside incident ${incident.id}; review the strike and the expert's earnings`,
+      message: `A consultant no-show was claimed inside incident ${incident.id}; check its refund, the strike and the expert's earnings`,
       context: {
         incidentId: incident.id,
         occurrenceId: occ.id,

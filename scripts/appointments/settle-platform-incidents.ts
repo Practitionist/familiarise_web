@@ -24,6 +24,8 @@ import {
   enumerateIncident,
   extendPlanForIncident,
   freeTrialPair,
+  hasUnreportedClaims,
+  recentIncidentWhere,
   reportClaimedNoShows,
   type IncidentRow,
 } from "@/lib/booking/platform-incidents";
@@ -125,7 +127,40 @@ export async function hasPlatformIncidentWork(
     where: dueRemedyWhere(now),
     select: { id: true },
   });
-  return remedy !== null;
+  if (remedy) return true;
+  if (outOfTime()) return true;
+  return hasUnreportedClaims(db, now);
+}
+
+/**
+ * Every incident ended inside the review period, settled or not: a no-show
+ * claim that committed inside one is never voided by its walk, so ops review it.
+ */
+async function reportRecentClaims(
+  now: Date,
+  pastDeadline: () => boolean,
+  incidentId: string | null,
+): Promise<void> {
+  const incidents = await prisma.platformIncident.findMany({
+    where: {
+      ...recentIncidentWhere(now),
+      ...(incidentId ? { id: incidentId } : {}),
+    },
+    select: { id: true, startsAt: true, endsAt: true },
+    orderBy: { endsAt: "desc" },
+    take: INCIDENTS_PER_RUN,
+  });
+  for (const incident of incidents) {
+    if (pastDeadline()) return;
+    const claimed = await reportClaimedNoShows(incident);
+    if (claimed.length > 0) {
+      await reportStandingFinding({
+        key: `settle-platform-incidents:no-show-claimed:${incident.id}`,
+        ids: claimed,
+        message: `${claimed.length} consultant no-show(s) were claimed inside incident ${incident.id}; check their refunds and strikes`,
+      });
+    }
+  }
 }
 
 const emptyResult = (now: Date): SettlePlatformIncidentsResult => ({
@@ -191,6 +226,7 @@ async function settleUnlocked(
       );
     }
     await applyDueRemedies(limit, pastDeadline, now, incidentId, result);
+    await reportRecentClaims(now, pastDeadline, incidentId);
     for (const incident of incidents) {
       if (!incident.enumeratedAt || pastDeadline()) continue;
       await noticeAndSettle(incident, limit, pastDeadline, result);
@@ -228,15 +264,6 @@ async function enumerate(
   );
   result.voided += tally.voided;
   result.remediesCreated += tally.remediesCreated;
-  // A no-show claim that committed inside the incident is never voided by the walk; ops review it.
-  const claimed = await reportClaimedNoShows(incident);
-  if (claimed.length > 0) {
-    await reportStandingFinding({
-      key: `settle-platform-incidents:no-show-claimed:${incident.id}`,
-      ids: claimed,
-      message: `${claimed.length} consultant no-show(s) were refunded and struck inside incident ${incident.id}`,
-    });
-  }
   if (!complete) return null;
   const stampedAt = new Date();
   await prisma.platformIncident.updateMany({
