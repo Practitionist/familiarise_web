@@ -241,6 +241,7 @@ export function toPresentationInput(
     sponsorOrgName: sponsored ? args.sponsorOrgName : null,
     holdExpiresAt,
     history: a.statusHistory,
+    awaitingDecision: a.awaitingDecision,
     source,
     reschedule: openReschedule(a, args.viewerId),
     seatStatus:

@@ -65,6 +65,8 @@ export interface AppointmentRow {
   id: string;
   /** Settled charges on the booking; the open move, when there is one. */
   _count?: { payment?: number };
+  /** A session is parked for ops (stamped by the list read). */
+  awaitingDecision?: boolean;
   rescheduleRequests?: {
     initiatorRole: string;
     expiresAt: string;
@@ -216,6 +218,7 @@ export function rowStatus(stored: AppointmentRow): {
         row.consultation?.bookingSource ?? row.subscription?.bookingSource,
       paid: (row._count?.payment ?? 0) > 0,
       reschedule: openMove(row),
+      awaitingDecision: row.awaitingDecision,
       sessions: {
         live: live.length,
         allTentative: live.length > 0 && live.every((o) => o.isTentative),

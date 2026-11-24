@@ -28,6 +28,7 @@ import type {
   StaffAppointmentType,
   STAFF_ISSUE_TYPES,
 } from "@/lib/data/staff-appointments-schema";
+import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
 
 type StaffIssueType = (typeof STAFF_ISSUE_TYPES)[number];
 
@@ -309,6 +310,13 @@ export async function getStaffAppointments(
         id: true,
         createdAt: true,
         ...APPOINTMENT_HEADLINE_SELECT,
+        // A session parked for ops: the row reads "Waiting on a decision".
+        _count: {
+          select: {
+            ...APPOINTMENT_HEADLINE_SELECT._count.select,
+            ...PARKED_SESSIONS_COUNT,
+          },
+        },
         // #1486 / #1527 — read-only: a reschedule still waiting on a party.
         rescheduleRequests: {
           where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
@@ -458,6 +466,7 @@ export async function getStaffAppointments(
       bookingSource: headline.bookingSource,
       free,
       removed,
+      awaitingDecision: row._count.occurrences > 0,
       hasIssue,
       issueType,
       payment: payment

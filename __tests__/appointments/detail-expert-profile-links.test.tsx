@@ -73,6 +73,7 @@ const base = {
   occurrences: [heldOccurrence],
   statusHistory: [],
   participants: [],
+  _count: { occurrences: 0 },
 };
 const consultationRow = (profile: ReturnType<typeof expert>) => ({
   ...base,

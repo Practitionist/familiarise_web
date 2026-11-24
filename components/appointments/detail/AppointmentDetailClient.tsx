@@ -134,6 +134,7 @@ const POST_APPROVAL = new Set<BookingStateKind>([
   "CONFIRMED",
   "AWAITING_ALLOCATION",
   "BEING_MOVED",
+  "AWAITING_DECISION",
   "COMPLETED",
 ]);
 

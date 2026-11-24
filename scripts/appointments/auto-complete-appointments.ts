@@ -144,6 +144,11 @@ function endedAndSettled(
 
 const AUTO_COMPLETE_REASON = "auto-complete";
 
+// Every final CAS repeats it: a session parked after the cohort read keeps the booking open.
+const NO_PARKED_SESSION = {
+  appointment: { occurrences: { none: AWAITING_HUMAN } },
+};
+
 // The pass cohorts, shared by each pass's read and the ticker's idle probe.
 type SettledAnd = Prisma.AppointmentWhereInput["AND"];
 
@@ -392,6 +397,7 @@ async function completeWebinars(
         prisma.$transaction((tx) =>
           transitionWebinarEvent(tx, {
             where: { id: webinar.id },
+            whereAnd: NO_PARKED_SESSION,
             to: WebinarStatus.COMPLETED,
             fromIn: EVENT_ALLOWED_FROM.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
@@ -507,6 +513,7 @@ async function completeClasses(
             async (tx) => {
               await transitionClassEvent(tx, {
                 where: { id: cls.id },
+                whereAnd: NO_PARKED_SESSION,
                 to: ClassStatus.COMPLETED,
                 fromIn: EVENT_ALLOWED_FROM.COMPLETED,
                 reason: AUTO_COMPLETE_REASON,
@@ -650,7 +657,7 @@ async function completeConsultations(
       const moved = await completeThroughHelper(() =>
         prisma.$transaction((tx) =>
           transitionConsultationRequest(tx, {
-            where: { id: consultation.id },
+            where: { id: consultation.id, ...NO_PARKED_SESSION },
             to: AppointmentStatus.COMPLETED,
             fromIn: REQUEST_ALLOWED_FROM.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
@@ -833,7 +840,7 @@ async function completeSubscriptions(
               now: new Date(),
             });
           return transitionSubscriptionRequest(tx, {
-            where: { id: subscription.id },
+            where: { id: subscription.id, ...NO_PARKED_SESSION },
             to: AppointmentStatus.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
           });
@@ -986,6 +993,7 @@ async function completeTrials(
         await prisma.$transaction(async (tx) => {
           await transitionTrial(tx, {
             where: { id: trial.id },
+            whereAnd: NO_PARKED_SESSION,
             to: TrialStatus.COMPLETED,
             data: { completedAt },
           });

@@ -181,6 +181,8 @@ export interface AppointmentVM {
   unpaidLinkSeen?: boolean;
   /** The booking's EXPIRED edge, where the read carries it, for its end reason. */
   history?: BookingStatusFacts["history"];
+  /** A session is parked for ops, so the booking reads "Waiting on a decision". */
+  awaitingDecision?: boolean;
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;
   raw: AppointmentVMRaw;

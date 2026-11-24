@@ -30,6 +30,7 @@ import type {
   RefundStatus,
 } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
+import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import {
   bookingAnomalies,
@@ -305,6 +306,8 @@ async function loadAppointmentDetail(appointmentId: string) {
         where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
         select: { userId: true, role: true, status: true, user: userSelect },
       },
+      // A session parked for ops: the booking reads "Waiting on a decision".
+      _count: { select: PARKED_SESSIONS_COUNT },
     },
     // ~28 relation nodes: one joined statement instead of one per node.
     relationLoadStrategy: "join",
@@ -352,11 +355,13 @@ async function loadAppointmentDetail(appointmentId: string) {
     webinar?.webinarPlan.consultantProfile ??
     cls?.classPlan.consultantProfile ??
     null;
+  const { _count: parked, ...row } = appointment;
   const detail = toPlain({
     reminderExpiresAt: reminder?.expiresAt.toISOString() ?? null,
     expertProfileIsPublic: host ? isPublicExpertProfile(host) : false,
     appointment: {
-      ...appointment,
+      ...row,
+      awaitingDecision: parked.occurrences > 0,
       payment: appointment.payment.map(({ paymentIntent, ...p }) => ({
         ...p,
         gatewayOrderMinted: !isPreMintIntent(paymentIntent),

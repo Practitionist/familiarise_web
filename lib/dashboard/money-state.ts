@@ -207,6 +207,8 @@ export interface BookingPresentationInput {
    * widen their `where` as well as their `select` where a reason matters.
    */
   history?: HistoryEdgeInput[];
+  /** A session is parked for ops (`appointmentsAwaitingDecision`); the booking waits on that decision. */
+  awaitingDecision?: boolean;
   /** How the booking began: a pay-first checkout hold or a submitted request. */
   source?: string | null;
   /** The open reschedule proposal; null when none is open. */
@@ -509,6 +511,7 @@ function statusFacts(
     allocateBy: allocateDeadline(input.payments),
     nextBatch: input.entitlement?.nextBatch ?? 0,
     history: input.history,
+    awaitingDecision: input.awaitingDecision,
     completedNote: planEndedShortWhy(input),
     names: input.names,
   };
@@ -726,6 +729,7 @@ function deriveMoney(
     input.sponsorOrgName &&
     (booking === "CONFIRMED" ||
       booking === "COMPLETED" ||
+      booking === "AWAITING_DECISION" ||
       booking === "AWAITING_ALLOCATION")
   ) {
     return build(
@@ -936,7 +940,10 @@ function deriveTimeline(
     at: null,
     actor: c,
     label: single ? "Session confirmed" : "Sessions confirmed",
-    done: booking === "CONFIRMED" || booking === "COMPLETED",
+    done:
+      booking === "CONFIRMED" ||
+      booking === "AWAITING_DECISION" ||
+      booking === "COMPLETED",
   };
   const completed: TimelineEvent = {
     at: null,

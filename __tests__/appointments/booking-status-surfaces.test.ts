@@ -9,7 +9,11 @@ import { staffStatus } from "@/components/dashboard/shared/OperatorAppointmentsC
 import { bookingStatus } from "@/lib/appointments/booking-status";
 import { deriveBucket } from "@/lib/appointments/bucket";
 import { buildScheduleModel } from "@/lib/appointments/session-schedule";
-import { appointmentStatusChip } from "@/lib/appointments/occurrences";
+import {
+  appointmentStatusChip,
+  isOccurrenceHeld,
+  occurrencesOfAppointment,
+} from "@/lib/appointments/occurrences";
 import { viewerSeatReleased } from "@/lib/appointments/presentation-input";
 import { seatLapsedOrReleased } from "@/lib/appointments/status";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
@@ -169,5 +173,114 @@ describe("the one status on every surface", () => {
     });
     expect(model.weeks[0]).toMatchObject({ counted: 1, short: true });
     expect(model.weeks[0].sessions).toHaveLength(2);
+  });
+});
+
+describe("a session parked for ops holds its booking's status", () => {
+  const WAITING = "Waiting on a decision";
+
+  it("a stored COMPLETED booking with a parked session waits on a decision for every viewer", () => {
+    const facts = {
+      kind: "SUBSCRIPTION",
+      status: "COMPLETED",
+      awaitingDecision: true,
+    };
+    for (const viewer of [
+      "CONSULTEE",
+      "CONSULTANT",
+      "ORG_ADMIN",
+      "STAFF",
+    ] as const) {
+      expect(bookingStatus(facts, viewer)).toMatchObject({
+        stage: "AWAITING_DECISION",
+        label: WAITING,
+        tone: "caution",
+      });
+    }
+    // The host's own event and the back office's event row drop the event word too.
+    const webinar = {
+      kind: "WEBINAR",
+      status: "COMPLETED",
+      awaitingDecision: true,
+    };
+    expect(bookingStatus(webinar, "CONSULTANT").label).toBe(WAITING);
+    expect(
+      staffStatus(
+        staffRow({
+          type: "webinar",
+          status: "completed",
+          awaitingDecision: true,
+        }),
+      ).label,
+    ).toBe(WAITING);
+    expect(
+      bookingStatus({ ...webinar, awaitingDecision: false }, "CONSULTANT")
+        .label,
+    ).toBe("Completed");
+  });
+
+  it("a finished 1:1 with a parked session waits; a plan still running stays Confirmed", () => {
+    const over = {
+      live: 1,
+      allTentative: false,
+      done: false,
+      awaitingOutcome: true,
+    };
+    expect(
+      bookingStatus(
+        {
+          kind: "CONSULTATION",
+          status: "APPROVED",
+          sessions: over,
+          awaitingDecision: true,
+        },
+        "CONSULTEE",
+      ).label,
+    ).toBe(WAITING);
+    const plan = {
+      kind: "SUBSCRIPTION",
+      status: "APPROVED",
+      awaitingDecision: true,
+    };
+    expect(bookingStatus({ ...plan, sessions: over }, "CONSULTEE").label).toBe(
+      "Confirmed",
+    );
+    expect(
+      bookingStatus({ ...plan, sessions: over, planEnded: true }, "CONSULTEE")
+        .label,
+    ).toBe(WAITING);
+  });
+
+  it("an unverified inconclusive or host-absent session is not held; a recorded no-join is", () => {
+    const unverified = (outcome: string) => ({
+      completionStatus: "UNVERIFIED",
+      outcome,
+    });
+    expect(isOccurrenceHeld(unverified("INCONCLUSIVE"))).toBe(false);
+    expect(isOccurrenceHeld(unverified("HOST_ABSENT"))).toBe(false);
+    expect(isOccurrenceHeld(unverified("NOBODY_JOINED"))).toBe(true);
+    // A list row whose only session is parked never reads Completed.
+    const occurrences = occurrencesOfAppointment({
+      id: "a1",
+      occurrences: [
+        {
+          id: "o1",
+          startsAt: new Date(NOW.getTime() - 3 * 3_600_000),
+          endsAt: new Date(NOW.getTime() - 2 * 3_600_000),
+          isTentative: false,
+          ...unverified("INCONCLUSIVE"),
+        },
+      ],
+    });
+    expect(
+      appointmentStatusChip(
+        { kind: "CONSULTATION", status: "APPROVED", occurrences },
+        "consultee",
+      ).label,
+    ).toBe("Confirmed");
+    // A confirmed host-absent verdict is a recorded outcome.
+    expect(
+      isOccurrenceHeld({ completionStatus: "VOIDED", outcome: "HOST_ABSENT" }),
+    ).toBe(true);
   });
 });

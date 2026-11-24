@@ -22,6 +22,10 @@ import type { Scope } from "@/lib/api/scope/parse";
 import { expiredEdgeInclude } from "@/lib/appointments/list-status-facts";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
+import {
+  PARKED_SESSIONS_COUNT,
+  withAwaitingDecision,
+} from "@/lib/booking/awaiting-decision";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planCollaboratorScalars } from "@/lib/api/plans/consultant-projection";
@@ -95,6 +99,16 @@ export class ConsulteeProfileNotFoundError extends Error {
  * Read the consultee's event union for a resolved scope. Returns the
  * inner payload shape (NOT wrapped in `{ data, success }`).
  */
+/** The booking's parked-session count, as the `awaitingDecision` the status chip reads. */
+function stampParked<
+  T extends { appointment: { _count: { occurrences: number } } | null },
+>(row: T) {
+  return {
+    ...row,
+    appointment: row.appointment && withAwaitingDecision(row.appointment),
+  };
+}
+
 export async function readConsulteeEvents(
   consulteeId: string,
   scope: Scope,
@@ -176,6 +190,7 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              _count: { select: PARKED_SESSIONS_COUNT },
               rescheduleRequests: liveProposalInclude,
               statusHistory: expiredEdgeInclude,
               occurrences: {
@@ -222,6 +237,7 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              _count: { select: PARKED_SESSIONS_COUNT },
               rescheduleRequests: liveProposalInclude,
               statusHistory: expiredEdgeInclude,
               occurrences: {
@@ -288,6 +304,7 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              _count: { select: PARKED_SESSIONS_COUNT },
               occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -357,6 +374,7 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              _count: { select: PARKED_SESSIONS_COUNT },
               occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -408,6 +426,7 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              _count: { select: PARKED_SESSIONS_COUNT },
               occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -434,10 +453,14 @@ export async function readConsulteeEvents(
   // A move past its deadline reads as the original on every learner surface.
   const now = new Date();
   return toPlain({
-    consultations: consultations.map((c) => withLapsedRequestRestored(c, now)),
-    subscriptions: subscriptions.map((s) => withLapsedRequestRestored(s, now)),
-    webinars,
-    classes,
-    trials,
+    consultations: consultations
+      .map(stampParked)
+      .map((c) => withLapsedRequestRestored(c, now)),
+    subscriptions: subscriptions
+      .map(stampParked)
+      .map((s) => withLapsedRequestRestored(s, now)),
+    webinars: webinars.map(stampParked),
+    classes: classes.map(stampParked),
+    trials: trials.map(stampParked),
   }) as unknown as TConsulteeEventsResponse;
 }

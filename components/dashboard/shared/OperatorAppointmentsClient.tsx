@@ -84,6 +84,7 @@ export function staffStatus(appointment: StaffAppointment) {
           ? appointment.payment.expiresAt
           : undefined,
       eventView: true,
+      awaitingDecision: appointment.awaitingDecision,
       reschedule: appointment.reschedule
         ? {
             by:

@@ -56,6 +56,10 @@ import {
   RequestCapBusyError,
   unlockRequestCap,
 } from "@/utils/appointmentlock";
+import {
+  PARKED_SESSIONS_COUNT,
+  withAwaitingDecision,
+} from "@/lib/booking/awaiting-decision";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 
 /**
@@ -261,6 +265,7 @@ export async function GET(request: NextRequest) {
           appointment: {
             include: {
               occurrences: true,
+              _count: { select: PARKED_SESSIONS_COUNT },
             },
           },
           convertedToSubscription: true,
@@ -273,18 +278,24 @@ export async function GET(request: NextRequest) {
     ]);
 
     // STAFF read the learner of a trial they are not a party to in the public shape.
-    const data = trials.map((trial) =>
-      isStaffNonParty(
-        session.user.role,
-        trial.consulteeProfileId === session.user.consulteeProfileId ||
-          trial.consultantProfileId === session.user.consultantProfileId,
-      )
-        ? {
-            ...trial,
-            consulteeProfile: publicRequester(trial.consulteeProfile),
-          }
-        : trial,
-    );
+    const data = trials
+      .map((trial) => ({
+        ...trial,
+        appointment:
+          trial.appointment && withAwaitingDecision(trial.appointment),
+      }))
+      .map((trial) =>
+        isStaffNonParty(
+          session.user.role,
+          trial.consulteeProfileId === session.user.consulteeProfileId ||
+            trial.consultantProfileId === session.user.consultantProfileId,
+        )
+          ? {
+              ...trial,
+              consulteeProfile: publicRequester(trial.consulteeProfile),
+            }
+          : trial,
+      );
     return NextResponse.json({
       data,
       meta: {

@@ -66,6 +66,7 @@ function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
     source: booking?.bookingSource ?? null,
     // A settled charge, so a paid plan waiting for its times is not read as unpaid.
     paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
+    awaitingDecision: appointment.awaitingDecision,
     // The live proposal, so the badge reads "Being moved" here as on every page.
     reschedule: open
       ? {
