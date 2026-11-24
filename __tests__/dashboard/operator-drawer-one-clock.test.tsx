@@ -61,6 +61,7 @@ const appointment = {
   free: false,
   removed: false,
   parkedSessions: 0,
+  planEnded: false,
   hasIssue: false,
   issueType: null,
   payment: {

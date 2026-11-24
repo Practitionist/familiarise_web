@@ -67,6 +67,8 @@ export interface AppointmentRow {
   _count?: { payment?: number };
   /** Sessions parked for ops (stamped by the list read). */
   parkedSessions?: number;
+  /** A subscription's plan end has passed (stamped by the list read). */
+  planEnded?: boolean;
   rescheduleRequests?: {
     initiatorRole: string;
     expiresAt: string;
@@ -219,6 +221,7 @@ export function rowStatus(stored: AppointmentRow): {
       paid: (row._count?.payment ?? 0) > 0,
       reschedule: openMove(row),
       parkedSessions: row.parkedSessions,
+      planEnded: row.planEnded,
       sessions: {
         live: live.length,
         allTentative: live.length > 0 && live.every((o) => o.isTentative),

@@ -252,6 +252,17 @@ describe("a session parked for ops holds its booking's status", () => {
     expect(
       staffStatus(staffRow({ status: "approved", parkedSessions: 1 })).label,
     ).toBe(WAITING);
+    // The back office reads a plan past its end as over; a running plan stays Confirmed.
+    const staffPlan = (planEnded: boolean) =>
+      staffStatus(
+        staffRow({
+          type: "subscription",
+          status: "approved",
+          parkedSessions: 2,
+          planEnded,
+        }),
+      ).label;
+    expect([staffPlan(true), staffPlan(false)]).toEqual([WAITING, "Confirmed"]);
   });
 
   it("a live booking keeps its word and names its parked sessions under it", () => {

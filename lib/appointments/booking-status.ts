@@ -292,12 +292,12 @@ function stageOf(
     }
     if (sessions.done && finished) return { stage: "COMPLETED" };
   }
-  // A read without sessions still knows a one-session booking with a parked session is over.
+  // A read without sessions still knows a one-session booking, or a plan past its end, with a parked session is over.
   if (
     !sessions &&
     parked &&
     CONFIRMED_FAMILY.has(status) &&
-    ONE_SESSION_KINDS.has(kind)
+    (ONE_SESSION_KINDS.has(kind) || (kind === "SUBSCRIPTION" && f.planEnded))
   ) {
     return { stage: "AWAITING_DECISION" };
   }

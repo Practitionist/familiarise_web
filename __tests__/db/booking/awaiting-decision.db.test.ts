@@ -637,6 +637,7 @@ describe("a plan with parked sessions", () => {
       learnerList: "Confirmed",
       expertList: "Confirmed",
       page: "Confirmed",
+      orgList: "Confirmed",
       staffList: "Confirmed",
     });
     const line = "2 sessions are waiting on a decision.";
@@ -652,6 +653,8 @@ describe("a plan with parked sessions", () => {
       expertList: word,
       page: word,
       pageChip: word,
+      orgList: word,
+      staffList: word,
     });
   });
 });

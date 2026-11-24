@@ -29,6 +29,7 @@ import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 import { parkedSessionCounts } from "@/lib/booking/awaiting-decision";
+import { planEndedOf } from "@/lib/appointments/list-status-facts";
 
 /** Live sessions a list row carries; the rest are counted, not loaded. */
 const LIST_UPCOMING_OCCURRENCES = 3;
@@ -316,9 +317,14 @@ export async function listAppointmentsScoped(
           select: {
             status: true,
             bookingSource: true,
+            // The plan end, read as every other surface reads it.
+            planEndsAt: true,
+            schedulingPeriodStartsAt: true,
+            schedulingTimezone: true,
             subscriptionPlan: {
               select: {
                 title: true,
+                durationInMonths: true,
                 consultantProfile: {
                   select: {
                     user: { select: { id: true, name: true, email: true } },
@@ -428,6 +434,7 @@ export async function listAppointmentsScoped(
         ...a,
         occurrences: latestById.get(a.id) ?? a.occurrences,
         parkedSessions: parked.get(a.id) ?? 0,
+        planEnded: planEndedOf(a.subscription, now),
         // Org lists flag sessions an OWNER of this org delivered on its money
         // (the `payment` include is already this org's funded rails only).
         relatedParty:

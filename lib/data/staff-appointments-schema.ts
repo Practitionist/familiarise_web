@@ -69,6 +69,8 @@ export const staffAppointmentSchema = z.object({
   removed: z.boolean(),
   /** Sessions parked for ops; any makes a finished booking wait on that decision. */
   parkedSessions: z.number().int().nonnegative(),
+  /** A subscription's plan end has passed; false for every other kind. */
+  planEnded: z.boolean(),
   hasIssue: z.boolean(),
   issueType: z.enum(STAFF_ISSUE_TYPES).nullable(),
   payment: z

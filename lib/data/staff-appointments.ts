@@ -29,6 +29,7 @@ import type {
   STAFF_ISSUE_TYPES,
 } from "@/lib/data/staff-appointments-schema";
 import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
+import { planEndedOf } from "@/lib/appointments/list-status-facts";
 import { AWAITING_HUMAN } from "@/lib/booking/misses";
 
 type StaffIssueType = (typeof STAFF_ISSUE_TYPES)[number];
@@ -479,6 +480,7 @@ export async function getStaffAppointments(
       free,
       removed,
       parkedSessions: row._count.occurrences,
+      planEnded: planEndedOf(apt.subscription, now) ?? false,
       hasIssue,
       issueType,
       payment: payment

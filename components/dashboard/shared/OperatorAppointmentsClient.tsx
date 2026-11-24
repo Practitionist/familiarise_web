@@ -95,6 +95,7 @@ function staffBookingStatus(appointment: StaffAppointment) {
           : undefined,
       eventView: true,
       parkedSessions: appointment.parkedSessions,
+      planEnded: appointment.planEnded,
       reschedule: appointment.reschedule
         ? {
             by:
