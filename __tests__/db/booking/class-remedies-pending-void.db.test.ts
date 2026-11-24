@@ -7,6 +7,7 @@
  * ops relabel it held, the leave and the cancel leave it out.
  */
 import "./harness-cancel-route";
+import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import { leaveEventSeat } from "../../../lib/booking/seat-leave";
 import { skipClassMakeUp } from "../../../lib/booking/class-sessions";
@@ -20,6 +21,7 @@ import {
   seatClassBuyer,
   seedClassUnderWay,
 } from "./harness-class-series";
+import { seedSeatBuyer } from "./harness-seats";
 import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
 
 refundOnRowsEachTest();
@@ -27,11 +29,45 @@ refundOnRowsEachTest();
 const DAY_MS = 24 * HOUR_MS;
 const SHAPE = { price: 80_000, sessions: 4, delivered: 1 };
 
-/** The class, its seat, and session 2 voided yesterday as CUT_SHORT, unconfirmed. */
-async function seedPendingVoid() {
+/** A free seat: a price-free order, nothing paid and no credit spent. */
+async function seatFreeBuyer(cls: { appointmentId: string }) {
+  const buyer = await seedSeatBuyer();
+  const boughtAt = new Date(Date.now() - 20 * DAY_MS);
+  const payment = await prisma.payment.create({
+    data: {
+      amount: BigInt(0),
+      originalAmount: BigInt(0),
+      paymentMethod: "free",
+      paymentIntent: `free_dbtier_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "SUCCEEDED",
+      userId: buyer.userId,
+      appointmentId: cls.appointmentId,
+      isMockPayment: true,
+      createdAt: boughtAt,
+    },
+  });
+  await prisma.appointmentParticipant.create({
+    data: {
+      appointmentId: cls.appointmentId,
+      userId: buyer.userId,
+      role: "CONSULTEE",
+      status: "CONFIRMED",
+      paymentId: payment.id,
+      sessionsPurchased: SHAPE.sessions,
+      createdAt: boughtAt,
+    },
+  });
+  return { userId: buyer.userId, paymentId: payment.id };
+}
+
+/** The class, its seat (paid unless `free`), and session 2 voided yesterday as CUT_SHORT, unconfirmed. */
+async function seedPendingVoid({ free = false } = {}) {
   const host = await seedHost();
   const cls = await seedClassUnderWay(host, SHAPE);
-  const buyer = await seatClassBuyer(cls, SHAPE);
+  const buyer = free
+    ? await seatFreeBuyer(cls)
+    : await seatClassBuyer(cls, SHAPE);
   const voidId = cls.occurrenceIds[1];
   const startsAt = new Date(Date.now() - 2 * DAY_MS);
   await prisma.appointmentOccurrence.update({
@@ -105,6 +141,22 @@ describe("an ordinary leave", () => {
     expect(await leave(cls.classId, buyer.userId)).not.toBeNull();
     expect(await refundedPaise(buyer.paymentId)).toBe(40_000);
   });
+
+  it("lets a free seat leave at once while the paid seat in the same class still waits", async () => {
+    const { cls, buyer } = await seedPendingVoid();
+    const free = await seatFreeBuyer(cls);
+
+    expect(await leave(cls.classId, free.userId)).not.toBeNull();
+    expect(await seatStatus(cls.appointmentId, free.userId)).not.toBe(
+      "CONFIRMED",
+    );
+    expect(
+      await prisma.refund.count({ where: { paymentId: free.paymentId } }),
+    ).toBe(0);
+    await expect(leave(cls.classId, buyer.userId)).rejects.toMatchObject({
+      code: "EXIT_WAITS_FOR_VERDICT",
+    });
+  });
 });
 
 describe("the host's whole-class cancel", () => {
@@ -134,6 +186,15 @@ describe("the host's whole-class cancel", () => {
     await relabelHeld(voidId);
     expect((await hostCancels(host, cls.appointmentId)).status).toBe(200);
     expect(await refundedPaise(buyer.paymentId)).toBe(40_000);
+  });
+
+  it("goes ahead while the void is pending when every seat is free, since no refund would move", async () => {
+    const { host, cls, buyer } = await seedPendingVoid({ free: true });
+    expect((await hostCancels(host, cls.appointmentId)).status).toBe(200);
+    expect(await classStatus(cls.classId)).toBe("CANCELLED");
+    expect(
+      await prisma.refund.count({ where: { paymentId: buyer.paymentId } }),
+    ).toBe(0);
   });
 });
 

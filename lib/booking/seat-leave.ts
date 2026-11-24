@@ -52,7 +52,7 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { notifySeatRemoved } from "./seat-removed-notice";
 import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { BookingRuleError } from "./booking-rule-error";
-import { pendingVoidRefusal } from "./pending-void-gate";
+import { pendingVoidRefusal, seatCarriesMoney } from "./pending-void-gate";
 import {
   occurrenceRefundsPaise,
   seatLedger,
@@ -199,13 +199,15 @@ export async function classSeatQuote(
 }
 
 /** The self-leave rule, inside the caller's transaction. Throws to refuse. */
-/** A class void whose verdict is unconfirmed may yet be held, so a leave or an exit waits rather than price it. */
+/** A class void whose verdict is unconfirmed may yet be held, so a paid leave or exit waits rather than price it; a free seat leaves at once. */
 async function refuseWhileVoidPending(
   tx: Tx,
   seat: Seat,
+  payment: SeatPayment | null,
   userId: string,
   now: Date,
 ): Promise<void> {
+  if (!seatCarriesMoney(payment)) return;
   const message = await pendingVoidRefusal(tx, {
     appointmentId: seat.appointmentId,
     readerUserId: userId,
@@ -251,7 +253,7 @@ export async function planSelfLeave(
     assertOutsideWindow(next, joinedAt, windowHours, now, !event?.retimeBy);
     return { mode: "full" };
   }
-  await refuseWhileVoidPending(tx, seat, userId, now);
+  await refuseWhileVoidPending(tx, seat, payment, userId, now);
   if (!payment) return { mode: "full" };
   // A re-bought seat reuses its row, so the later of the two is the purchase.
   const joinedAt = new Date(
@@ -325,7 +327,7 @@ async function planSeriesExit(
       "This class has not missed enough sessions for a full-refund exit.",
     );
   }
-  await refuseWhileVoidPending(tx, seat, userId, now);
+  await refuseWhileVoidPending(tx, seat, payment, userId, now);
   if (!payment) return { mode: "full" };
   const joinedAt = new Date(
     Math.max(payment.createdAt.getTime(), seat.createdAt.getTime()),

@@ -10,7 +10,10 @@ import {
 import { resolveCancelActor } from "@/lib/booking/cancel-actor";
 import { cancelWindowRefusal } from "@/lib/booking/session-window";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
-import { pendingVoidRefusal } from "@/lib/booking/pending-void-gate";
+import {
+  anySeatCarriesMoney,
+  pendingVoidRefusal,
+} from "@/lib/booking/pending-void-gate";
 import {
   isSuspendedInFundingOrg,
   membershipSuspendedResponse,
@@ -330,7 +333,10 @@ export async function GET(
       );
       if (windowRefusal) throw windowRefusal;
       // The cancel itself refuses while a class void's verdict is pending, with the same sentence.
-      if (groupEvent.kind === "class") {
+      if (
+        groupEvent.kind === "class" &&
+        (await anySeatCarriesMoney(prisma, appointment.id))
+      ) {
         const pending = await pendingVoidRefusal(prisma, {
           appointmentId: appointment.id,
           readerUserId: session.user.id,

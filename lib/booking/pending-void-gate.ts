@@ -4,6 +4,7 @@
  * negative void, as the sentence the person reads in their zone.
  */
 import type { Tx } from "@/lib/prisma";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
 import {
   DEFAULT_NOTIFICATION_TIMEZONE,
   resolveRecipientTimezones,
@@ -14,6 +15,36 @@ import {
   pendingVoidVerdict,
   type PendingVoidAction,
 } from "./pending-void-verdict";
+
+type SeatMoney = {
+  paymentIntent: string;
+  amount: bigint | number;
+  originalAmount: bigint | number | null;
+};
+
+/** A seat's payment carries money unless it is price-free; a credit- or wallet-funded seat carries money. */
+export function seatCarriesMoney(payment: SeatMoney | null): boolean {
+  return (
+    !!payment &&
+    !isPriceFreePayment({
+      paymentIntent: payment.paymentIntent,
+      amountPaise: Number(payment.amount),
+      listPricePaise: Number(payment.originalAmount ?? 0),
+    })
+  );
+}
+
+/** Whether any seat of the booking carries money, so a whole-class cancel would move refunds. */
+export async function anySeatCarriesMoney(
+  db: Pick<Tx, "payment">,
+  appointmentId: string,
+): Promise<boolean> {
+  const payments = await db.payment.findMany({
+    where: { appointmentId, paymentStatus: "SUCCEEDED", deletedAt: null },
+    select: { paymentIntent: true, amount: true, originalAmount: true },
+  });
+  return payments.some(seatCarriesMoney);
+}
 
 /**
  * Null when the remedy may run; otherwise the sentence that names the pending

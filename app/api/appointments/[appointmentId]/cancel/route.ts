@@ -76,7 +76,10 @@ import {
 } from "@/lib/booking/cancellation-scope";
 import { cancelWindowRefusal } from "@/lib/booking/session-window";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
-import { pendingVoidRefusal } from "@/lib/booking/pending-void-gate";
+import {
+  anySeatCarriesMoney,
+  pendingVoidRefusal,
+} from "@/lib/booking/pending-void-gate";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   classSeriesLedgers,
@@ -930,8 +933,11 @@ export async function POST(
                 isConsultantInitiated ? "host" : "buyer",
               );
               if (windowRefusal) throw windowRefusal;
-              // A class void whose verdict is unconfirmed may yet be held, so the whole-class refund waits for it.
-              if (appointment.class) {
+              // A class void whose verdict is unconfirmed may yet be held, so the whole-class refund waits for it; an all-free class cancels.
+              if (
+                appointment.class &&
+                (await anySeatCarriesMoney(tx, appointmentId))
+              ) {
                 const pending = await pendingVoidRefusal(tx, {
                   appointmentId,
                   readerUserId: session.user.id,
