@@ -587,6 +587,7 @@ const BUSINESS_ERROR_ENTRIES = [
       "MAKEUP_EXISTS",
       "MAKEUP_NOT_SKIPPABLE",
       "EXIT_NOT_AVAILABLE",
+      "EXIT_WAITS_FOR_VERDICT",
       "BACKUP_INTEREST_CAP",
       // #1819 — class batch enrolment closed, or re-priced mid-checkout.
       "ENROLMENT_CLOSED",

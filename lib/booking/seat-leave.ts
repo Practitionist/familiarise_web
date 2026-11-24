@@ -52,6 +52,12 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { notifySeatRemoved } from "./seat-removed-notice";
 import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { BookingRuleError } from "./booking-rule-error";
+import { exitWaitMessage, exitWaitOf } from "./class-exit-wait";
+import { UNCONFIRMED_NEGATIVE_VOID } from "./misses";
+import {
+  DEFAULT_NOTIFICATION_TIMEZONE,
+  resolveRecipientTimezones,
+} from "@/lib/novu/humanize";
 import {
   occurrenceRefundsPaise,
   seatLedger,
@@ -296,6 +302,7 @@ async function planSeriesExit(
   tx: Tx,
   seat: Seat,
   payment: SeatPayment | null,
+  userId: string,
   now = new Date(),
 ): Promise<SeatRefundPlan> {
   const series = await seriesLedger(tx, seat.appointmentId, now);
@@ -303,6 +310,32 @@ async function planSeriesExit(
     throw new BookingRuleError(
       "EXIT_NOT_AVAILABLE",
       "This class has not missed enough sessions for a full-refund exit.",
+    );
+  }
+  // A void whose verdict is unconfirmed may yet be held, so the exit waits rather than price it.
+  const wait = exitWaitOf(
+    await tx.appointmentOccurrence.findMany({
+      where: {
+        appointmentId: seat.appointmentId,
+        isTentative: false,
+        ...UNCONFIRMED_NEGATIVE_VOID,
+      },
+      select: {
+        startsAt: true,
+        completionStatus: true,
+        deletedAt: true,
+        seatsSettledAt: true,
+        outcome: true,
+        outcomeAt: true,
+        outcomeConfirmedAt: true,
+      },
+    }),
+  );
+  if (wait) {
+    const zones = await resolveRecipientTimezones([userId], tx);
+    throw new BookingRuleError(
+      "EXIT_WAITS_FOR_VERDICT",
+      exitWaitMessage(wait, zones.get(userId) ?? DEFAULT_NOTIFICATION_TIMEZONE),
     );
   }
   if (!payment) return { mode: "full" };
@@ -476,7 +509,7 @@ export async function leaveEventSeat(args: {
           );
           let plan: SeatRefundPlan = { mode: "full" };
           if (args.exit) {
-            plan = await planSeriesExit(tx, seat, payment);
+            plan = await planSeriesExit(tx, seat, payment, args.userId);
           } else if (args.isSelfLeave) {
             plan = await planSelfLeave(
               tx,

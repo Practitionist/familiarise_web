@@ -26,6 +26,8 @@ import {
   overturnSessionOutcome,
 } from "../../../lib/backoffice/session-outcomes";
 import { seriesLedger } from "../../../lib/booking/class-series";
+import { leaveEventSeat } from "../../../lib/booking/seat-leave";
+import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
 import { HOUR_MS, seedConsultee, seedHost } from "./harness";
 import {
   CLASS_UNDER_WAY as SHAPE,
@@ -183,4 +185,67 @@ it("ops relabelling an unconfirmed host void to an outage counts the miss and se
     exitEmailArgs: { appointmentId: cls.appointmentId },
   });
   expect(await flags(cls.classId)).toBe(0);
+});
+
+describe("the learner's exit while a void's verdict is unconfirmed", () => {
+  refundOnRowsEachTest();
+
+  it("is refused with the session and its settle time, moving nothing, and runs at the full quote once the verdict is confirmed", async () => {
+    const host = await seedHost();
+    const cls = await seedClassUnderWay(host, SHAPE);
+    const buyer = await seatClassBuyer(cls, SHAPE);
+    // Three confirmed host voids give the exit right; a fourth, cut short, is still unconfirmed.
+    const voided = cls.occurrenceIds.slice(
+      SHAPE.delivered,
+      SHAPE.delivered + 4,
+    );
+    for (const [i, id] of voided.entries()) {
+      const at = new Date(Date.now() - (4 - i) * DAY_MS);
+      await prisma.appointmentOccurrence.update({
+        where: { id },
+        data: {
+          completionStatus: "VOIDED",
+          voidedAt: at,
+          outcome: i < 3 ? "HOST_ABSENT" : "CUT_SHORT",
+          outcomeAt: at,
+          outcomeConfirmedAt: i < 3 ? at : null,
+        },
+      });
+    }
+    const exit = () =>
+      leaveEventSeat({
+        kind: "class",
+        eventId: cls.classId,
+        userId: buyer.userId,
+        actorUserId: buyer.userId,
+        isSelfLeave: true,
+        exit: true,
+      });
+    const seatStatus = async () =>
+      (
+        await prisma.appointmentParticipant.findFirstOrThrow({
+          where: { appointmentId: cls.appointmentId, userId: buyer.userId },
+          select: { status: true },
+        })
+      ).status;
+
+    await expect(exit()).rejects.toMatchObject({
+      code: "EXIT_WAITS_FOR_VERDICT",
+      message: expect.stringContaining(
+        "you can leave the series once that's settled (by ",
+      ),
+    });
+    expect(await refundedPaise(buyer.paymentId)).toBe(0);
+    expect(await seatStatus()).toBe("CONFIRMED");
+
+    await prisma.$transaction((tx) =>
+      confirmSessionOutcome(tx, {
+        occurrenceId: voided[3],
+        outcome: "CUT_SHORT",
+      }),
+    );
+    expect(await exit()).not.toBeNull();
+    // Seven of ten sessions undelivered (three scheduled, four voided) at ₹10 each.
+    expect(await refundedPaise(buyer.paymentId)).toBe(7_000);
+  });
 });

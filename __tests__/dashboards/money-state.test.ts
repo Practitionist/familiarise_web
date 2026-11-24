@@ -556,6 +556,38 @@ describe("EXIT_SERIES (#1780 E-5)", () => {
   });
 });
 
+describe("a class exit waiting for a verdict", () => {
+  it("names the session and when it settles, in the viewer's zone, in place of the exit", () => {
+    const input = base({
+      appointmentType: "CLASS",
+      request: { status: "SCHEDULED", kind: "CLASS" },
+      occurrences: confirmed,
+      payments: paid,
+      holdExpiresAt: null,
+      series: {
+        misses: 3,
+        N: 12,
+        exitRight: true,
+        undelivered: 6,
+        exitWait: {
+          // 12 Nov 10:00 IST; its verdict at 17:15 IST settles 48 hours later.
+          sessionStartsAt: new Date("2026-11-12T04:30:00Z"),
+          settlesBy: new Date("2026-11-14T11:45:00Z"),
+        },
+      },
+    });
+    const next = deriveBookingPresentation(input, "CONSULTEE", {
+      viewerZone: "Asia/Kolkata",
+      now: NOW,
+    }).nextAction;
+    expect(next).toEqual({
+      kind: "EXIT_SERIES_WAITS",
+      label:
+        "We're confirming what happened in your 12 Nov session; you can leave the series once that's settled (by 14 Nov, 5:15 pm IST).",
+    });
+  });
+});
+
 describe("the refund timeline (#1780)", () => {
   const refund = (status: string, amountPaise: number, refundId: string) => ({
     status,
