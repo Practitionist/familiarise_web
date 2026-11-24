@@ -87,6 +87,7 @@ import {
   type ViewerZone,
 } from "@/lib/time/viewer-zone";
 import { eventTimeRefusal } from "./event-time-rules";
+import { pendingVoidRefusal } from "./pending-void-gate";
 import {
   reliabilityThresholdMet,
   seatLedger,
@@ -1136,22 +1137,49 @@ export async function skipClassMakeUp(args: {
     return { refundId: null, amountRefundedPaise: 0, rail: "CREDITS" as const };
   }
   const dedupeKey = occurrenceRefundKey(args.sourceOccurrenceId, payment.id);
-  try {
-    const refunded = await refundBookingPayment({
-      paymentId: payment.id,
-      amountPaise: Number(ledger.unitPaise),
-      reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
-      initiatedByUserId: args.initiatedByUserId ?? args.userId,
-      dedupeKey,
-      keepSeat: true,
+  // Under the lock ops' outcome door takes: the source still a miss, and its verdict not pending, as the refund commits.
+  return withAppointmentLock(args.appointmentId, async () => {
+    const still = await prisma.appointmentOccurrence.findFirst({
+      where: {
+        id: args.sourceOccurrenceId,
+        appointmentId: args.appointmentId,
+        ...MISS_WHERE,
+        seatsSettledAt: null,
+      },
+      select: { id: true },
     });
-    return { ...refunded, status: "SUCCEEDED" as const };
-  } catch (err) {
-    return skipRefundInFlight(err, dedupeKey, {
-      ...payment,
-      skipPaise: Number(ledger.unitPaise),
+    if (!still) {
+      throw new BookingRuleError(
+        "MAKEUP_NOT_SKIPPABLE",
+        "This session has no upcoming make-up to skip, or you do not hold it.",
+      );
+    }
+    const pending = await pendingVoidRefusal(prisma, {
+      appointmentId: args.appointmentId,
+      occurrenceId: args.sourceOccurrenceId,
+      readerUserId: args.userId,
+      action: "skip",
     });
-  }
+    if (pending) {
+      throw new BookingRuleError("MAKEUP_SKIP_WAITS_FOR_VERDICT", pending);
+    }
+    try {
+      const refunded = await refundBookingPayment({
+        paymentId: payment.id,
+        amountPaise: Number(ledger.unitPaise),
+        reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
+        initiatedByUserId: args.initiatedByUserId ?? args.userId,
+        dedupeKey,
+        keepSeat: true,
+      });
+      return { ...refunded, status: "SUCCEEDED" as const };
+    } catch (err) {
+      return skipRefundInFlight(err, dedupeKey, {
+        ...payment,
+        skipPaise: Number(ledger.unitPaise),
+      });
+    }
+  });
 }
 
 /**

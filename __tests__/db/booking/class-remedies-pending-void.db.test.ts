@@ -1,0 +1,180 @@
+/**
+ * Every class remedy waits for a pending void's verdict, on real Postgres.
+ * An 80,000-paise class of four sessions: one held, one voided CUT_SHORT with
+ * its verdict unconfirmed, two days away. An ordinary leave, the host's
+ * whole-class cancel and a make-up skip each refuse while the verdict is
+ * pending, writing nothing; once ops confirm the void each pays it, and once
+ * ops relabel it held, the leave and the cancel leave it out.
+ */
+import "./harness-cancel-route";
+import prisma from "../../../lib/prisma";
+import { leaveEventSeat } from "../../../lib/booking/seat-leave";
+import { skipClassMakeUp } from "../../../lib/booking/class-sessions";
+import {
+  confirmSessionOutcome,
+  overturnSessionOutcome,
+} from "../../../lib/backoffice/session-outcomes";
+import { HOUR_MS, seedConsultee, seedHost } from "./harness";
+import {
+  hostCancels,
+  seatClassBuyer,
+  seedClassUnderWay,
+} from "./harness-class-series";
+import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
+
+refundOnRowsEachTest();
+
+const DAY_MS = 24 * HOUR_MS;
+const SHAPE = { price: 80_000, sessions: 4, delivered: 1 };
+
+/** The class, its seat, and session 2 voided yesterday as CUT_SHORT, unconfirmed. */
+async function seedPendingVoid() {
+  const host = await seedHost();
+  const cls = await seedClassUnderWay(host, SHAPE);
+  const buyer = await seatClassBuyer(cls, SHAPE);
+  const voidId = cls.occurrenceIds[1];
+  const startsAt = new Date(Date.now() - 2 * DAY_MS);
+  await prisma.appointmentOccurrence.update({
+    where: { id: voidId },
+    data: {
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR_MS),
+      completionStatus: "VOIDED",
+      voidedAt: new Date(Date.now() - DAY_MS),
+      outcome: "CUT_SHORT",
+      outcomeAt: new Date(Date.now() - DAY_MS),
+      outcomeConfirmedAt: null,
+    },
+  });
+  return { host, cls, buyer, voidId };
+}
+
+const confirmVoid = (voidId: string) =>
+  prisma.$transaction((tx) =>
+    confirmSessionOutcome(tx, { occurrenceId: voidId, outcome: "CUT_SHORT" }),
+  );
+
+const relabelHeld = async (voidId: string) =>
+  overturnSessionOutcome({
+    occurrenceId: voidId,
+    outcome: "HELD",
+    actorUserId: (await seedConsultee()).userId,
+  });
+
+const seatStatus = async (appointmentId: string, userId: string) =>
+  (
+    await prisma.appointmentParticipant.findFirstOrThrow({
+      where: { appointmentId, userId },
+      select: { status: true },
+    })
+  ).status;
+
+const leave = (classId: string, userId: string) =>
+  leaveEventSeat({
+    kind: "class",
+    eventId: classId,
+    userId,
+    actorUserId: userId,
+    isSelfLeave: true,
+  });
+
+const classStatus = async (classId: string) =>
+  (await prisma.class.findUniqueOrThrow({ where: { id: classId } })).status;
+
+describe("an ordinary leave", () => {
+  it("waits for the verdict with nothing written, then refunds the two future sessions and the confirmed void", async () => {
+    const { cls, buyer, voidId } = await seedPendingVoid();
+
+    await expect(leave(cls.classId, buyer.userId)).rejects.toMatchObject({
+      code: "EXIT_WAITS_FOR_VERDICT",
+      message: expect.stringContaining(
+        "You can leave the series once it's settled; the report window closes ",
+      ),
+    });
+    expect(await refundedPaise(buyer.paymentId)).toBe(0);
+    expect(await seatStatus(cls.appointmentId, buyer.userId)).toBe("CONFIRMED");
+
+    await confirmVoid(voidId);
+    expect(await leave(cls.classId, buyer.userId)).not.toBeNull();
+    expect(await refundedPaise(buyer.paymentId)).toBe(40_000 + 20_000);
+  });
+
+  it("leaves the void out once ops relabel it held", async () => {
+    const { cls, buyer, voidId } = await seedPendingVoid();
+    await relabelHeld(voidId);
+    expect(await leave(cls.classId, buyer.userId)).not.toBeNull();
+    expect(await refundedPaise(buyer.paymentId)).toBe(40_000);
+  });
+});
+
+describe("the host's whole-class cancel", () => {
+  it("waits for the verdict with nothing written, then refunds the two future sessions and the confirmed void", async () => {
+    const { host, cls, buyer, voidId } = await seedPendingVoid();
+
+    const refused = await hostCancels(host, cls.appointmentId);
+    expect(refused).toMatchObject({
+      status: 409,
+      body: {
+        code: "CANCEL_WAITS_FOR_VERDICT",
+        error: expect.stringContaining(
+          "You can cancel the class once it's settled; the report window closes ",
+        ),
+      },
+    });
+    expect(await refundedPaise(buyer.paymentId)).toBe(0);
+    expect(await classStatus(cls.classId)).toBe("SCHEDULED");
+
+    await confirmVoid(voidId);
+    expect((await hostCancels(host, cls.appointmentId)).status).toBe(200);
+    expect(await refundedPaise(buyer.paymentId)).toBe(40_000 + 20_000);
+  });
+
+  it("leaves the void out once ops relabel it held", async () => {
+    const { host, cls, buyer, voidId } = await seedPendingVoid();
+    await relabelHeld(voidId);
+    expect((await hostCancels(host, cls.appointmentId)).status).toBe(200);
+    expect(await refundedPaise(buyer.paymentId)).toBe(40_000);
+  });
+});
+
+describe("a make-up skip", () => {
+  it("waits for the verdict with no refund, then refunds the void's session once however often it is skipped", async () => {
+    const { host, cls, buyer, voidId } = await seedPendingVoid();
+    // The host offered a make-up for the voided session; no money moves for that.
+    const source = await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: voidId },
+      select: { ordinal: true },
+    });
+    const makeUpAt = new Date(Date.now() + 7 * DAY_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId: cls.appointmentId,
+        ordinal: source.ordinal,
+        startsAt: makeUpAt,
+        endsAt: new Date(makeUpAt.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+        completionStatus: "SCHEDULED",
+      },
+    });
+    const skip = () =>
+      skipClassMakeUp({
+        appointmentId: cls.appointmentId,
+        sourceOccurrenceId: voidId,
+        userId: buyer.userId,
+      });
+
+    await expect(skip()).rejects.toMatchObject({
+      code: "MAKEUP_SKIP_WAITS_FOR_VERDICT",
+      message: expect.stringContaining(
+        "Its refund waits until it's settled; the report window closes ",
+      ),
+    });
+    expect(await refundedPaise(buyer.paymentId)).toBe(0);
+
+    await confirmVoid(voidId);
+    await skip();
+    await skip();
+    expect(await refundedPaise(buyer.paymentId)).toBe(20_000);
+  });
+});
