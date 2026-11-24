@@ -244,12 +244,15 @@ function settledParentSessions(
   return sessionsPurchased || cls?.classPlan?.totalSessions || 1;
 }
 
+/** The void's compare-and-set lost; thrown so the transaction rolls back every refund marker it stamped. */
+class IncidentVoidLost extends Error {}
+
 /**
  * The learners a settled plan billed for this session, each owed its unit in
  * cash under the incident key, stamped on `tx`. A released seat held the
  * session only when it was released after the session started. Null when a
  * seat cannot be repaid in cash (credits restore whole or not at all), so the
- * session is kept for a human instead of voided.
+ * session is kept for a human instead of voided, and nothing is stamped.
  */
 async function stampSettledParentRefunds(
   tx: Tx,
@@ -291,14 +294,13 @@ async function stampSettledParentRefunds(
       sessionsPurchased: true,
     },
   });
-  const rows: Prisma.IncidentRemedyCreateManyInput[] = [];
-  for (const payment of payments) {
+  const held = payments.flatMap((payment) => {
     const seat = seats.find(
       (s) =>
         s.paymentId === payment.id ||
         (s.paymentId === null && s.userId === payment.userId),
     );
-    if (!seat) continue;
+    if (!seat) return [];
     const joinedAt = Math.max(
       seat.createdAt.getTime(),
       payment.createdAt.getTime(),
@@ -307,8 +309,14 @@ async function stampSettledParentRefunds(
       joinedAt < occ.startsAt.getTime() &&
       (LIVE_PARTICIPANT_STATUSES.includes(seat.status) ||
         seat.updatedAt >= occ.startsAt);
-    if (!heldIt) continue;
-    if (isFreeCreditIntent(payment.paymentIntent)) return null;
+    return heldIt ? [{ payment, seat }] : [];
+  });
+  // Every seat is checked before the first stamp, so a kept session carries no cash refund marker.
+  if (held.some(({ payment }) => isFreeCreditIntent(payment.paymentIntent))) {
+    return null;
+  }
+  const rows: Prisma.IncidentRemedyCreateManyInput[] = [];
+  for (const { payment, seat } of held) {
     const unit = Math.floor(
       payment.amount / settledParentSessions(occ, seat.sessionsPurchased),
     );
@@ -358,6 +366,23 @@ export async function voidForIncident(
     return { outcome: "skipped", created: 0 };
   }
   const settled = settledParent(occ) && VOIDABLE_FROM.has(occ.completionStatus);
+  try {
+    return await commitIncidentVoid(occ, incidentId, now, settled);
+  } catch (error) {
+    if (error instanceof IncidentVoidLost) {
+      return { outcome: "lost", created: 0 };
+    }
+    throw error;
+  }
+}
+
+/** The void, its refund markers and its remedy rows in one transaction; a lost compare-and-set throws {@link IncidentVoidLost}. */
+async function commitIncidentVoid(
+  occ: RetroOccurrence,
+  incidentId: string,
+  now: Date,
+  settled: boolean,
+): Promise<{ outcome: RetroOutcome; created: number }> {
   const committed = await prisma.$transaction(
     async (tx) => {
       let outcome: RetroOutcome = "kept";
@@ -400,8 +425,7 @@ export async function voidForIncident(
           appointmentId: occ.appointmentId,
           allowZero: true,
         });
-        if (moved === 0)
-          return { outcome: "lost" as const, classVoid, created: 0 };
+        if (moved === 0) throw new IncidentVoidLost();
         outcome = "voided";
         // A cancelled series has no make-up to schedule; its cash remedy is stamped above.
         if (occ.appointment.classId && !settled) {
@@ -427,8 +451,7 @@ export async function voidForIncident(
             outcomeConfirmedAt: null,
           },
         });
-        if (count === 0)
-          return { outcome: "lost" as const, classVoid, created: 0 };
+        if (count === 0) throw new IncidentVoidLost();
         outcome = "relabelled";
       }
       const created =
