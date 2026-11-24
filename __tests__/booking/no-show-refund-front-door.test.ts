@@ -384,7 +384,11 @@ describe("consultant no-show refunds", () => {
     };
     const decidedOrParked = {
       deletedAt: null,
-      OR: [{ outcome: { not: null } }, { completionStatus: "UNVERIFIED" }],
+      OR: [
+        { outcome: { not: null } },
+        { completionStatus: "UNVERIFIED" },
+        { completionStatus: "COMPLETED" },
+      ],
       NOT: {
         completionStatus: "VOIDED",
         outcome: "PLATFORM_OUTAGE",
@@ -504,6 +508,21 @@ describe("consultant no-show refunds", () => {
     );
     expect(result).toMatchObject({ kind: "claimed", refunded: false });
     expect(errors).toHaveLength(1);
+  });
+
+  it("declines a proposal whose booking holds a completed session with no outcome, writing nothing", async () => {
+    const row = proposedClaimRow({ id: "pay-1" });
+    row.appointment.occurrences.push({
+      ...row.appointment.occurrences[0],
+      id: "occ-held",
+      completionStatus: "COMPLETED",
+      outcome: null as unknown as string,
+    });
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(row);
+
+    expect(await confirmOcc1()).toEqual({ kind: "declined" });
+    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("declines a proposal whose booking holds a decided sibling, writing nothing", async () => {

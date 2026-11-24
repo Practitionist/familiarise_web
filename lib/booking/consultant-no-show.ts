@@ -51,12 +51,13 @@ export const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
   "OFFLINE",
 ]);
 
-// A decided or parked sibling makes the booking ops-owned. A settled incident void is history, not a decision on its rebook.
+// A decided, held or parked sibling makes the booking ops-owned. A settled incident void is history, not a decision on its rebook.
 export const DECIDED_OR_PARKED = {
   deletedAt: null,
   OR: [
     { outcome: { not: null } },
     { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
+    { completionStatus: OccurrenceCompletionStatus.COMPLETED },
   ],
   NOT: {
     completionStatus: OccurrenceCompletionStatus.VOIDED,
@@ -82,7 +83,8 @@ export function isOpsOwnedSibling(occurrence: {
   }
   return (
     occurrence.outcome !== null ||
-    occurrence.completionStatus === OccurrenceCompletionStatus.UNVERIFIED
+    occurrence.completionStatus === OccurrenceCompletionStatus.UNVERIFIED ||
+    occurrence.completionStatus === OccurrenceCompletionStatus.COMPLETED
   );
 }
 
