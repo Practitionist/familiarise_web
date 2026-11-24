@@ -33,6 +33,7 @@ import {
   bucketFactsOf,
   holdOpenFrom,
   listStatusFacts,
+  planEndedOf,
   trialHoldFacts,
 } from "./list-status-facts";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
@@ -196,6 +197,7 @@ function mapSubscription(
     pendingPaymentId: payablePaymentId(target?.payment),
     bookingSource: s.bookingSource,
     ...facts,
+    planEnded: planEndedOf(s, now),
     collaborators: [],
     collaboratorRole: null,
     raw: {

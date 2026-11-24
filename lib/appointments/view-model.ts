@@ -183,6 +183,8 @@ export interface AppointmentVM {
   history?: BookingStatusFacts["history"];
   /** Sessions parked for ops, counted by the reader with `AWAITING_HUMAN`. */
   parkedSessions?: number;
+  /** A subscription's plan end has passed; until then it never reads finished. */
+  planEnded?: boolean;
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;
   raw: AppointmentVMRaw;

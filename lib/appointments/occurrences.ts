@@ -624,6 +624,7 @@ type ChipVM = Pick<AppointmentVM, "status" | "kind"> &
       | "unpaidLinkSeen"
       | "history"
       | "parkedSessions"
+      | "planEnded"
     >
   >;
 
@@ -645,6 +646,7 @@ function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
       unpaidLinkSeen: vm.unpaidLinkSeen,
       history: vm.history,
       parkedSessions: vm.parkedSessions,
+      planEnded: vm.planEnded,
       sessions:
         vm.occurrences && live ? listSessions(vm.occurrences, live) : undefined,
     },

@@ -1,4 +1,8 @@
 import type { Prisma } from "@prisma/client";
+import {
+  subscriptionIsOver,
+  type PlanEndShape,
+} from "@/lib/booking/entitlement";
 
 import type { BucketInput } from "./bucket";
 import { openProposalTarget } from "./consultee-affordances";
@@ -150,6 +154,14 @@ export function listStatusFacts(
         }
       : null,
   };
+}
+
+/** A subscription row's plan end has passed, as its booking page reads it; undefined for other kinds. */
+export function planEndedOf(
+  sub: PlanEndShape | null | undefined,
+  now: Date,
+): boolean | undefined {
+  return sub ? subscriptionIsOver(sub, now) : undefined;
 }
 
 /** A trial's hold: its own due time, else its order's expiry, and whether it lapsed. */

@@ -635,6 +635,15 @@ describe("a plan with parked sessions", () => {
     expect(labels.lines.page).toContain(line);
     expect(labels.lines.staffDrawer).toBe(line);
   });
+
+  it("past its plan end waits on a decision on the lists as on its page", async () => {
+    const labels = await labelsEverywhere(await parkedPlan(true));
+    expect(labels).toMatchObject({
+      learnerList: word,
+      expertList: word,
+      page: word,
+    });
+  });
 });
 
 describe("the staff list's Completed tab leaves out a booking waiting on a decision", () => {

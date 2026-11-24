@@ -292,6 +292,30 @@ describe("a session parked for ops holds its booking's status", () => {
       label: "Scheduled",
       line: "1 session is waiting on a decision.",
     });
+    // The list chip reads a plan's end as its page does.
+    const occurrences = occurrencesOfAppointment({
+      id: "a2",
+      occurrences: [
+        {
+          id: "o2",
+          startsAt: new Date(NOW.getTime() - 3 * 3_600_000),
+          endsAt: new Date(NOW.getTime() - 2 * 3_600_000),
+          isTentative: false,
+          completionStatus: "UNVERIFIED",
+          outcome: "NOBODY_JOINED",
+        },
+      ],
+    });
+    const row = {
+      kind: "SUBSCRIPTION" as const,
+      status: "APPROVED",
+      occurrences,
+      parkedSessions: 1,
+    };
+    expect(appointmentStatusChip(row, "consultee").label).toBe("Confirmed");
+    expect(
+      appointmentStatusChip({ ...row, planEnded: true }, "consultee").label,
+    ).toBe(WAITING);
   });
 
   it("an unverified inconclusive or host-absent session is not held; a recorded no-join is", () => {

@@ -12,6 +12,7 @@ import { deriveBucket } from "./bucket";
 import {
   bucketFactsOf,
   listStatusFacts,
+  planEndedOf,
   trialHoldFacts,
 } from "./list-status-facts";
 import { occurrencesOfAppointment } from "./occurrences";
@@ -324,6 +325,7 @@ function mapSingle(
     pendingPaymentUrl: null,
     bookingSource: source,
     ...facts,
+    planEnded: planEndedOf(appointment.subscription, now),
     collaborators: [],
     collaboratorRole: collaboratorRoleOf(appointment, consultantId),
     raw: {
@@ -377,6 +379,7 @@ function mapGroup(
     ),
     bookingSource: source,
     ...facts,
+    planEnded: planEndedOf(first.subscription, now),
     parkedSessions: children.reduce((n, c) => n + (c.parkedSessions ?? 0), 0),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
