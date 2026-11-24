@@ -52,7 +52,11 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { seatLedger } from "@/lib/booking/class-series";
-import { seatJoinedAt, seatSessionClaim } from "@/lib/booking/seat-session";
+import {
+  seatJoinedAt,
+  seatSessionClaim,
+  sessionRefundSpent,
+} from "@/lib/booking/seat-session";
 import {
   MAKEUP_WINDOW_DAYS,
   occurrenceRefundKey,
@@ -425,9 +429,9 @@ async function settleSeat(
 async function alreadySpent(dedupeKey: string): Promise<boolean> {
   const spent = await prisma.refund.findUnique({
     where: { dedupeKey },
-    select: { status: true },
+    select: { dedupeKey: true, status: true },
   });
-  return !!spent && spent.status !== "FAILED" && spent.status !== "CANCELLED";
+  return sessionRefundSpent(spent ? [spent] : [], dedupeKey);
 }
 
 /** Never ask for more than the seat still has: an over-ask retries forever. */

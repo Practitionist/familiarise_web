@@ -101,7 +101,11 @@ function cardPayment(
     createdAt,
     amount,
     currency: "INR" as const,
-    refunds: [],
+    refunds: [] as {
+      amountPaise: number;
+      status: "SUCCEEDED" | "FAILED";
+      dedupeKey: string | null;
+    }[],
     disputes: [],
     legs,
   };
@@ -327,4 +331,51 @@ it("promises a session's refund only to a seat that held it, and tells a seat ta
   expect(
     rows.find((r) => r.recipients[0] === "early")!.payload.message,
   ).toContain("or we'll refund it automatically.");
+});
+
+it("promises nothing more to a seat already refunded for this session, and still promises a refund beside an unrelated partial refund", async () => {
+  const refund = (dedupeKey: string) => ({
+    amountPaise: 20_000,
+    status: "SUCCEEDED" as const,
+    dedupeKey,
+  });
+  // Ops refunded this session for one seat; the other's payment carries a refund for another session.
+  const refunded = {
+    ...cardPayment("refunded", 80_000),
+    refunds: [refund("occ:occ-1:pay:pay-refunded")],
+  };
+  const partial = {
+    ...cardPayment("partial", 80_000),
+    refunds: [refund("occ:occ-0:pay:pay-partial")],
+  };
+  findAppointment.mockResolvedValue({
+    ...consultation,
+    consultation: null,
+    class: { classPlan: { ...plan("Python cohort"), collaborators: [] } },
+    participants: [seat("refunded"), seat("partial")],
+    payment: [refunded, partial],
+  } satisfies OutcomePartiesRow);
+  findUsers.mockResolvedValue([]);
+  ZONES.refunded = "Asia/Kolkata";
+  ZONES.partial = "Asia/Kolkata";
+
+  const prepared = await prepareProposedOutcomeNotices({
+    ...SESSION,
+    outcome: "CUT_SHORT",
+    outcomeAt: OUTCOME_AT,
+  });
+  const { tx, createManyAndReturn } = txWith();
+  await stageOutcomeNotices(tx, prepared!);
+  const rows = createManyAndReturn.mock.calls[0][0].data as unknown as {
+    recipients: string[];
+    payload: Record<string, string>;
+  }[];
+  const bell = (id: string) =>
+    rows.find((r) => r.recipients[0] === id)!.payload.message;
+
+  expect(bell("refunded")).toContain(
+    "it counts as a missed session, and this session has already been refunded.",
+  );
+  expect(bell("refunded")).not.toContain("or we'll");
+  expect(bell("partial")).toContain("or we'll refund it automatically.");
 });

@@ -25,3 +25,16 @@ export function seatSessionClaim(
   if (session.startsAt <= seatJoinedAt(seat, payment)) return "none";
   return seat.status === "HELD" ? "human" : "refund";
 }
+
+/** A refund under this session's key that moved, or is moving, money; a FAILED or CANCELLED one moved nothing. */
+export function sessionRefundSpent(
+  refunds: readonly { dedupeKey: string | null; status: string }[],
+  dedupeKey: string,
+): boolean {
+  return refunds.some(
+    (r) =>
+      r.dedupeKey === dedupeKey &&
+      r.status !== "FAILED" &&
+      r.status !== "CANCELLED",
+  );
+}

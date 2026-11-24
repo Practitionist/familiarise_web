@@ -48,7 +48,12 @@ import {
   type SeatRefund,
 } from "./outcome-notice-copy";
 import { liveLearnerSeat } from "./participants";
-import { seatJoinedAt, seatSessionClaim } from "./seat-session";
+import { occurrenceRefundKey } from "./class-sessions";
+import {
+  seatJoinedAt,
+  seatSessionClaim,
+  sessionRefundSpent,
+} from "./seat-session";
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 
 const TITLED_PLAN = {
@@ -65,6 +70,7 @@ const SEAT_PAYMENT = {
   amount: true,
   currency: true,
   ...REFUNDABLE_BALANCE_SELECT,
+  refunds: { select: { amountPaise: true, status: true, dedupeKey: true } },
   legs: { select: { source: true, amountPaise: true } },
 } satisfies Prisma.PaymentSelect;
 
@@ -165,41 +171,51 @@ const seatHeld = (seat: Seat, startsAt: Date) => startsAt > seatJoinedAt(seat);
 /**
  * One learner's refund for this session: the captured payments settlement
  * would refund for this seat (its own payment, or any in the learner's name on
- * a legacy seat) that `seatSessionClaim` owes automatically. A 1:1
- * consultation names the amount; a group seat's per-session share is left
- * unnamed. Null when none is owed.
+ * a legacy seat) that `seatSessionClaim` owes automatically and that carry no
+ * live refund under this session's key yet. A 1:1 consultation names the
+ * amount; a group seat's per-session share is left unnamed.
  */
 function seatRefundOf(
   row: OutcomePartiesRow,
   booking: NoticeBooking,
   seat: Seat,
-  startsAt: Date,
-): SeatRefund | null {
+  session: { occurrenceId: string; startsAt: Date },
+): { refund: SeatRefund | null; alreadyRefunded: boolean } {
   if (
     booking !== "consultation" &&
     booking !== "class" &&
     booking !== "webinar"
   ) {
-    return null;
+    return { refund: null, alreadyRefunded: false };
   }
-  const owed = row.payment.filter(
+  const claimed = row.payment.filter(
     (p) =>
       p.userId === seat.userId &&
       (seat.paymentId === null || seat.paymentId === p.id) &&
-      seatSessionClaim({ startsAt }, seat, p) === "refund",
+      seatSessionClaim(session, seat, p) === "refund",
   );
+  const spent = (p: (typeof claimed)[number]) =>
+    sessionRefundSpent(
+      p.refunds,
+      occurrenceRefundKey(session.occurrenceId, p.id),
+    );
+  const owed = claimed.filter((p) => !spent(p));
+  const alreadyRefunded = owed.length < claimed.length;
   const paise = owed.reduce(
     (sum, p) => sum + refundableBalancePaise(Number(p.amount), p),
     0,
   );
   const currency = owed[0]?.currency;
-  if (paise <= 0 || !currency) return null;
+  if (paise <= 0 || !currency) return { refund: null, alreadyRefunded };
   return {
-    amountText:
-      booking === "consultation"
-        ? formatNotificationMoney(paise, currency)
-        : null,
-    destination: refundDestinationOf(owed),
+    refund: {
+      amountText:
+        booking === "consultation"
+          ? formatNotificationMoney(paise, currency)
+          : null,
+      destination: refundDestinationOf(owed),
+    },
+    alreadyRefunded: false,
   };
 }
 
@@ -210,10 +226,16 @@ interface Party {
   consulteeProfileId: string | null;
   /** A learner's refund, if their seat's verdict voids it. */
   refund: SeatRefund | null;
+  /** A learner whose seat this session was already refunded for, under settlement's own key. */
+  alreadyRefunded: boolean;
 }
 
 /** The hosts, and the learner seats that held this session: a seat taken after it started was never in it. */
-async function readParties(appointmentId: string, startsAt: Date) {
+async function readParties(
+  appointmentId: string,
+  session: { occurrenceId: string; startsAt: Date },
+) {
+  const { startsAt } = session;
   const row = await readPartiesRow(appointmentId);
   const shape = row ? bookingOf(row) : null;
   if (!row || !shape) return null;
@@ -231,12 +253,15 @@ async function readParties(appointmentId: string, startsAt: Date) {
   const seats = new Map(heldSeats.map((p) => [p.userId, p]));
   const parties: Party[] = ids.map((userId) => {
     const seat = hosts.includes(userId) ? undefined : seats.get(userId);
+    const owed = seat
+      ? seatRefundOf(row, shape.booking, seat, session)
+      : { refund: null, alreadyRefunded: false };
     return {
       userId,
       side: seat ? "learner" : "host",
       consultantProfileId: byId.get(userId)?.consultantProfileId ?? null,
       consulteeProfileId: byId.get(userId)?.consulteeProfileId ?? null,
-      refund: seat ? seatRefundOf(row, shape.booking, seat, startsAt) : null,
+      ...owed,
     };
   });
   return { row, ...shape, parties };
@@ -344,7 +369,7 @@ export async function prepareProposedOutcomeNotices(
     outcomeAt: Date;
   },
 ): Promise<PreparedOutcomeNotices | null> {
-  const read = await readParties(session.appointmentId, session.startsAt);
+  const read = await readParties(session.appointmentId, session);
   if (!read || read.parties.length === 0) return null;
   const { row, booking, plan, parties } = read;
   const closesAt = windowClosesAt(session.outcomeAt);
@@ -371,6 +396,7 @@ export async function prepareProposedOutcomeNotices(
       windowClosesWhen: when(closesAt, zone),
       makeUpByWhen: when(makeUpBy, zone),
       refund: party.refund,
+      alreadyRefunded: party.alreadyRefunded,
       hasRecording,
     }),
     href: reportHref(party, session.appointmentId, session.occurrenceId),
@@ -407,7 +433,7 @@ export async function prepareReviewedOutcomeNotices(
     reviewedAt: Date;
   },
 ): Promise<PreparedOutcomeNotices | null> {
-  const read = await readParties(session.appointmentId, session.startsAt);
+  const read = await readParties(session.appointmentId, session);
   if (!read || read.parties.length === 0) return null;
   const { row, plan, parties } = read;
   const href = `${getAppUrl()}${goHref("auto", `appointments/${session.appointmentId}`)}`;

@@ -40,6 +40,8 @@ export interface ProposedNoticeInput {
   makeUpByWhen: string;
   /** The recipient seat's refund; null for a host, or a seat nothing was paid for. */
   refund: SeatRefund | null;
+  /** The recipient seat was already refunded for this session, so nothing more is promised. */
+  alreadyRefunded: boolean;
   hasRecording: boolean;
 }
 
@@ -100,16 +102,22 @@ function voidRemedy(input: ProposedNoticeInput, side: NoticeSide): string {
       if (side === "host") {
         return `it counts as a missed session, and the booking is refunded in full automatically after ${by}`;
       }
-      return input.refund
-        ? `it counts as a missed session, and we'll ${refundClause(input.refund, `automatically after ${by}`)}`
+      if (input.refund) {
+        return `it counts as a missed session, and we'll ${refundClause(input.refund, `automatically after ${by}`)}`;
+      }
+      return input.alreadyRefunded
+        ? "it counts as a missed session, and this session has already been refunded"
         : "it counts as a missed session";
     case "class":
     case "webinar":
       if (side === "host") {
         return `it counts as a missed session: hold a make-up by ${by}, or that session is refunded automatically`;
       }
-      return input.refund
-        ? `it counts as a missed session: the expert has until ${by} to hold a make-up, or we'll ${refundClause(input.refund, "automatically")}`
+      if (input.refund) {
+        return `it counts as a missed session: the expert has until ${by} to hold a make-up, or we'll ${refundClause(input.refund, "automatically")}`;
+      }
+      return input.alreadyRefunded
+        ? "it counts as a missed session, and this session has already been refunded"
         : `it counts as a missed session: the expert has until ${by} to hold a make-up`;
   }
 }
