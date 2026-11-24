@@ -1043,6 +1043,94 @@ export async function scheduleClassMakeUp(
 }
 
 /**
+ * Ops restoring a voided session to a non-miss outcome, in the correction's own
+ * transaction: its unstarted make-up is no longer owed, so it is cancelled
+ * (tombstoned, no refund) and seat holders and the team are told. A make-up that
+ * has started or been held is left for `assertUnvoidable` to refuse the correction.
+ */
+export async function cancelUnstartedMakeUp(
+  tx: Tx,
+  args: {
+    appointmentId: string;
+    sourceOccurrenceId: string;
+    ordinal: number;
+    now: Date;
+    actorUserId: string;
+  },
+): Promise<{ cancelled: boolean; bells: StagedTrigger[] }> {
+  const unstarted = {
+    appointmentId: args.appointmentId,
+    ordinal: args.ordinal,
+    id: { not: args.sourceOccurrenceId },
+    deletedAt: null,
+    isTentative: false,
+    startsAt: { gt: args.now },
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+  const makeUp = await tx.appointmentOccurrence.findFirst({
+    where: {
+      ...unstarted,
+      completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+    },
+    select: { id: true, startsAt: true },
+  });
+  if (!makeUp) return { cancelled: false, bells: [] };
+  await transitionOccurrenceCompletion(tx, {
+    where: { ...unstarted, id: makeUp.id },
+    to: OccurrenceCompletionStatus.CANCELLED,
+    fromIn: [OccurrenceCompletionStatus.SCHEDULED],
+    data: { deletedAt: args.now },
+    allowZero: false,
+    actorUserId: args.actorUserId,
+    reason: "ops:session.set-outcome:make-up-not-needed",
+  });
+  const appointment = await tx.appointment.findUnique({
+    where: { id: args.appointmentId },
+    select: HOSTED_CLASS_SELECT,
+  });
+  const cls = appointment?.class;
+  if (!appointment || !cls) return { cancelled: true, bells: [] };
+  const seats = await tx.appointmentParticipant.findMany({
+    where: { appointmentId: args.appointmentId, ...SEATED },
+    select: { userId: true },
+  });
+  const seatUserIds = seats.map((x) => x.userId);
+  const hostUserId = cls.classPlan.consultantProfile?.user.id ?? null;
+  const team = await teamToTell(tx, cls.classPlan.id, [
+    ...seatUserIds,
+    hostUserId,
+  ]);
+  // The plain "was cancelled" sentence: the make-up is not owed, so no make-up window is promised.
+  const notice = (userIds: string[], dashboardUrl: string, key: string) =>
+    userIds.length > 0
+      ? stageBellsByZone(
+          tx,
+          NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+          userIds,
+          (zone) => ({
+            forTeam: true,
+            planTitle: cls.classPlan.title,
+            dateTime: zoned(makeUp.startsAt, zone),
+            dashboardUrl,
+          }),
+          key,
+        )
+      : Promise.resolve([] as StagedTrigger[]);
+  const bells = [
+    ...(await notice(
+      seatUserIds,
+      goHref("client", "appointments"),
+      `makeup-cancel:${makeUp.id}`,
+    )),
+    ...(await notice(
+      [...(hostUserId ? [hostUserId] : []), ...team],
+      notificationHref(appointment.organizationId, "appointments"),
+      `makeup-cancel:${makeUp.id}:team`,
+    )),
+  ];
+  return { cancelled: true, bells };
+}
+
+/**
  * E-3b — a seat that cannot make the make-up takes that session back now,
  * one unit under the SAME key the day-14 sweep uses, so it can never be
  * refunded twice. Allowed while the make-up has not started.
@@ -1054,6 +1142,17 @@ export async function skipClassMakeUp(args: {
   /** #1771 — an ops door refunds on the learner's seat but names the operator. */
   initiatedByUserId?: string;
 }) {
+  // Every read, and the make-up's start against the time now, under the lock ops' outcome door takes.
+  return withAppointmentLock(args.appointmentId, () => skipUnderLock(args));
+}
+
+async function skipUnderLock(args: {
+  appointmentId: string;
+  sourceOccurrenceId: string;
+  userId: string;
+  initiatedByUserId?: string;
+}) {
+  const now = new Date();
   const source = await prisma.appointmentOccurrence.findFirst({
     where: {
       id: args.sourceOccurrenceId,
@@ -1070,7 +1169,7 @@ export async function skipClassMakeUp(args: {
           ordinal: source.ordinal,
           deletedAt: null,
           completionStatus: OccurrenceCompletionStatus.SCHEDULED,
-          startsAt: { gt: new Date() },
+          startsAt: { gt: now },
         },
         select: { id: true },
       })
@@ -1137,49 +1236,31 @@ export async function skipClassMakeUp(args: {
     return { refundId: null, amountRefundedPaise: 0, rail: "CREDITS" as const };
   }
   const dedupeKey = occurrenceRefundKey(args.sourceOccurrenceId, payment.id);
-  // Under the lock ops' outcome door takes: the source still a miss, and its verdict not pending, as the refund commits.
-  return withAppointmentLock(args.appointmentId, async () => {
-    const still = await prisma.appointmentOccurrence.findFirst({
-      where: {
-        id: args.sourceOccurrenceId,
-        appointmentId: args.appointmentId,
-        ...MISS_WHERE,
-        seatsSettledAt: null,
-      },
-      select: { id: true },
-    });
-    if (!still) {
-      throw new BookingRuleError(
-        "MAKEUP_NOT_SKIPPABLE",
-        "This session has no upcoming make-up to skip, or you do not hold it.",
-      );
-    }
-    const pending = await pendingVoidRefusal(prisma, {
-      appointmentId: args.appointmentId,
-      occurrenceId: args.sourceOccurrenceId,
-      readerUserId: args.userId,
-      action: "skip",
-    });
-    if (pending) {
-      throw new BookingRuleError("MAKEUP_SKIP_WAITS_FOR_VERDICT", pending);
-    }
-    try {
-      const refunded = await refundBookingPayment({
-        paymentId: payment.id,
-        amountPaise: Number(ledger.unitPaise),
-        reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
-        initiatedByUserId: args.initiatedByUserId ?? args.userId,
-        dedupeKey,
-        keepSeat: true,
-      });
-      return { ...refunded, status: "SUCCEEDED" as const };
-    } catch (err) {
-      return skipRefundInFlight(err, dedupeKey, {
-        ...payment,
-        skipPaise: Number(ledger.unitPaise),
-      });
-    }
+  const pending = await pendingVoidRefusal(prisma, {
+    appointmentId: args.appointmentId,
+    occurrenceId: args.sourceOccurrenceId,
+    readerUserId: args.userId,
+    action: "skip",
   });
+  if (pending) {
+    throw new BookingRuleError("MAKEUP_SKIP_WAITS_FOR_VERDICT", pending);
+  }
+  try {
+    const refunded = await refundBookingPayment({
+      paymentId: payment.id,
+      amountPaise: Number(ledger.unitPaise),
+      reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
+      initiatedByUserId: args.initiatedByUserId ?? args.userId,
+      dedupeKey,
+      keepSeat: true,
+    });
+    return { ...refunded, status: "SUCCEEDED" as const };
+  } catch (err) {
+    return skipRefundInFlight(err, dedupeKey, {
+      ...payment,
+      skipPaise: Number(ledger.unitPaise),
+    });
+  }
 }
 
 /**

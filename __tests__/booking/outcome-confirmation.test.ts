@@ -29,6 +29,8 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/booking/class-sessions", () => ({
   onClassSessionVoided: jest.fn(),
+  // No make-up was offered for these sessions.
+  cancelUnstartedMakeUp: jest.fn(async () => ({ cancelled: false, bells: [] })),
   onClassVoidConfirmed: jest.fn(async () => ({
     bells: [],
     cancelEmailArgs: null,

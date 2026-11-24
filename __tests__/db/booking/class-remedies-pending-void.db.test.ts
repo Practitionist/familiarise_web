@@ -23,6 +23,7 @@ import {
 } from "./harness-class-series";
 import { seedSeatBuyer } from "./harness-seats";
 import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
+import { withAppointmentLock } from "../../../utils/appointmentlock";
 
 refundOnRowsEachTest();
 
@@ -237,5 +238,120 @@ describe("a make-up skip", () => {
     await skip();
     await skip();
     expect(await refundedPaise(buyer.paymentId)).toBe(20_000);
+  });
+});
+
+/** A make-up for the void's ordinal starting `fromNowMs` from now, an hour long. */
+async function offerMakeUp(
+  host: { consultantProfileId: string },
+  cls: { appointmentId: string },
+  voidId: string,
+  fromNowMs: number,
+) {
+  const { ordinal } = await prisma.appointmentOccurrence.findUniqueOrThrow({
+    where: { id: voidId },
+    select: { ordinal: true },
+  });
+  const startsAt = new Date(Date.now() + fromNowMs);
+  return prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: cls.appointmentId,
+      ordinal,
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR_MS),
+      isTentative: false,
+      consultantProfileId: host.consultantProfileId,
+      completionStatus: "SCHEDULED",
+    },
+    select: { id: true, ordinal: true },
+  });
+}
+
+/** Rows the live-ordinal unique counts for one ordinal. */
+const liveRowsFor = (appointmentId: string, ordinal: number) =>
+  prisma.appointmentOccurrence.count({
+    where: {
+      appointmentId,
+      ordinal,
+      deletedAt: null,
+      completionStatus: { notIn: ["RESCHEDULED", "CANCELLED", "VOIDED"] },
+    },
+  });
+
+describe("ops correcting a pending void after a make-up was offered", () => {
+  it("restores the session held and cancels its unstarted make-up, with no refund and one live row for the ordinal", async () => {
+    const { host, cls, buyer, voidId } = await seedPendingVoid();
+    const makeUp = await offerMakeUp(host, cls, voidId, 7 * DAY_MS);
+    const since = new Date();
+
+    await relabelHeld(voidId);
+
+    expect(
+      await prisma.appointmentOccurrence.findUniqueOrThrow({
+        where: { id: voidId },
+        select: { completionStatus: true, outcome: true },
+      }),
+    ).toEqual({ completionStatus: "COMPLETED", outcome: "HELD" });
+    expect(
+      await prisma.appointmentOccurrence.findUniqueOrThrow({
+        where: { id: makeUp.id },
+        select: { completionStatus: true, deletedAt: true },
+      }),
+    ).toMatchObject({
+      completionStatus: "CANCELLED",
+      deletedAt: expect.any(Date),
+    });
+    expect(await refundedPaise(buyer.paymentId)).toBe(0);
+    expect(await liveRowsFor(cls.appointmentId, makeUp.ordinal)).toBe(1);
+    // Both sides hear that the make-up is no longer happening.
+    const told = await prisma.notificationOutbox.findMany({
+      where: {
+        workflowId: "class-session-cancelled",
+        createdAt: { gte: since },
+      },
+      select: { recipients: true },
+    });
+    const recipients = told.flatMap((r) => r.recipients);
+    expect(recipients).toEqual(
+      expect.arrayContaining([buyer.userId, host.userId]),
+    );
+  });
+
+  it("still refuses the correction once the make-up has started", async () => {
+    const { host, cls, voidId } = await seedPendingVoid();
+    await offerMakeUp(host, cls, voidId, -10 * 60_000);
+    await expect(relabelHeld(voidId)).rejects.toMatchObject({
+      code: "OUTCOME_SETTLED",
+    });
+    expect(
+      (
+        await prisma.appointmentOccurrence.findUniqueOrThrow({
+          where: { id: voidId },
+          select: { completionStatus: true },
+        })
+      ).completionStatus,
+    ).toBe("VOIDED");
+  });
+});
+
+describe("a skip whose lock wait crosses the make-up's start", () => {
+  it("refuses with MAKEUP_NOT_SKIPPABLE and refunds nothing", async () => {
+    const { host, cls, buyer, voidId } = await seedPendingVoid();
+    await confirmVoid(voidId);
+    await offerMakeUp(host, cls, voidId, 1_500);
+    let skipped: Promise<unknown> | undefined;
+    // Something else holds the booking's lock until the make-up has started.
+    await withAppointmentLock(cls.appointmentId, async () => {
+      skipped = skipClassMakeUp({
+        appointmentId: cls.appointmentId,
+        sourceOccurrenceId: voidId,
+        userId: buyer.userId,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+    });
+    await expect(skipped).rejects.toMatchObject({
+      code: "MAKEUP_NOT_SKIPPABLE",
+    });
+    expect(await refundedPaise(buyer.paymentId)).toBe(0);
   });
 });

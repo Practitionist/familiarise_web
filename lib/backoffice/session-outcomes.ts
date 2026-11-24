@@ -15,9 +15,11 @@ import {
 
 import prisma, { type Tx } from "@/lib/prisma";
 import {
+  cancelUnstartedMakeUp,
   onClassSessionVoided,
   onClassVoidConfirmed,
 } from "@/lib/booking/class-sessions";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
   classifySessionOutcome,
   COMPLETION_FOR_OUTCOME,
@@ -297,6 +299,18 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
       `A ${occ.completionStatus.toLowerCase()} session cannot be given this outcome.`,
     );
   }
+  // Restoring a void to a non-miss: its unstarted make-up is no longer owed, cancelled in this
+  // transaction; a started or held make-up still refuses the correction below.
+  const makeUp =
+    occ.completionStatus === "VOIDED" && to !== "VOIDED"
+      ? await cancelUnstartedMakeUp(tx, {
+          appointmentId: occ.appointmentId,
+          sourceOccurrenceId: occ.id,
+          ordinal: occ.ordinal,
+          now,
+          actorUserId: args.actorUserId,
+        })
+      : null;
   if (occ.completionStatus === "VOIDED" && to !== "VOIDED") {
     await assertUnvoidable(tx, occ);
   }
@@ -321,8 +335,19 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   return {
     before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
     after: { completionStatus: to, outcome: args.outcome },
-    // The class void's bells and emails, sent once the caller's transaction commits.
-    afterCommit: voided ? () => flushClassVoidNotices(voided) : undefined,
+    // The class void's and the cancelled make-up's notices, sent once the caller's transaction commits.
+    afterCommit:
+      voided || makeUp?.bells.length
+        ? async () => {
+            if (voided) await flushClassVoidNotices(voided);
+            if (makeUp?.bells.length) {
+              await flushNotificationsAfter(
+                { bells: makeUp.bells },
+                "session.set-outcome.make-up-cancelled",
+              );
+            }
+          }
+        : undefined,
   };
 }
 
