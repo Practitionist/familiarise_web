@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { ChevronDown, Loader2, MoreHorizontal, Video } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,8 @@ export interface SessionRowAction {
   key: string;
   label: string;
   onSelect: () => void;
+  /** A page the action opens; the inline entry is then a real link. */
+  href?: string;
   disabled?: boolean;
   /** Why the action is unavailable, in words; shown under the label in the menu. */
   blockedBecause?: string;
@@ -48,6 +51,24 @@ export interface SessionRowAction {
 }
 
 type RowStatus = ReturnType<typeof slotStatus>;
+
+/** A row's first action beside the session, visible at rest at every width; a link when it opens a page. */
+export function InlineRowAction({
+  action,
+}: Readonly<{ action: SessionRowAction }>) {
+  if (action.href) {
+    return (
+      <Button variant="ghost" size="sm" className="h-8" asChild>
+        <Link href={action.href}>{action.label}</Link>
+      </Button>
+    );
+  }
+  return (
+    <Button variant="ghost" size="sm" className="h-8" onClick={action.onSelect}>
+      {action.label}
+    </Button>
+  );
+}
 
 /**
  * Upcoming is the default and says nothing; only states a reader must notice
@@ -452,16 +473,7 @@ function SessionRow({
           </span>
         ) : null}
 
-        {inline && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
-            onClick={inline.onSelect}
-          >
-            {inline.label}
-          </Button>
-        )}
+        {inline && <InlineRowAction action={inline} />}
         {actions.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -434,6 +434,7 @@ export function AppointmentDetailClient({
           {
             key: `report-${session.occurrenceId}`,
             label: "Report a problem with this session",
+            href,
             onSelect: () => router.push(href),
           },
         ]
@@ -1513,13 +1514,8 @@ export function AppointmentDetailClient({
             {/* With the Sessions card folded away, the one session's report sits in the header. */}
             {soleSession &&
               reportRowAction(soleSession).map((report) => (
-                <Button
-                  key={report.key}
-                  variant="outline"
-                  size="sm"
-                  onClick={report.onSelect}
-                >
-                  {report.label}
+                <Button key={report.key} variant="outline" size="sm" asChild>
+                  <Link href={report.href ?? "#"}>{report.label}</Link>
                 </Button>
               ))}
             {renderExtraActions?.(vm, { openChat: setChatTarget })}
