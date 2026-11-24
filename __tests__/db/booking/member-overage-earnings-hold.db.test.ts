@@ -59,6 +59,7 @@ import { handleOverageMemberSuccess } from "../../../lib/payments/webhooks/overa
 import { settleFailedMemberOverageAsOrg } from "../../../lib/payments/billing/overage-settlement";
 import { runTimeoutMemberOverages } from "../../../jobs/billing/timeout-member-overages";
 import { replaceOccurrence } from "../../../lib/appointments/occurrences";
+import { enumerateIncident } from "../../../lib/booking/platform-incidents";
 import { settleSubscriptionCycle } from "../../../lib/booking/subscription-cycle";
 import {
   computeHoldUntil,
@@ -392,4 +393,98 @@ describe("a delivered subscription tranche keeps its stamped date when a later c
       holdUntil: stamped,
     });
   });
+});
+
+it("a voided cycle's tranche loses its stamp and is stamped afresh when the make-up is delivered; a released tranche keeps its date", async () => {
+  const { host, appointmentId, periodStart, parent } =
+    await mintSubscription(false);
+  const first = await addSession(appointmentId, host.consultantProfileId, {
+    ordinal: 1,
+    startsAt: new Date(periodStart.getTime() + 7 * DAY_MS),
+    completionStatus: "COMPLETED",
+  });
+  await prisma.$transaction((tx) =>
+    settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+  );
+  const stamped = (await earningsOf(parent.id))[0].holdUntil;
+  expect(stamped).not.toBeNull();
+  // The second tranche stands in for one already released to the expert.
+  await prisma.consultantEarnings.updateMany({
+    where: { paymentId: parent.id, cycleOrdinal: 1 },
+    data: { status: "READY", holdUntil: stamped },
+  });
+  const holds = async () =>
+    (await earningsOf(parent.id)).map((t) => ({
+      cycleOrdinal: t.cycleOrdinal,
+      status: t.status,
+      holdUntil: t.holdUntil,
+    }));
+  const releasedTranche = {
+    cycleOrdinal: 1,
+    status: "READY",
+    holdUntil: stamped,
+  };
+
+  // An incident over the delivered session voids it: its cycle is undelivered again.
+  const incident = await prisma.platformIncident.create({
+    data: {
+      startsAt: new Date(first.startsAt.getTime() + 60_000),
+      endsAt: new Date(first.startsAt.getTime() + 2 * 60_000),
+      reason: `db tier ${randomUUID()}`,
+      declaredByUserId: host.userId,
+    },
+  });
+  const failures: unknown[] = [];
+  await enumerateIncident(
+    incident,
+    { limit: 10, pastDeadline: () => false, now: new Date() },
+    {
+      voided: 0,
+      remediesCreated: 0,
+      failed: (_id, error) => failures.push(error),
+    },
+  );
+  expect(failures).toEqual([]);
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: first.id },
+      select: { completionStatus: true },
+    }),
+  ).toEqual({ completionStatus: "VOIDED" });
+  expect(await holds()).toEqual([
+    { cycleOrdinal: 0, status: "PENDING", holdUntil: null },
+    releasedTranche,
+  ]);
+
+  // The make-up is placed three days out; allocation re-anchors the appointment's holds and stamps no tranche.
+  const makeUp = await addSession(appointmentId, host.consultantProfileId, {
+    ordinal: 2,
+    startsAt: new Date(Date.now() + 3 * DAY_MS),
+    completionStatus: "SCHEDULED",
+  });
+  await recomputeEarningsHold(prisma, appointmentId);
+  expect((await holds())[0].holdUntil).toBeNull();
+
+  // The make-up is delivered: completion stamps the tranche from that session's end.
+  await prisma.appointmentOccurrence.update({
+    where: { id: makeUp.id },
+    data: { completionStatus: "COMPLETED", completedAt: makeUp.endsAt },
+  });
+  await prisma.$transaction((tx) =>
+    settleSubscriptionCycle(tx, { appointmentId, now: makeUp.endsAt }),
+  );
+  const fresh = computeHoldUntil({
+    capturedAt: makeUp.endsAt,
+    lastOccurrenceEndsAt: makeUp.endsAt,
+    holdHours: holdHoursFor("SUBSCRIPTION"),
+  });
+  // A freshly seeded expert is new, so the stamp carries the three new-expert days.
+  expect(await holds()).toEqual([
+    {
+      cycleOrdinal: 0,
+      status: "PENDING",
+      holdUntil: new Date(fresh.getTime() + 3 * DAY_MS),
+    },
+    releasedTranche,
+  ]);
 });

@@ -59,10 +59,40 @@ describe("subscription misses do not hold earnings", () => {
   });
 });
 
-describe("ops overturn to VOIDED on a settled plan", () => {
+describe("ops overturn to VOIDED on a plan", () => {
   const NOW = new Date("2026-06-01T00:00:00Z");
+  const unstamp = jest.fn(async (_args: unknown) => ({ count: 1 }));
+  // 4 sessions at 1 a week: the void leaves the second cycle undelivered.
+  const session = (completionStatus: string, day: number) => ({
+    startsAt: new Date(Date.UTC(2026, 4, day, 10)),
+    endsAt: new Date(Date.UTC(2026, 4, day, 11)),
+    completionStatus,
+    isTentative: false,
+    deletedAt: null,
+  });
   function txFor(planStatus: string) {
     return {
+      appointment: {
+        findUnique: async () => ({
+          payment: [{ id: "pay-1" }],
+          subscription: {
+            status: planStatus,
+            sessionsTotal: 4,
+            sessionsPerWeek: 1,
+            sessionsRefunded: 0,
+            schedulingPeriodStartsAt: new Date("2026-04-24T00:00:00Z"),
+            schedulingTimezone: "UTC",
+            planEndsAt: null,
+            subscriptionPlan: {
+              totalSessions: 4,
+              sessionsPerWeek: 1,
+              durationInMonths: 1,
+            },
+          },
+          occurrences: [session("COMPLETED", 1), session("VOIDED", 8)],
+        }),
+      },
+      consultantEarnings: { updateMany: unstamp },
       appointmentOccurrence: {
         findUnique: async () => ({
           id: "occ-1",
@@ -99,4 +129,21 @@ describe("ops overturn to VOIDED on a settled plan", () => {
       ).rejects.toMatchObject({ code: "PLAN_SETTLED" });
     },
   );
+
+  it("un-stamps the tranche a live plan's voided session un-delivers", async () => {
+    await setSessionOutcome(txFor("APPROVED"), {
+      occurrenceId: "occ-1",
+      outcome: "PLATFORM_OUTAGE",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    expect(unstamp).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        paymentId: { in: ["pay-1"] },
+        cycleOrdinal: { gt: 0 },
+        holdUntil: { not: null },
+      }),
+      data: { holdUntil: null },
+    });
+  });
 });

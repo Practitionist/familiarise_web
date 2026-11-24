@@ -27,6 +27,8 @@ import {
   soldTermsOf,
   subscriptionEntitlement,
   subscriptionTranches,
+  type EntitlementOccurrence,
+  type SoldTermsShape,
 } from "./entitlement";
 
 type SettleTx = Pick<Tx, "appointment" | "consultantEarnings"> &
@@ -41,6 +43,108 @@ const UNSTAMPED = {
     { status: "HELD" as const, preHoldStatus: { in: [...UNSTAMPED_STATUSES] } },
   ],
 };
+
+type DeliverySub = SoldTermsShape & {
+  schedulingPeriodStartsAt: Date;
+  schedulingTimezone: string;
+  planEndsAt: Date | null;
+};
+
+/**
+ * The plan's tranches as sold and the highest one its delivered sessions have
+ * matured (-1 for none). Once every session the buyer kept is delivered, every
+ * tranche has matured, including one a session-count refund cut short.
+ */
+function deliveredTranches(
+  sub: DeliverySub,
+  occurrences: EntitlementOccurrence[],
+  now: Date,
+) {
+  const terms = soldTermsOf(sub);
+  const entitlement = subscriptionEntitlement({
+    ...terms,
+    occurrences,
+    schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
+    schedulingTimezone: sub.schedulingTimezone,
+    planEndsAt: sub.planEndsAt,
+    now,
+  });
+  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
+  const matured =
+    entitlement.total > 0 && entitlement.completed >= entitlement.total
+      ? tranches.count - 1
+      : maturedTrancheOrdinal(tranches, entitlement.completed);
+  return { terms, entitlement, tranches, matured };
+}
+
+/**
+ * A live plan's tranche keeps its stamp only while its cycle is delivered.
+ * Called in the transaction that voided a delivered session: every unreleased
+ * tranche above the matured ordinal returns to unstamped, for the next
+ * completion to stamp. A READY, BATCHED or PAID tranche is left alone.
+ */
+export async function unstampUndeliveredTranches(
+  tx: Pick<Tx, "appointment" | "consultantEarnings">,
+  args: { appointmentId: string; now: Date },
+): Promise<number> {
+  const wrapper = await tx.appointment.findUnique({
+    where: { id: args.appointmentId },
+    select: {
+      payment: {
+        where: { paymentStatus: "SUCCEEDED", deletedAt: null },
+        select: { id: true },
+      },
+      subscription: {
+        select: {
+          status: true,
+          sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
+          schedulingPeriodStartsAt: true,
+          schedulingTimezone: true,
+          planEndsAt: true,
+          subscriptionPlan: {
+            select: {
+              totalSessions: true,
+              sessionsPerWeek: true,
+              durationInMonths: true,
+            },
+          },
+        },
+      },
+      occurrences: {
+        select: {
+          startsAt: true,
+          endsAt: true,
+          completionStatus: true,
+          isTentative: true,
+          deletedAt: true,
+        },
+      },
+    },
+  });
+  if (
+    wrapper?.subscription?.status !== "APPROVED" ||
+    wrapper.payment.length === 0
+  ) {
+    return 0;
+  }
+  const { matured } = deliveredTranches(
+    wrapper.subscription,
+    wrapper.occurrences,
+    args.now,
+  );
+  const { count } = await tx.consultantEarnings.updateMany({
+    where: {
+      paymentId: { in: wrapper.payment.map((p) => p.id) },
+      cycleOrdinal: { gt: matured },
+      holdUntil: { not: null },
+      ...UNSTAMPED,
+    },
+    data: { holdUntil: null },
+  });
+  return count;
+}
 
 /**
  * Terminal stamp on cancellation: whatever tranche value the refund leaves
@@ -146,26 +250,14 @@ export async function settleSubscriptionCycleWithNotice(
   }
   const sub = wrapper.subscription;
 
-  const terms = soldTermsOf(sub);
-  const entitlement = subscriptionEntitlement({
-    ...terms,
-    occurrences: wrapper.occurrences,
-    schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
-    schedulingTimezone: sub.schedulingTimezone,
-    planEndsAt: sub.planEndsAt,
-    now: args.now,
-  });
-
   // The money half: every tranche up to the highest matured one that is
   // still unstamped starts its hold now, anchored on the last delivered end.
-  // Tranches follow the sessions sold, as they were minted at capture. Once
-  // every session the buyer kept is delivered, every tranche left has matured,
-  // including the retained part of one a session-count refund cut short.
-  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
-  const matured =
-    entitlement.total > 0 && entitlement.completed >= entitlement.total
-      ? tranches.count - 1
-      : maturedTrancheOrdinal(tranches, entitlement.completed);
+  // Tranches follow the sessions sold, as they were minted at capture.
+  const { terms, entitlement, tranches, matured } = deliveredTranches(
+    sub,
+    wrapper.occurrences,
+    args.now,
+  );
   if (matured >= 0 && wrapper.payment.length > 0) {
     const lastCompletedEnd = wrapper.occurrences
       .filter((o) => !o.deletedAt && isCompletedOccurrence(o))

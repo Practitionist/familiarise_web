@@ -27,6 +27,7 @@ jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 import {
   settleSubscriptionCycle,
   stampTranchesOnCancel,
+  unstampUndeliveredTranches,
 } from "../../lib/booking/subscription-cycle";
 import { allocateCycleClawback } from "../../lib/payments/payouts/earnings-reversal";
 
@@ -197,6 +198,46 @@ it("the final completion stamps the last tranche even though no bell is due", as
   });
   expect(stampCall(updateMany).where.cycleOrdinal).toEqual({ lte: 2 });
   expect(staged).toEqual([]);
+});
+
+it("a void that leaves 7 of 8 delivered un-stamps every unreleased tranche above 0, and none on an ended plan", async () => {
+  const { tx, updateMany } = makeTx([...completed(7), "VOIDED"]);
+  await unstampUndeliveredTranches(tx as never, {
+    appointmentId: "apt-1",
+    now: NOW,
+  });
+  // READY, BATCHED and PAID are outside the status filter, so a released tranche keeps its date.
+  expect(updateMany.mock.calls).toEqual([
+    [
+      {
+        where: {
+          paymentId: { in: ["pay-1"] },
+          cycleOrdinal: { gt: 0 },
+          holdUntil: { not: null },
+          OR: [
+            { status: { in: ["PENDING", "PENDING_TRUST"] } },
+            {
+              status: "HELD",
+              preHoldStatus: { in: ["PENDING", "PENDING_TRUST"] },
+            },
+          ],
+        },
+        data: { holdUntil: null },
+      },
+    ],
+  ]);
+
+  const ended = makeTx([...completed(7), "VOIDED"]);
+  const wrapper = wrapperWith([...completed(7), "VOIDED"]);
+  ended.tx.appointment.findUnique.mockResolvedValue({
+    ...wrapper,
+    subscription: { ...wrapper.subscription, status: "CANCELLED" },
+  });
+  await unstampUndeliveredTranches(ended.tx as never, {
+    appointmentId: "apt-1",
+    now: NOW,
+  });
+  expect(ended.updateMany).not.toHaveBeenCalled();
 });
 
 it("cancel after 6: tranche 0 matured and untouched, tranche 1 keeps a stamped remainder, tranche 2 is consumed whole", async () => {

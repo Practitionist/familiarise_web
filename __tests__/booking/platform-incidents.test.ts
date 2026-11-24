@@ -11,12 +11,14 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: jest.fn(),
+    appointment: { findUnique: jest.fn() },
     appointmentOccurrence: {
       findMany: jest.fn(),
       updateMany: jest.fn(),
       updateManyAndReturn: jest.fn(),
     },
     bookingStatusHistory: { create: jest.fn() },
+    consultantEarnings: { updateMany: jest.fn() },
     incidentRemedy: {
       createMany: jest.fn(),
       updateMany: jest.fn(),
@@ -117,10 +119,12 @@ import prisma from "@/lib/prisma";
 type Fn = jest.Mock;
 const db = prisma as unknown as {
   $transaction: Fn;
+  appointment: Record<"findUnique", Fn>;
   appointmentOccurrence: Record<
     "findMany" | "updateMany" | "updateManyAndReturn",
     Fn
   >;
+  consultantEarnings: Record<"updateMany", Fn>;
   incidentRemedy: Record<
     "createMany" | "updateMany" | "findMany" | "groupBy" | "count",
     Fn
@@ -363,6 +367,73 @@ describe("the retroactive void", () => {
         }),
       }),
     );
+  });
+
+  it("un-stamps the tranche a live plan's voided session un-delivers, in the void's commit", async () => {
+    db.refund.findFirst.mockResolvedValue(null);
+    db.appointmentOccurrence.findMany.mockResolvedValue([
+      { id: "occ-1", completionStatus: "COMPLETED" },
+    ]);
+    db.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
+      { id: "occ-1", appointmentId: "appt-1" },
+    ]);
+    db.incidentRemedy.createMany.mockResolvedValue({ count: 1 });
+    db.consultantEarnings.updateMany.mockResolvedValue({ count: 1 });
+    // 12 sessions at 4 a week: the void leaves 3 of the first cycle's 4 delivered.
+    const session = (completionStatus: string, i: number) => ({
+      startsAt: at(i * 24 * 60),
+      endsAt: at(i * 24 * 60 + 60),
+      completionStatus,
+      isTentative: false,
+      deletedAt: null,
+    });
+    db.appointment.findUnique.mockResolvedValue({
+      payment: [{ id: "pay-1" }],
+      subscription: {
+        status: "APPROVED",
+        sessionsTotal: 12,
+        sessionsPerWeek: 4,
+        sessionsRefunded: 0,
+        schedulingPeriodStartsAt: at(0),
+        schedulingTimezone: "UTC",
+        planEndsAt: null,
+        subscriptionPlan: {
+          totalSessions: 12,
+          sessionsPerWeek: 4,
+          durationInMonths: 3,
+        },
+      },
+      occurrences: ["VOIDED", "COMPLETED", "COMPLETED", "COMPLETED"].map(
+        session,
+      ),
+    });
+    const livePlan = occ({
+      subscriptionId: "s",
+      subscription: {
+        status: "APPROVED",
+        sessionsTotal: 12,
+        subscriptionPlan: { totalSessions: 12 },
+      },
+    });
+
+    const out = await voidForIncident(livePlan, "inc-1", NOW);
+
+    expect(out.outcome).toBe("voided");
+    expect(db.consultantEarnings.updateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: { in: ["pay-1"] },
+        cycleOrdinal: { gt: -1 },
+        holdUntil: { not: null },
+        OR: [
+          { status: { in: ["PENDING", "PENDING_TRUST"] } },
+          {
+            status: "HELD",
+            preHoldStatus: { in: ["PENDING", "PENDING_TRUST"] },
+          },
+        ],
+      },
+      data: { holdUntil: null },
+    });
   });
 
   it("relabels a host-blamed void as the platform's miss and clears its confirmation", async () => {
