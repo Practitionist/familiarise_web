@@ -114,6 +114,7 @@ jest.mock("../../../lib/booking/transitions", () => {
 
 import { autoCompleteAppointments } from "../../../scripts/appointments/auto-complete-appointments";
 import { overturnSessionOutcome } from "../../../lib/backoffice/session-outcomes";
+import redis from "../../../lib/redis";
 import { readConsulteeEvents } from "../../../lib/data/consultee-events-read";
 import { readConsultantAppointmentsPage } from "../../../lib/data/consultant-appointments";
 import {
@@ -362,6 +363,47 @@ const completionNoticesFor = (appointmentId: string) =>
         (arg as { appointmentId?: string }).appointmentId === appointmentId,
     ),
   ).length;
+
+describe("a stalled Redis call on one booking's lock", () => {
+  it("leaves that booking open and lets a later booking complete in the same run", async () => {
+    const stalled = await SEEDS.consultation();
+    const ready = await SEEDS.consultation();
+    const appointmentOf = async (b: Seeded) =>
+      (
+        await prisma.appointmentOccurrence.findUniqueOrThrow({
+          where: { id: b.occurrenceId },
+          select: { appointmentId: true },
+        })
+      ).appointmentId;
+    const stalledKey = `appointment-lock:${await appointmentOf(stalled)}`;
+    const set = redis.set.bind(redis);
+    const spy = jest
+      .spyOn(redis, "set")
+      .mockImplementation((key: string, ...rest: unknown[]) =>
+        key === stalledKey
+          ? new Promise<never>(() => undefined)
+          : (set as (...a: unknown[]) => ReturnType<typeof redis.set>)(
+              key,
+              ...rest,
+            ),
+      );
+    try {
+      const startedAt = Date.now();
+      await autoCompleteAppointments({ startedAt });
+      expect({
+        stalled: await stalled.status(),
+        ready: await ready.status(),
+        withinBudget: Date.now() - startedAt < 16_000,
+      }).toEqual({
+        stalled: "APPROVED",
+        ready: "COMPLETED",
+        withinBudget: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
 
 describe("a park through the ops door, uncommitted while auto-complete runs, keeps the booking open", () => {
   it.each(["consultation", "webinar"])(

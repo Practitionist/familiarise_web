@@ -43,6 +43,7 @@ import {
   startDeadline,
   startDeadlineShare,
   SWEEP_START_DEADLINE_MS,
+  type RunDeadline,
 } from "@/lib/cron/run-deadline";
 import {
   EVENT_ALLOWED_FROM,
@@ -331,20 +332,34 @@ export interface AutoCompleteResult {
   checkpoint?: string | null;
 }
 
+/** A pass's completion helper, its lock calls bounded by the pass's start deadline. */
+function lockedCompletion(deadline: RunDeadline) {
+  return (appointmentId: string | undefined, run: () => Promise<unknown>) =>
+    completeUnderLock(appointmentId, deadline, run);
+}
+
 /**
  * One guarded completion under the appointment lock the lifecycle doors and the
  * ops outcome door hold, so a park through them either committed before the CAS
- * reads or waits for it. False when the CAS matched nothing, or the lock was busy
- * or unreachable: the booking waits for the next run.
+ * reads or waits for it. False when the CAS matched nothing, or the lock was busy,
+ * stalled or unreachable: the booking waits for the next run.
  */
-async function completeThroughHelper(
+async function completeUnderLock(
   appointmentId: string | undefined,
+  deadline: RunDeadline,
   run: () => Promise<unknown>,
 ): Promise<boolean> {
   // The cohort requires the wrapper; a row without one is left alone.
   if (!appointmentId) return false;
+  // Each Redis call gets the smaller of its own bound and the run's time left; a stall skips the booking.
+  const left = (deadline.until ?? Infinity) - Date.now();
+  const callTimeoutMs = Math.min(SWEEP_LOCK_RETRY_CONFIG.callTimeoutMs, left);
+  if (callTimeoutMs <= 0) return false;
   try {
-    await withAppointmentLock(appointmentId, run, SWEEP_LOCK_RETRY_CONFIG);
+    await withAppointmentLock(appointmentId, run, {
+      ...SWEEP_LOCK_RETRY_CONFIG,
+      callTimeoutMs,
+    });
     return true;
   } catch (error) {
     if (
@@ -367,6 +382,7 @@ async function completeWebinars(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
@@ -463,6 +479,7 @@ async function completeClasses(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
   const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
 
@@ -597,6 +614,7 @@ async function completeConsultations(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
@@ -767,6 +785,7 @@ async function completeSubscriptions(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
@@ -952,6 +971,7 @@ async function completeTrials(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
