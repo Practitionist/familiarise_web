@@ -244,3 +244,44 @@ describe("a resolved request", () => {
     qc.clear();
   });
 });
+
+it("names the reported session on a session's page, not the booking's next session", () => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  qc.setQueryData(supportKeys.thread("appt-1", "occ-14"), {
+    thread: null,
+    intents: [{ category: "NO_SHOW", title: "The expert didn't join" }],
+    booking: {
+      title: "Python class",
+      kind: "CLASS",
+      // The next session, which the card must not name here.
+      startsAt: "2026-11-26T11:30:00.000Z",
+      paymentId: null,
+      organizationId: null,
+    },
+    reportSessions: [
+      {
+        id: "occ-14",
+        startsAt: "2026-11-14T11:30:00.000Z",
+        endsAt: "2026-11-14T12:30:00.000Z",
+      },
+    ],
+  });
+  render(
+    <QueryClientProvider client={qc}>
+      <SupportRequestView
+        caseKey="b_appt-1"
+        occurrence="occ-14"
+        requestsHref="/dashboard/consultee/p1/support"
+        appointmentsBase="/dashboard/consultee/p1/appointments"
+        articles={articles}
+      />
+    </QueryClientProvider>,
+  );
+  expect(
+    screen.getByText(/^Report about your 14 Nov 2026, .+ session$/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/26 Nov 2026/)).not.toBeInTheDocument();
+  qc.clear();
+});
