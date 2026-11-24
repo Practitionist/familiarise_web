@@ -61,8 +61,15 @@ jest.mock("../../lib/enterprise/system-events", () => {
   return {
     recordSystemError,
     recordSystemErrorSafe: recordSystemError,
+    recordSystemEventSafe: jest.fn().mockResolvedValue(undefined),
   };
 });
+
+// The clawback notice has its own suite; the journal is what this file pins.
+jest.mock("../../lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
@@ -291,6 +298,64 @@ describe("a full refund of a LICENSE-funded booking", () => {
       expect.anything(),
       expect.objectContaining({ paymentId: PAYMENT_ID }),
     );
+  });
+});
+
+describe("a refund of a LICENSE-funded booking whose consultant was already paid", () => {
+  it("raises the consultant's receivable for the paid share, net of TDS", async () => {
+    // The ₹7,000 share left in a COMPLETED payout that withheld ₹700.
+    payment = paymentRow({
+      earnings: [
+        {
+          id: "earn-1",
+          consultantProfileId: CONSULTANT,
+          consultantSharePaise: CONSULTANT_SHARE,
+          refundedShareAmount: 0,
+          status: "PAID",
+          payoutId: "cpo-1",
+          payout: {
+            status: "COMPLETED",
+            amount: CONSULTANT_SHARE,
+            tdsDeducted: 70_000,
+            clawbackInitiatedAt: null,
+          },
+        },
+      ],
+    });
+
+    const result = await applyRefundCascade(txStub() as never, {
+      paymentId: PAYMENT_ID,
+      refundId: REFUND_ID,
+      amountPaise: GROSS,
+      reason: "cancellation",
+    });
+
+    expect(result.clawbackInitiated).toBe(true);
+    const clawback = mockPostLedgerTxn.mock.calls
+      .map((call) => call[1])
+      .find((input) => input.idempotencyKey.startsWith("clawback:"));
+    expect(clawback).toMatchObject({
+      idempotencyKey: `clawback:${REFUND_ID}:cpo-1`,
+      payoutId: "cpo-1",
+      postings: [
+        {
+          account: {
+            kind: "CONSULTANT_RECEIVABLE",
+            consultantProfileId: CONSULTANT,
+          },
+          direction: "DEBIT",
+          amountPaise: 630_000,
+        },
+        {
+          account: {
+            kind: "CONSULTANT_PAYABLE",
+            consultantProfileId: CONSULTANT,
+          },
+          direction: "CREDIT",
+          amountPaise: 630_000,
+        },
+      ],
+    });
   });
 });
 

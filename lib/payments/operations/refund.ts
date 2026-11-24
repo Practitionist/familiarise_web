@@ -1636,11 +1636,12 @@ export async function applyRefundCascade(
       });
     }
 
+    // Decided from the earning and its payout alone: whoever funded the
+    // payment, a share already paid out is owed back by the consultant.
     accumulatePaidConsultantClawback(
       consultantClawbacks,
       earnings,
       reversal.reversedPaise,
-      { isOrgPayment: Boolean(payment.organizationId) },
     );
   }
 
