@@ -352,7 +352,7 @@ describe("a session parked for ops holds its booking's status", () => {
     ).toBe(WAITING);
   });
 
-  it("a parked session waits on a decision; an unverified one not parked is still verifying; neither takes a rating", () => {
+  it("a parked session waits on a decision and takes no rating; an unverified one not parked is still verifying and rateable", () => {
     const [parked, verifying, delivered] = occurrencesOfAppointment({
       id: "a3",
       occurrences: [
@@ -371,11 +371,10 @@ describe("a session parked for ops holds its booking's status", () => {
     expect(
       [parked, verifying, delivered].map((o) => slotStatus(o, undefined, NOW)),
     ).toEqual(["waitingDecision", "inconclusive", "completed"]);
+    // Only the parked one loses its stars: a verifying session follows the reviews rule.
     expect(
-      [parked, verifying, delivered].map((o) =>
-        sessionTakesRating(o, undefined, NOW),
-      ),
-    ).toEqual([false, false, true]);
+      [parked, verifying, delivered].map((o) => sessionTakesRating(o)),
+    ).toEqual([false, true, true]);
   });
 
   it("a booking waiting on several sessions counts them", () => {

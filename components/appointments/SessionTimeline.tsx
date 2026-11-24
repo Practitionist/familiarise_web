@@ -95,14 +95,11 @@ interface SessionGroup {
  * hour, dropping whoever clicked it into a fresh empty room. Routing through
  * the shared predicate makes an ended run non-joinable here too.
  */
-/** A session still being verified or decided takes no rating until it settles. */
+/** A session parked for ops takes no rating until ops decide; every other session follows the reviews rule (`heldOccurrence`). */
 export function sessionTakesRating(
-  slot: OccurrenceVM,
-  joinWindowMs?: number,
-  now?: Date,
+  slot: Pick<OccurrenceVM, "parked">,
 ): boolean {
-  const status = slotStatus(slot, joinWindowMs, now);
-  return status !== "inconclusive" && status !== "waitingDecision";
+  return !slot.parked;
 }
 
 export function slotStatus(
