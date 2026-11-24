@@ -196,6 +196,27 @@ function ReportSessionPicker({
   );
 }
 
+/** The booking's open session reports; its page never shows one, so each stays reachable on its session's page. */
+function SessionReportLinks({ t }: Readonly<{ t: ThreadState }>) {
+  const pathname = usePathname();
+  const clock = useZoneClock();
+  if (t.occurrenceId || t.sessionReports.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-sm">
+      {t.sessionReports.map((r) => (
+        <li key={r.caseId}>
+          <Link
+            className="font-medium underline underline-offset-4"
+            href={`${pathname ?? ""}?occurrence=${encodeURIComponent(r.occurrenceId)}`}
+          >
+            Your report about {clock.dayMonth(r.startsAt)} session
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function sessionLiveAnnouncement(t: ThreadState, offline: boolean): string {
   if (t.turnPending) return "Sending your message…";
   if (t.isHuman) return t.waitingLine ?? "";
@@ -664,6 +685,7 @@ export function SessionConversation({
         </>
       )}
       <div className="space-y-3 border-t border-border p-4">
+        <SessionReportLinks t={t} />
         {/* Each selected session starts its report entry fresh. */}
         <SessionControls
           key={t.occurrenceId ?? "none"}

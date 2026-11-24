@@ -21,7 +21,10 @@ import {
   SupportThreadQuerySchema,
   SupportTurnSchema,
 } from "@/schemas/support";
-import { readShownThread } from "@/lib/support/shown-thread";
+import {
+  readOpenSessionReports,
+  readShownThread,
+} from "@/lib/support/shown-thread";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -82,6 +85,10 @@ export async function GET(
       caseId: view.data.caseId,
       occurrenceId: view.data.occurrence,
     });
+    // The booking's page never shows a session's report, so it links the open ones.
+    const sessionReports = view.data.occurrence
+      ? []
+      : await readOpenSessionReports(appointmentId, auth.userId);
 
     let intents: { category: string; title: string; escalates?: boolean }[] =
       [];
@@ -164,6 +171,7 @@ export async function GET(
       intents,
       booking,
       reportSessions,
+      sessionReports,
     });
   } catch (cause) {
     return supportError({

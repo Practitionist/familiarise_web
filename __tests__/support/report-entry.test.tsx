@@ -52,6 +52,7 @@ function threadState(over: Partial<ThreadState>): ThreadState {
     waitingLine: "",
     handoffIndex: -1,
     occurrenceId: undefined,
+    sessionReports: [],
     reportSessions: [
       {
         id: "occ-b",
@@ -184,4 +185,24 @@ it("links each ended session, and only an ended one, to its own report page", ()
       sessionReportHref("/r", "apt-1", { ...session, ...over }, now),
     ).toBeNull();
   }
+});
+
+it("links each open session report on the booking's page, which never shows one", () => {
+  renderConversation(
+    threadState({
+      thread: null,
+      started: false,
+      isHuman: false,
+      sessionReports: [
+        {
+          caseId: "case-report-a",
+          occurrenceId: "occ-a",
+          startsAt: "2026-11-14T04:30:00.000Z",
+        },
+      ],
+    }),
+  );
+  expect(
+    screen.getByRole("link", { name: /^Your report about 14 Nov session$/ }),
+  ).toHaveAttribute("href", "?occurrence=occ-a");
 });

@@ -51,7 +51,11 @@ jest.mock("../../lib/prisma", () => {
   return {
     __esModule: true,
     default: {
-      supportCase: { findFirst: jest.fn(), findUnique: jest.fn() },
+      supportCase: {
+        findFirst: jest.fn(),
+        findUnique: jest.fn(),
+        findMany: jest.fn(async () => []),
+      },
       appointmentOccurrence: memTable([], "occ"),
     },
   };
@@ -209,8 +213,36 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     // Another person's case is never shown; the default stands.
     expect(await shown("?caseId=case-foreign")).toBe("case-pay");
     rows.splice(0, 1);
-    // With no booking-wide thread, the newest session case shows.
-    expect(await shown()).toBe("case-report");
+    // With no booking-wide thread the booking's page starts fresh, and links the open report instead.
+    (prisma.supportCase.findMany as jest.Mock).mockImplementation(
+      async (args: { where: Record<string, unknown> }) =>
+        rows
+          .filter((r) =>
+            matchesWhere(
+              { ...r, category: "NO_SHOW", status: "OPEN" },
+              args.where,
+            ),
+          )
+          .map((r) => ({
+            id: r.id,
+            appointmentOccurrenceId: r.appointmentOccurrenceId,
+            occurrence: { startsAt: new Date("2026-11-14T11:30:00Z") },
+          })),
+    );
+    const res = await GET(
+      new NextRequest(`https://x.test/api/appointments/${SLUG}/support`),
+      { params: Promise.resolve({ appointmentId: SLUG }) },
+    );
+    const body = await res.json();
+    expect(body.data).toBeNull();
+    expect(body.sessionReports).toEqual([
+      {
+        caseId: "case-report",
+        occurrenceId: "occ-a",
+        startsAt: "2026-11-14T11:30:00.000Z",
+      },
+    ]);
+    expect(await shown("?occurrence=occ-a")).toBe("case-report");
   });
 
   it("offers the report from the session the page names, and lists the ended sessions", async () => {

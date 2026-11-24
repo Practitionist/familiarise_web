@@ -1,6 +1,7 @@
 /**
  * Which of a booking's support cases its request page shows. A new intent other than a no-show
  * lands on the booking-wide thread, so that is the default; a session's page shows only that session's report.
+ * With no booking-wide thread the default is a fresh start, never a session's report.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -47,7 +48,7 @@ export interface ShownThreadView {
 
 /**
  * A session's page shows that session's report (the case it names there, else its newest no-show case), never
- * another thread. Otherwise: the case named, else the newest booking-wide thread, else the newest session case.
+ * another thread. Otherwise: the case named, else the newest booking-wide thread, else nothing.
  */
 export async function readShownThread(
   appointmentId: string,
@@ -75,7 +76,42 @@ export async function readShownThread(
   }
   return (
     (view.caseId ? await newest({ id: view.caseId }) : null) ??
-    (await newest({ appointmentOccurrenceId: null })) ??
-    (await newest({}))
+    (await newest({ appointmentOccurrenceId: null }))
+  );
+}
+
+/** The caller's open session reports on this booking, newest first, so the booking's page links each one. */
+export async function readOpenSessionReports(
+  appointmentId: string,
+  userId: string,
+) {
+  const rows = await prisma.supportCase.findMany({
+    where: {
+      appointmentId,
+      requesterUserId: userId,
+      submitterUserId: userId,
+      deletedAt: null,
+      category: "NO_SHOW",
+      appointmentOccurrenceId: { not: null },
+      status: { notIn: ["RESOLVED", "CLOSED"] },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    select: {
+      id: true,
+      appointmentOccurrenceId: true,
+      occurrence: { select: { startsAt: true } },
+    },
+  });
+  return rows.flatMap((r) =>
+    r.appointmentOccurrenceId && r.occurrence
+      ? [
+          {
+            caseId: r.id,
+            occurrenceId: r.appointmentOccurrenceId,
+            startsAt: r.occurrence.startsAt,
+          },
+        ]
+      : [],
   );
 }

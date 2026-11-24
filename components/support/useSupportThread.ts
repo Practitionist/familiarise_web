@@ -77,11 +77,20 @@ export interface ReportSession {
   endsAt: string;
 }
 
+/** An open report the caller filed about one session of the booking. */
+export interface SessionReportLink {
+  caseId: string;
+  occurrenceId: string;
+  startsAt: string;
+}
+
 export interface ThreadData {
   thread: SupportThread | null;
   intents: { category: string; title: string; escalates?: boolean }[];
   booking: ThreadBooking | null;
   reportSessions?: ReportSession[];
+  /** The booking's open session reports, listed on its page, which never shows one. */
+  sessionReports?: SessionReportLink[];
 }
 
 export type SupportAction =
@@ -196,6 +205,7 @@ export async function fetchSupportThread(
     intents: json.intents ?? [],
     booking: json.booking ?? null,
     reportSessions: json.reportSessions ?? [],
+    sessionReports: json.sessionReports ?? [],
   };
 }
 
@@ -637,6 +647,8 @@ export function useSupportThread(
     occurrenceId,
     /** The ended sessions a report can be about, newest first. */
     reportSessions: data?.reportSessions ?? [],
+    /** The booking's open session reports, for its page to link. */
+    sessionReports: data?.sessionReports ?? [],
     thread,
     messages,
     history,
