@@ -546,6 +546,33 @@ describe("a report is about one ended session", () => {
     expect(report.flowReason).toBeNull();
   });
 
+  it("replays a token on the case it filed on even after that case closed", async () => {
+    cases.rows.push(
+      openCase({
+        id: "case-closed",
+        category: "NO_SHOW",
+        scopeKey: "OCCURRENCE:occ-a",
+        appointmentOccurrenceId: "occ-a",
+        status: "CLOSED",
+        closedAt: new Date("2026-11-24T08:00:00Z"),
+      }),
+    );
+    db.supportCaseMessage.rows.push({
+      id: "msg-k",
+      caseId: "case-closed",
+      clientTurnId: "turn-k",
+      sender: "USER",
+      body: "No-show",
+    });
+    useContextOf(false);
+    const retry = await runSupportTurn("appointment", "learner", {
+      category: "NO_SHOW",
+      clientTurnId: "turn-k",
+    });
+    expect(retry).toMatchObject({ threadId: "case-closed", status: "CLOSED" });
+    expect(createOrReuseSupportCase).not.toHaveBeenCalled();
+  });
+
   it("refuses a replayed token that names another session than the one it filed on", async () => {
     cases.rows.push(
       openCase({

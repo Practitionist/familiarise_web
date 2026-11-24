@@ -112,6 +112,15 @@ it("gives a paid trial's expert the host flow, so 'I was there' is the host's di
     "NO_SHOW",
   );
   expect(ctx?.isProvider).toBe(true);
+  // The read asks for the trial plan's author, as the report judgement does.
+  const select = mockPrisma.appointment.findUnique.mock.calls[0][0].select;
+  expect(select.trial).toEqual({
+    select: {
+      subscriptionPlan: {
+        select: { consultantProfile: { select: { userId: true } } },
+      },
+    },
+  });
   expect(reasonsOffered(ctx!)).toContain("provider_attended");
   expect(reasonsOffered(ctx!)).not.toContain("attendee_attended");
 });
@@ -166,4 +175,30 @@ it("offers the report for the ended session the page names while upcoming action
   );
   expect(onB!.reportSessions).toEqual([]);
   expect(reasonsOffered(onB!)).toEqual([]);
+});
+
+it("picks the only ended session for a report, and none when several ended and none is named", async () => {
+  const earlier = new Date(PAST_START.getTime() - 48 * 3_600_000);
+  mockPrisma.appointment.findUnique.mockResolvedValue({
+    ...(await mockPrisma.appointment.findUnique.getMockImplementation()?.()),
+    occurrences: [
+      {
+        id: "slot-old",
+        startsAt: earlier,
+        endsAt: new Date(earlier.getTime() + 3_600_000),
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+      {
+        id: "slot-a",
+        startsAt: PAST_START,
+        endsAt: PAST_END,
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+    ],
+  });
+  const ctx = await buildSupportContext("t1", "appt1", "u-learner", "NO_SHOW");
+  expect(ctx!.reportSessions.map((r) => r.id)).toEqual(["slot-a", "slot-old"]);
+  expect(ctx!.reportOccurrenceId).toBeNull();
 });
