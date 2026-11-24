@@ -773,3 +773,27 @@ describe("a host-attributed class void", () => {
     });
   });
 });
+
+describe("ops set-outcome", () => {
+  it("refuses a relabel when a confirmation was stamped between its read and its write", async () => {
+    occurrences.rows.push(
+      verdict("a", { completionStatus: "VOIDED", outcome: "HOST_ABSENT" }),
+    );
+    const read = occurrences.findUnique.getMockImplementation()!;
+    occurrences.findUnique.mockImplementationOnce(async (args) => {
+      const stale = await read(args);
+      // The window-close pass stamps the void after the door read it.
+      row("a").outcomeConfirmedAt = NOW;
+      return stale;
+    });
+    await expect(
+      setSessionOutcome(tx, {
+        occurrenceId: "a",
+        outcome: "CUT_SHORT",
+        actorUserId: "ops-1",
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_MOVED" });
+    expect(row("a").outcome).toBe("HOST_ABSENT");
+  });
+});

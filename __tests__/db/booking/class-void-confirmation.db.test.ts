@@ -5,11 +5,28 @@
  * outage void counts toward the exit right as before with no flag.
  */
 import "./harness-cancel-route";
+
+const mockFlush = jest.fn();
+jest.mock("../../../lib/booking/session-outcome-sweep", () => {
+  const actual = jest.requireActual(
+    "../../../lib/booking/session-outcome-sweep",
+  );
+  return {
+    ...actual,
+    flushClassVoidNotices: (...a: unknown[]) => {
+      mockFlush(...a);
+      return actual.flushClassVoidNotices(...a);
+    },
+  };
+});
 import prisma from "../../../lib/prisma";
 import { onClassSessionVoided } from "../../../lib/booking/class-sessions";
-import { confirmSessionOutcome } from "../../../lib/backoffice/session-outcomes";
+import {
+  confirmSessionOutcome,
+  overturnSessionOutcome,
+} from "../../../lib/backoffice/session-outcomes";
 import { seriesLedger } from "../../../lib/booking/class-series";
-import { HOUR_MS, seedHost } from "./harness";
+import { HOUR_MS, seedConsultee, seedHost } from "./harness";
 import {
   CLASS_UNDER_WAY as SHAPE,
   seatClassBuyer,
@@ -136,4 +153,34 @@ it("counts an outage void toward the exit right at once, and never toward the fl
     hostMisses: 0,
     exitRight: true,
   });
+});
+
+it("ops relabelling an unconfirmed host void to an outage counts the miss and sends the exit notices after the commit, with no flag", async () => {
+  const { cls, third } = await seedThreeVoids("HOST_ABSENT");
+  // The door overturns only a session that has ended.
+  await prisma.appointmentOccurrence.update({
+    where: { id: third },
+    data: {
+      startsAt: new Date(Date.now() - DAY_MS - HOUR_MS),
+      endsAt: new Date(Date.now() - DAY_MS),
+    },
+  });
+  mockFlush.mockClear();
+
+  await overturnSessionOutcome({
+    occurrenceId: third,
+    outcome: "PLATFORM_OUTAGE",
+    actorUserId: (await seedConsultee()).userId,
+  });
+
+  expect(await seriesLedger(prisma, cls.appointmentId)).toMatchObject({
+    misses: 3,
+    hostMisses: 2,
+    exitRight: true,
+  });
+  expect(mockFlush).toHaveBeenCalledTimes(1);
+  expect(mockFlush.mock.calls[0][0]).toMatchObject({
+    exitEmailArgs: { appointmentId: cls.appointmentId },
+  });
+  expect(await flags(cls.classId)).toBe(0);
 });

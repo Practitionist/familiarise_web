@@ -186,15 +186,22 @@ async function assertUnvoidable(tx: Tx, occ: OverturnRow) {
 const confirmedByOps = (outcome: OccurrenceOutcome, now: Date) =>
   isNegativeMoneyOutcome(outcome) ? now : null;
 
-/** A relabel inside one status is not a status write; CAS on the status read. */
+type ClassVoidNotices = Awaited<ReturnType<typeof onClassSessionVoided>>;
+
+/** A relabel inside one status is not a status write; CAS on the status and the stamp read. */
 async function relabel(
   tx: Tx,
   occ: OverturnRow,
   args: OverturnArgs,
   now: Date,
-) {
+): Promise<ClassVoidNotices | null> {
   const { count } = await tx.appointmentOccurrence.updateMany({
-    where: { id: occ.id, completionStatus: occ.completionStatus },
+    // A confirmation stamped since the read moves the session, so the miss is not counted twice.
+    where: {
+      id: occ.id,
+      completionStatus: occ.completionStatus,
+      outcomeConfirmedAt: occ.outcomeConfirmedAt,
+    },
     data: {
       outcome: args.outcome,
       outcomeAt: now,
@@ -214,20 +221,22 @@ async function relabel(
     !wasPending;
   const nowHostAttributed =
     HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome) && !wasCountedHost;
+  // An unconfirmed void ops relabel now counts as a series miss even when the outage is not the host's.
   if (
     occ.completionStatus === "VOIDED" &&
-    nowHostAttributed &&
+    (nowHostAttributed || wasPending) &&
     occ.appointment.classId
   ) {
-    await onClassSessionVoided(tx, {
+    return onClassSessionVoided(tx, {
       appointmentId: occ.appointmentId,
       occurrenceId: occ.id,
       startsAt: occ.startsAt,
       voidedAt: now,
-      hostAttributed: true,
+      hostAttributed: nowHostAttributed,
       relabelled: !wasPending,
     });
   }
+  return null;
 }
 
 /** A status move through the CAS helper, plus the class void side effects. */
@@ -237,7 +246,7 @@ async function moveStatus(
   args: OverturnArgs,
   to: OccurrenceCompletionStatus,
   now: Date,
-) {
+): Promise<ClassVoidNotices | null> {
   await transitionOccurrenceCompletion(tx, {
     where: {
       id: occ.id,
@@ -258,7 +267,7 @@ async function moveStatus(
     actorUserId: args.actorUserId,
   });
   if (to === "VOIDED" && occ.appointment.classId) {
-    await onClassSessionVoided(tx, {
+    return onClassSessionVoided(tx, {
       appointmentId: occ.appointmentId,
       occurrenceId: occ.id,
       startsAt: occ.startsAt,
@@ -266,6 +275,7 @@ async function moveStatus(
       hostAttributed: HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome),
     });
   }
+  return null;
 }
 
 /** Overturn one past session's outcome; the status follows the outcome. */
@@ -304,11 +314,15 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
       "This plan has already ended or been cancelled, so its sessions can no longer be voided.",
     );
   }
-  if (to === occ.completionStatus) await relabel(tx, occ, args, now);
-  else await moveStatus(tx, occ, args, to, now);
+  const voided =
+    to === occ.completionStatus
+      ? await relabel(tx, occ, args, now)
+      : await moveStatus(tx, occ, args, to, now);
   return {
     before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
     after: { completionStatus: to, outcome: args.outcome },
+    // The class void's bells and emails, sent once the caller's transaction commits.
+    afterCommit: voided ? () => flushClassVoidNotices(voided) : undefined,
   };
 }
 
@@ -328,9 +342,12 @@ export async function overturnSessionOutcome(args: {
   if (!occ) {
     throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
   }
-  return withAppointmentLock(occ.appointmentId, () =>
-    prisma.$transaction((tx) => setSessionOutcome(tx, args)),
+  const { afterCommit, ...result } = await withAppointmentLock(
+    occ.appointmentId,
+    () => prisma.$transaction((tx) => setSessionOutcome(tx, args)),
   );
+  await afterCommit?.();
+  return result;
 }
 
 /**
