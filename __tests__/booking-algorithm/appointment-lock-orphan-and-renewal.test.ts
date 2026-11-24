@@ -133,6 +133,20 @@ describe("a sweep's bounded acquire", () => {
     }).toEqual({ outcome: "AppointmentBusyError", probes: 0, sets: 0 });
   });
 
+  it("reads a SET cut short by the deadline as out of time, not as Redis down", async () => {
+    jest
+      .spyOn(client, "set")
+      .mockImplementation(() => new Promise<never>(() => undefined));
+
+    const outcome = await lockAppointment("appt-1", 60_000, {
+      ...SWEEP,
+      callTimeoutMs: 1_500,
+      deadlineAt: Date.now() + 100,
+    }).catch((e: unknown) => e);
+
+    expect((outcome as Error).name).toBe("AppointmentBusyError");
+  });
+
   it("stops retrying a contended key rather than wait past the deadline", async () => {
     await client.set(KEY, "someone-else", { px: 60_000 });
     const set = jest.spyOn(client, "set");

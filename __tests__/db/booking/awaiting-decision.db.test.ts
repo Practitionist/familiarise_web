@@ -432,6 +432,7 @@ describe("a stalled Redis health PING before one booking's lock", () => {
     const ping = redis.ping.bind(redis);
     const spy = jest.spyOn(redis, "ping").mockImplementation(() => {
       if (!armed) return ping();
+      armed = false;
       stalledPings += 1;
       return new Promise<never>(() => undefined);
     });

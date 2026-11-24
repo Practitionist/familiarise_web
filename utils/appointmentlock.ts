@@ -282,6 +282,10 @@ async function acquireLockWithRetry(
       // so neither the retry nor the next caller meets our own key as contention.
       await releaseIfOurs(client, key, value);
 
+      // A call cut short by the deadline, not by its own bound, is out of time: no breaker failure.
+      if (error instanceof RedisCallTimeout && bound !== config.callTimeoutMs) {
+        throw new LockContentionError(key, attempt + 1);
+      }
       if (attempt === config.retryCount || error instanceof RedisCallTimeout) {
         throw error;
       }
@@ -311,7 +315,7 @@ async function acquireGuarded(
   if (probeBound !== undefined && probeBound <= 0) {
     throw new LockContentionError(key, 0);
   }
-  // A stalled PING reads as Redis unavailable; the abandoned probe settles into the health cache on its own.
+  // A stalled PING reads as Redis unavailable for this caller only; it is not cached as unhealthy.
   const healthy = await withCallTimeout(checkRedisHealth(), probeBound).catch(
     () => false,
   );
