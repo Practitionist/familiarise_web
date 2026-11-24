@@ -23,7 +23,9 @@ import { expiredEdgeInclude } from "@/lib/appointments/list-status-facts";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
 import {
+  markParked,
   PARKED_SESSIONS_COUNT,
+  parkedSessionIds,
   withParkedSessions,
 } from "@/lib/booking/awaiting-decision";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
@@ -99,13 +101,27 @@ export class ConsulteeProfileNotFoundError extends Error {
  * Read the consultee's event union for a resolved scope. Returns the
  * inner payload shape (NOT wrapped in `{ data, success }`).
  */
-/** The booking's parked-session count, as the `parkedSessions` the status chip reads. */
-function stampParked<
-  T extends { appointment: { _count: { occurrences: number } } | null },
->(row: T) {
-  return {
-    ...row,
-    appointment: row.appointment && withParkedSessions(row.appointment),
+/** The booking's parked-session count, and each parked session marked, as the status chip and the session rows read them. */
+function stampParked(ids: ReadonlySet<string>) {
+  return <
+    T extends {
+      appointment: {
+        _count: { occurrences: number };
+        occurrences: { id: string }[];
+      } | null;
+    },
+  >(
+    row: T,
+  ) => {
+    if (!row.appointment) return { ...row, appointment: null };
+    const appointment = withParkedSessions(row.appointment);
+    return {
+      ...row,
+      appointment: {
+        ...appointment,
+        occurrences: appointment.occurrences.map((o) => markParked(o, ids)),
+      },
+    };
   };
 }
 
@@ -452,15 +468,28 @@ export async function readConsulteeEvents(
   // anyway, so this only matters for the SSR prefetch. Preserves Dates.
   // A move past its deadline reads as the original on every learner surface.
   const now = new Date();
+  // A second read only for bookings with a parked session.
+  const withParked = [
+    ...consultations,
+    ...subscriptions,
+    ...webinars,
+    ...classes,
+    ...trials,
+  ].flatMap((row) =>
+    row.appointment && row.appointment._count.occurrences > 0
+      ? [row.appointment.id]
+      : [],
+  );
+  const stamp = stampParked(await parkedSessionIds(prisma, withParked));
   return toPlain({
     consultations: consultations
-      .map(stampParked)
+      .map(stamp)
       .map((c) => withLapsedRequestRestored(c, now)),
     subscriptions: subscriptions
-      .map(stampParked)
+      .map(stamp)
       .map((s) => withLapsedRequestRestored(s, now)),
-    webinars: webinars.map(stampParked),
-    classes: classes.map(stampParked),
-    trials: trials.map(stampParked),
+    webinars: webinars.map(stamp),
+    classes: classes.map(stamp),
+    trials: trials.map(stamp),
   }) as unknown as TConsulteeEventsResponse;
 }

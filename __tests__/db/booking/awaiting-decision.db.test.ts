@@ -115,6 +115,7 @@ jest.mock("../../../lib/booking/transitions", () => {
 import { autoCompleteAppointments } from "../../../scripts/appointments/auto-complete-appointments";
 import { overturnSessionOutcome } from "../../../lib/backoffice/session-outcomes";
 import redis from "../../../lib/redis";
+import { readBookingOps } from "../../../lib/backoffice/booking-ops-read";
 import { readConsulteeEvents } from "../../../lib/data/consultee-events-read";
 import { readConsultantAppointmentsPage } from "../../../lib/data/consultant-appointments";
 import {
@@ -621,6 +622,13 @@ async function labelsEverywhere(
     },
     progress: page.sessionProgress,
     timeline: page.timeline.map((step) => step.label),
+    parkedRows: {
+      learnerList: learnerRow?.occurrences.filter((o) => o.parked).length,
+      page: pageVm.occurrences.filter((o) => o.parked).length,
+      staffDrawer: (await readBookingOps(b.appointmentId))?.sessions.filter(
+        (o) => o.parked,
+      ).length,
+    },
   };
 }
 
@@ -686,6 +694,12 @@ describe("a plan with parked sessions", () => {
     expect(labels.lines.learnerList).toBe(line);
     expect(labels.lines.page).toContain(line);
     expect(labels.lines.staffDrawer).toBe(line);
+    // Each parked session says so on every surface that lists sessions.
+    expect(labels.parkedRows).toEqual({
+      learnerList: 2,
+      page: 2,
+      staffDrawer: 2,
+    });
   });
 
   it("past its plan end waits on a decision on the lists as on its page", async () => {

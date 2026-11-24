@@ -30,7 +30,11 @@ import type {
   RefundStatus,
 } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
-import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
+import {
+  markParked,
+  PARKED_SESSIONS_COUNT,
+  parkedSessionIds,
+} from "@/lib/booking/awaiting-decision";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import {
   bookingAnomalies,
@@ -356,12 +360,18 @@ async function loadAppointmentDetail(appointmentId: string) {
     cls?.classPlan.consultantProfile ??
     null;
   const { _count: parked, ...row } = appointment;
+  // A second read only when a session is parked, so each one can say so.
+  const parkedIds =
+    parked.occurrences > 0
+      ? await parkedSessionIds(prisma, [row.id])
+      : new Set<string>();
   const detail = toPlain({
     reminderExpiresAt: reminder?.expiresAt.toISOString() ?? null,
     expertProfileIsPublic: host ? isPublicExpertProfile(host) : false,
     appointment: {
       ...row,
       parkedSessions: parked.occurrences,
+      occurrences: row.occurrences.map((o) => markParked(o, parkedIds)),
       payment: appointment.payment.map(({ paymentIntent, ...p }) => ({
         ...p,
         gatewayOrderMinted: !isPreMintIntent(paymentIntent),

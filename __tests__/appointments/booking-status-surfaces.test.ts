@@ -6,6 +6,7 @@
  */
 
 import { staffStatus } from "@/components/dashboard/shared/OperatorAppointmentsClient";
+import { slotStatus } from "@/components/appointments/SessionTimeline";
 import { bookingStatus } from "@/lib/appointments/booking-status";
 import { deriveBucket } from "@/lib/appointments/bucket";
 import { buildScheduleModel } from "@/lib/appointments/session-schedule";
@@ -346,6 +347,27 @@ describe("a session parked for ops holds its booking's status", () => {
     expect(
       appointmentStatusChip({ ...row, planEnded: true }, "consultee").label,
     ).toBe(WAITING);
+  });
+
+  it("a parked session waits on a decision; an unverified one not parked is still verifying", () => {
+    const [parked, verifying, delivered] = occurrencesOfAppointment({
+      id: "a3",
+      occurrences: [
+        { outcome: "NOBODY_JOINED", parked: true },
+        { outcome: null, parked: false },
+        { outcome: "HELD", parked: false, completionStatus: "COMPLETED" },
+      ].map((row, i) => ({
+        id: `o3-${i}`,
+        startsAt: new Date(NOW.getTime() - (5 - i) * 3_600_000),
+        endsAt: new Date(NOW.getTime() - (4 - i) * 3_600_000),
+        isTentative: false,
+        completionStatus: "UNVERIFIED",
+        ...row,
+      })),
+    });
+    expect(
+      [parked, verifying, delivered].map((o) => slotStatus(o, undefined, NOW)),
+    ).toEqual(["waitingDecision", "inconclusive", "completed"]);
   });
 
   it("an unverified inconclusive or host-absent session is not held; a recorded no-join is", () => {

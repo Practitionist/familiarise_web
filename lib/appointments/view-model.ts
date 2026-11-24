@@ -47,6 +47,8 @@ export interface OccurrenceLike {
   outcome?: string | null;
   /** A10 soft-delete tombstone (#676) — a set value means the row is gone. */
   deletedAt?: Date | string | null;
+  /** Stamped by the reader: the session is parked for ops (`AWAITING_HUMAN`). */
+  parked?: boolean;
   meeting?: {
     id: string;
     endedAt: Date | string | null;
@@ -98,6 +100,8 @@ export interface OccurrenceVM {
    * people out of their own booking mid-hour.
    */
   meetingEndedReason: string | null;
+  /** Parked for ops: the session reads "Waiting on a decision". */
+  parked: boolean;
 }
 
 export interface PersonVM {
@@ -211,6 +215,7 @@ export function toOccurrenceVM(row: OccurrenceLike): OccurrenceVM {
     outcome: row.outcome ?? null,
     meetingEndedAt: toDateOrNull(row.meeting?.endedAt),
     meetingEndedReason: row.meeting?.endedReason ?? null,
+    parked: row.parked === true,
   };
 }
 

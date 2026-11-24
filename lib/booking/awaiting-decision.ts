@@ -33,3 +33,32 @@ export async function parkedSessionCounts(
   });
   return new Map(rows.map((row) => [row.appointmentId, row._count._all]));
 }
+
+/**
+ * The ids of the sessions parked for ops among these appointments' sessions, in
+ * one statement; callers pass only appointments whose parked count is above zero.
+ */
+export async function parkedSessionIds(
+  db: Pick<PrismaLike, "appointmentOccurrence">,
+  appointmentIds: readonly string[],
+): Promise<Set<string>> {
+  if (appointmentIds.length === 0) return new Set();
+  const rows = await db.appointmentOccurrence.findMany({
+    where: {
+      AND: [
+        { appointmentId: { in: [...new Set(appointmentIds)] } },
+        AWAITING_HUMAN,
+      ],
+    },
+    select: { id: true },
+  });
+  return new Set(rows.map((row) => row.id));
+}
+
+/** The session row, marked `parked` when its id is one of `ids`. */
+export function markParked<T extends { id: string }>(
+  row: T,
+  ids: ReadonlySet<string>,
+): T & { parked?: boolean } {
+  return ids.has(row.id) ? { ...row, parked: true } : row;
+}

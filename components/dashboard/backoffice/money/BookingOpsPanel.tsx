@@ -103,7 +103,10 @@ export function BookingOpsPanel({
                   value={s.endsAt}
                   kind={operatorEndKind(s.startsAt, s.endsAt)}
                 />{" "}
-                · {slotStatusBadge(s.completionStatus).label}
+                ·{" "}
+                {s.parked
+                  ? "Waiting on a decision"
+                  : slotStatusBadge(s.completionStatus).label}
                 {s.outcome ? ` · ${SESSION_OUTCOME_LABEL[s.outcome]}` : ""}
               </span>
               {DECIDED.has(s.completionStatus) &&

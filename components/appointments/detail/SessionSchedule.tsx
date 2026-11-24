@@ -58,6 +58,7 @@ const STATUS_TEXT: Partial<Record<RowStatus, string>> = {
   cutShort: "Cut short",
   noShow: "No-show",
   inconclusive: "Verifying",
+  waitingDecision: "Waiting on a decision",
   noRecord: "No record",
   joinable: "Live now",
 };
@@ -67,6 +68,7 @@ const STATUS_DOT: Partial<Record<RowStatus, string>> = {
   cutShort: "bg-amber-500",
   noShow: "bg-amber-500",
   inconclusive: "bg-sky-500",
+  waitingDecision: "bg-amber-500",
   noRecord: "bg-amber-500",
   joinable: "bg-emerald-500",
 };
@@ -75,6 +77,7 @@ const STATUS_TITLE: Partial<Record<RowStatus, string>> = {
   cutShort: "This session ended earlier than the scheduled duration.",
   noShow: "One or more participants did not attend this session.",
   inconclusive: "Session attendance is being verified.",
+  waitingDecision: "Our team is checking what happened in this session.",
   noRecord:
     "No meeting record found for this session. It may have been missed or held outside the platform.",
   joinable:
@@ -86,6 +89,7 @@ const PAST: ReadonlySet<RowStatus> = new Set([
   "cutShort",
   "noShow",
   "inconclusive",
+  "waitingDecision",
   "noRecord",
 ]);
 

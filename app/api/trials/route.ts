@@ -57,7 +57,9 @@ import {
   unlockRequestCap,
 } from "@/utils/appointmentlock";
 import {
+  markParked,
   PARKED_SESSIONS_COUNT,
+  parkedSessionIds,
   withParkedSessions,
 } from "@/lib/booking/awaiting-decision";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
@@ -278,11 +280,28 @@ export async function GET(request: NextRequest) {
     ]);
 
     // STAFF read the learner of a trial they are not a party to in the public shape.
+    const parkedIds = await parkedSessionIds(
+      prisma,
+      trials.flatMap((t) =>
+        t.appointment && t.appointment._count.occurrences > 0
+          ? [t.appointment.id]
+          : [],
+      ),
+    );
     const data = trials
-      .map((trial) => ({
-        ...trial,
-        appointment: trial.appointment && withParkedSessions(trial.appointment),
-      }))
+      .map((trial) => {
+        if (!trial.appointment) return { ...trial, appointment: null };
+        const appointment = withParkedSessions(trial.appointment);
+        return {
+          ...trial,
+          appointment: {
+            ...appointment,
+            occurrences: appointment.occurrences.map((o) =>
+              markParked(o, parkedIds),
+            ),
+          },
+        };
+      })
       .map((trial) =>
         isStaffNonParty(
           session.user.role,

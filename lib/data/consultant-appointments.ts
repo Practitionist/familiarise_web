@@ -32,7 +32,11 @@ import { planCollaboratorScalars } from "@/lib/api/plans/consultant-projection";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
-import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
+import {
+  markParked,
+  PARKED_SESSIONS_COUNT,
+  parkedSessionIds,
+} from "@/lib/booking/awaiting-decision";
 import { exactKeysetBand } from "@/lib/db/exact-keyset";
 import {
   bookingAnomalies,
@@ -616,9 +620,15 @@ export async function readConsultantAppointmentsPage(
 
   // Sort appointments by slot start time
   // Include appointments with 0 slots (push them to the end)
+  // A second read only for rows with a parked session, so each session can say so.
+  const parkedIds = await parkedSessionIds(
+    prisma,
+    appointments.filter((row) => row._count.occurrences > 0).map((r) => r.id),
+  );
   const stamped = appointments.map((row) => ({
     ...row,
     parkedSessions: row._count.occurrences,
+    occurrences: row.occurrences.map((o) => markParked(o, parkedIds)),
   }));
   const sorted = stamped.sort((a, b) => {
     const aTime = a.occurrences?.[0]?.startsAt;
