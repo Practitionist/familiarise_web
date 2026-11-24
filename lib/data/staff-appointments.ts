@@ -29,6 +29,7 @@ import type {
   STAFF_ISSUE_TYPES,
 } from "@/lib/data/staff-appointments-schema";
 import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
+import { AWAITING_HUMAN } from "@/lib/booking/misses";
 
 type StaffIssueType = (typeof STAFF_ISSUE_TYPES)[number];
 
@@ -104,13 +105,24 @@ export function buildStatusWhere(
     };
   }
   if (status === "completed") {
+    // A stored COMPLETED booking with a parked session reads "Waiting on a decision"; a converted trial is done.
     return {
       OR: [
-        { consultation: { status: "COMPLETED" } },
-        { subscription: { status: "COMPLETED" } },
-        { webinar: { status: "COMPLETED" } },
-        { class: { status: "COMPLETED" } },
-        { trial: { status: { in: ["COMPLETED", "CONVERTED"] } } },
+        { trial: { status: "CONVERTED" } },
+        {
+          AND: [
+            { occurrences: { none: AWAITING_HUMAN } },
+            {
+              OR: [
+                { consultation: { status: "COMPLETED" } },
+                { subscription: { status: "COMPLETED" } },
+                { webinar: { status: "COMPLETED" } },
+                { class: { status: "COMPLETED" } },
+                { trial: { status: "COMPLETED" } },
+              ],
+            },
+          ],
+        },
       ],
     };
   }

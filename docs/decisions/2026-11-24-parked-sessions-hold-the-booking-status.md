@@ -25,7 +25,11 @@ The shared database held 7 bookings stored `COMPLETED` with 16 parked sessions, 
    A host's own webinar or class shows the word too, instead of its event word. The learner and expert read "Our team is checking what happened in a session. This booking settles once they decide."; staff read that the session is in Sessions that need a decision. The booking page offers no "Rate this session" while it waits.
 
 3. **Every completing write repeats the guard.** The five CASes carry `appointment: { occurrences: { none: AWAITING_HUMAN } }` in their WHERE (`NO_PARKED_SESSION`), so a session parked after the cohort read makes the write match zero rows and the booking stays open for the next run. `transitionWebinarEvent` and `transitionClassEvent` take `whereAnd` for this, as `transitionTrial` already did.
-4. **No reseed.** Every list and detail view renders the seed's parked bookings with the eighth word.
+
+   The guard alone does not cover a park that commits while the CAS statement runs: under READ COMMITTED the statement's subquery reads the snapshot taken when it started. So each completion runs under the appointment lock (`appointment-lock:<appointmentId>`) the lifecycle doors take, which the ops outcome door (`overturnSessionOutcome`) holds across its transaction. A park through that door either commits before the CAS starts, so the guard sees it, or waits for the completion to commit. The lock waits at most about 0.9 s (`SWEEP_LOCK_RETRY_CONFIG`); a busy or unreachable lock leaves the booking for the next run. No completion notice is staged unless the CAS moved the row. A Postgres row lock on the sessions was rejected: it would lock sessions before the parent, the opposite of the cancel doors, so a cron and a user request could deadlock. The other writers that park a session, the slot pass and the window-close pass, run inside auto-complete itself, one after the other.
+
+4. **Waiting bookings are not in the staff Completed tab.** `buildStatusWhere("completed")` (`lib/data/staff-appointments.ts`) asks for `occurrences: { none: AWAITING_HUMAN }` on a stored `COMPLETED` row, for the list and its count; a `CONVERTED` trial is completed either way.
+5. **No reseed.** Every list and detail view renders the seed's parked bookings with the eighth word.
 
 ### Worked example
 
@@ -35,7 +39,8 @@ Priya paid ₹1,500.00 (150000 paise) for a consultation on Monday 23 November 2
 
 - `bookingStatus` and `isOccurrenceHeld`, pinned by `__tests__/appointments/booking-status-surfaces.test.ts`.
 - The readers: `lib/data/consultant-appointments.ts`, `lib/data/consultee-events-read.ts`, `app/api/trials/route.ts`, `lib/data/appointment-detail.ts`, `lib/api/scope/list-appointments.ts`, `lib/data/staff-appointments.ts`, `lib/support/case-workspace.ts`; pinned through their real output on Postgres by `__tests__/db/booking/awaiting-decision.db.test.ts`.
-- The five CASes, pinned by the same database suite.
+- The five CASes and the appointment lock around them, pinned by the same database suite: a park through the ops door, uncommitted while auto-complete reads, keeps a consultation and a webinar open and stages no completion notice.
+- The staff Completed tab and its count, pinned by the same database suite.
 
 ## Not decided here
 

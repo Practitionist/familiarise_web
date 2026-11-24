@@ -126,6 +126,13 @@ export const ALLOCATOR_LOCK_RETRY_CONFIG: LockRetryConfig = {
   retryJitter: 150,
 };
 
+/** A sweep's wait for one booking's lock: at most ~0.9 s, then the booking waits for the next run. */
+export const SWEEP_LOCK_RETRY_CONFIG: LockRetryConfig = {
+  ...DEFAULT_RETRY_CONFIG,
+  retryCount: 2,
+  retryJitter: 150,
+};
+
 const DEFAULT_LOCK_TTL = 60000;
 
 /**

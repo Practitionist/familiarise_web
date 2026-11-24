@@ -9,7 +9,13 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import prisma from "../../../lib/prisma";
-import { HOUR_MS, seedConsultee, seedHost, seedOneToOne } from "./harness";
+import {
+  gate,
+  HOUR_MS,
+  seedConsultee,
+  seedHost,
+  seedOneToOne,
+} from "./harness";
 
 jest.mock("../../../lib/novu", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
@@ -36,6 +42,36 @@ const mockPark: { entityId: string | null; occurrenceId: string | null } = {
   entityId: null,
   occurrenceId: null,
 };
+// The completion notices stage for real; the spy records which booking asked.
+jest.mock("../../../lib/email/senders/booking", () => {
+  const actual = jest.requireActual("../../../lib/email/senders/booking");
+  return {
+    ...actual,
+    stageAppointmentCompletedEmails: jest.fn(
+      actual.stageAppointmentCompletedEmails,
+    ),
+  };
+});
+
+/** Pauses the next ops session write inside its transaction, once. */
+const mockOpsPause: { pause: (() => Promise<void>) | null } = { pause: null };
+/** Called with each appointment a writer asks the appointment lock for. */
+const mockLockAsked: { seen: ((appointmentId: string) => void) | null } = {
+  seen: null,
+};
+jest.mock("../../../utils/appointmentlock", () => {
+  const actual = jest.requireActual("../../../utils/appointmentlock");
+  return {
+    ...actual,
+    withAppointmentLock: (
+      appointmentId: string,
+      ...rest: [unknown, unknown]
+    ) => {
+      mockLockAsked.seen?.(appointmentId);
+      return actual.withAppointmentLock(appointmentId, ...rest);
+    },
+  };
+});
 jest.mock("../../../lib/booking/transitions", () => {
   const actual = jest.requireActual("../../../lib/booking/transitions");
   type Helper = (
@@ -53,8 +89,17 @@ jest.mock("../../../lib/booking/transitions", () => {
       }
       return helper(tx, args);
     };
+  // The ops door's session write, paused before its commit while it holds the appointment lock.
+  const opsWrite = actual.transitionOccurrenceCompletion as Helper;
   return {
     ...actual,
+    transitionOccurrenceCompletion: (async (tx, args) => {
+      const result = await opsWrite(tx, args);
+      const pause = mockOpsPause.pause;
+      mockOpsPause.pause = null;
+      if (pause) await pause();
+      return result;
+    }) satisfies Helper,
     transitionWebinarEvent: parkedFirst(actual.transitionWebinarEvent),
     transitionClassEvent: parkedFirst(actual.transitionClassEvent),
     transitionConsultationRequest: parkedFirst(
@@ -68,6 +113,7 @@ jest.mock("../../../lib/booking/transitions", () => {
 });
 
 import { autoCompleteAppointments } from "../../../scripts/appointments/auto-complete-appointments";
+import { overturnSessionOutcome } from "../../../lib/backoffice/session-outcomes";
 import { readConsulteeEvents } from "../../../lib/data/consultee-events-read";
 import { readConsultantAppointmentsPage } from "../../../lib/data/consultant-appointments";
 import {
@@ -293,6 +339,64 @@ const KINDS = Object.keys(SEEDS);
 afterEach(() => {
   mockPark.entityId = null;
   mockPark.occurrenceId = null;
+  mockOpsPause.pause = null;
+  mockLockAsked.seen = null;
+});
+
+const completionNoticesFor = (appointmentId: string) =>
+  (
+    jest.requireMock("../../../lib/email/senders/booking") as {
+      stageAppointmentCompletedEmails: jest.Mock;
+    }
+  ).stageAppointmentCompletedEmails.mock.calls.filter((call) =>
+    call.some(
+      (arg) =>
+        typeof arg === "object" &&
+        arg !== null &&
+        (arg as { appointmentId?: string }).appointmentId === appointmentId,
+    ),
+  ).length;
+
+describe("a park through the ops door, uncommitted while auto-complete runs, keeps the booking open", () => {
+  it.each(["consultation", "webinar"])(
+    "%s: auto-complete waits for the door's lock, then its CAS sees the park; nothing is sent",
+    async (kind) => {
+      const booking = await SEEDS[kind]();
+      const { appointmentId } =
+        await prisma.appointmentOccurrence.findUniqueOrThrow({
+          where: { id: booking.occurrenceId },
+          select: { appointmentId: true },
+        });
+      const ops = await seedHost();
+      // The door writes the park, then holds its transaction and the lock open.
+      const paused = gate();
+      mockOpsPause.pause = paused.park;
+      const door = overturnSessionOutcome({
+        occurrenceId: booking.occurrenceId,
+        outcome: "INCONCLUSIVE",
+        actorUserId: ops.userId,
+      });
+      await paused.arrived;
+      // Auto-complete reads the booking as delivered: the park is not committed yet.
+      const asked = new Promise<void>((resolve) => {
+        mockLockAsked.seen = (id) => {
+          if (id === appointmentId) resolve();
+        };
+      });
+      const sweep = autoCompleteAppointments({ startedAt: Date.now() });
+      await Promise.race([asked, sweep]);
+      paused.open();
+      await Promise.all([door, sweep]);
+
+      expect({
+        status: await booking.status(),
+        notices: completionNoticesFor(appointmentId),
+      }).toEqual({
+        status: expect.not.stringMatching(/^COMPLETED$/),
+        notices: 0,
+      });
+    },
+  );
 });
 
 describe("auto-complete's final CAS refuses a booking with a parked session", () => {
@@ -445,3 +549,37 @@ const EVERYWHERE_WAITING = {
   caseDrawer: word,
   nextAction: "NONE",
 };
+
+describe("the staff list's Completed tab leaves out a booking waiting on a decision", () => {
+  const staffView = async (status: string | null) => {
+    const payload = await getStaffAppointments({
+      scope: { kind: "all" },
+      status,
+      limit: 100,
+    });
+    return {
+      ids: payload.appointments.map((a) => a.id),
+      counts: payload.counts,
+    };
+  };
+
+  it("lists it under All, not under Completed, and counts it only once it is decided", async () => {
+    const before = await staffView(null);
+    const b = await parkedConsultation("COMPLETED", "NOBODY_JOINED", true);
+    const all = await staffView(null);
+    const completed = await staffView("completed");
+    expect(all.ids).toContain(b.appointmentId);
+    expect(all.counts.all).toBe(before.counts.all + 1);
+    expect(completed.ids).not.toContain(b.appointmentId);
+    expect(completed.counts.completed).toBe(before.counts.completed);
+
+    // Ops decide the session: the booking is Completed and counted.
+    await prisma.appointmentOccurrence.updateMany({
+      where: { appointmentId: b.appointmentId },
+      data: { completionStatus: "COMPLETED", outcome: "HELD" },
+    });
+    const decided = await staffView("completed");
+    expect(decided.ids).toContain(b.appointmentId);
+    expect(decided.counts.completed).toBe(before.counts.completed + 1);
+  });
+});
