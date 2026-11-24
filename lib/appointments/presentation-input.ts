@@ -5,7 +5,7 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import { exitWaitOf } from "@/lib/booking/class-exit-wait";
+import { pendingVoidVerdict } from "@/lib/booking/pending-void-verdict";
 import {
   sessionsTotalOf,
   soldTermsOf,
@@ -306,7 +306,7 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
     N,
     exitRight: ledger.exitRight,
     undelivered: ledger.remaining + ledger.neverScheduled,
-    exitWait: exitWaitOf(normalizeOccurrences(a.occurrences)),
+    exitWait: pendingVoidVerdict(normalizeOccurrences(a.occurrences)),
   };
 }
 

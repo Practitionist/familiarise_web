@@ -14,7 +14,10 @@
  */
 
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
-import { exitWaitMessage, type ExitWait } from "@/lib/booking/class-exit-wait";
+import {
+  pendingVerdictMessage,
+  type PendingVoidVerdict,
+} from "@/lib/booking/pending-void-verdict";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import {
@@ -239,7 +242,7 @@ export interface BookingPresentationInput {
     exitRight: boolean;
     undelivered: number;
     /** A void's verdict still being confirmed: the exit waits for it. */
-    exitWait?: ExitWait | null;
+    exitWait?: PendingVoidVerdict | null;
   } | null;
 }
 
@@ -840,7 +843,12 @@ function deriveNext(
       if (input.series.exitWait) {
         return {
           kind: "EXIT_SERIES_WAITS",
-          label: exitWaitMessage(input.series.exitWait, zone, now),
+          label: pendingVerdictMessage(
+            input.series.exitWait,
+            zone,
+            now,
+            "leave",
+          ),
         };
       }
       return {
