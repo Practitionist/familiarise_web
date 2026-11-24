@@ -266,6 +266,8 @@ export async function resolveEarningsAnchor(
  * live occurrences changed (first allocation, top-up, reschedule). PENDING rows
  * and rows held from PENDING, which stay HELD; a READY or PAID row has already
  * left the hold, and a subscription tranche keeps the date its cycle stamped.
+ * A consultant row's date carries the payee's new-expert days; an
+ * organisation row's never does.
  *
  * The capture instant is the earnings row's own `createdAt` — Payment carries
  * no capture timestamp and its `createdAt` is order creation, which can sit
@@ -304,7 +306,12 @@ export async function recomputeEarningsHold(
   const [pendingConsultant, pendingOrg] = await Promise.all([
     db.consultantEarnings.findMany({
       where: wherePendingHold,
-      select: { id: true, createdAt: true, holdUntil: true },
+      select: {
+        id: true,
+        createdAt: true,
+        holdUntil: true,
+        consultantProfileId: true,
+      },
     }),
     db.organizationEarnings?.findMany({
       where: wherePendingHold,
@@ -314,12 +321,19 @@ export async function recomputeEarningsHold(
   let moved = 0;
   for (const earning of pendingConsultant) {
     if (!earning.holdUntil) continue;
-    const computed = computeHoldUntil({
-      capturedAt: earning.createdAt,
-      lastOccurrenceEndsAt: lastEnd,
-      holdHours,
-    });
-    if (computed.getTime() <= earning.holdUntil.getTime()) continue;
+    // The new-expert days follow the payee, as at mint.
+    const computed = await withNewExpertHold(
+      db,
+      earning.consultantProfileId,
+      computeHoldUntil({
+        capturedAt: earning.createdAt,
+        lastOccurrenceEndsAt: lastEnd,
+        holdHours,
+      }),
+    );
+    if (!computed || computed.getTime() <= earning.holdUntil.getTime()) {
+      continue;
+    }
     const res = await db.consultantEarnings.updateMany({
       where: {
         id: earning.id,

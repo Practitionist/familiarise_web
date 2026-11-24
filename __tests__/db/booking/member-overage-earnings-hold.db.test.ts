@@ -169,11 +169,15 @@ describe("a licence-funded booking past its cap whose member pays the overage", 
       }),
     );
 
-    const holdUntil = computeHoldUntil({
-      capturedAt: earning.createdAt,
-      lastOccurrenceEndsAt: new Date(startsAt.getTime() + HOUR_MS),
-      holdHours: holdHoursFor("CONSULTATION"),
-    });
+    // A freshly seeded expert is new, so the re-anchored date carries the three new-expert days.
+    const holdUntil = new Date(
+      computeHoldUntil({
+        capturedAt: earning.createdAt,
+        lastOccurrenceEndsAt: new Date(startsAt.getTime() + HOUR_MS),
+        holdHours: holdHoursFor("CONSULTATION"),
+      }).getTime() +
+        3 * DAY_MS,
+    );
     expect((await earningsOf(parent.id))[0]).toMatchObject({
       ...overageHeld(parent.id),
       holdUntil,
