@@ -13,6 +13,7 @@ import {
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { liveOccurrencesOf } from "@/lib/appointments/occurrences";
 import { seatOrganizationId } from "@/lib/booking/participants";
+import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import type { SupportContext, SupportStage } from "./types";
 
 /**
@@ -29,6 +30,14 @@ import type { SupportContext, SupportStage } from "./types";
  * CANCEL_REFUND) or booking-level (PAYMENT_STATUS, DOCUMENTS, the org rails),
  * and for those the current-or-next session is the correct subject.
  */
+const USER_ID = { select: { userId: true } } as const;
+
+/** A soft-deleted profile keeps its ACCEPTED row, so the profile is filtered too. */
+const ACCEPTED_HOSTS = {
+  where: { status: "ACCEPTED", consultantProfile: { deletedAt: null } },
+  select: { consultantProfile: USER_ID },
+} as const;
+
 const RETROSPECTIVE_CATEGORIES = new Set([
   "NO_SHOW",
   "RECORDING_ACCESS",
@@ -49,6 +58,8 @@ export async function buildSupportContext(
    * callers keep the current-or-next behaviour.
    */
   category?: string | null,
+  /** The session the page or turn names; a retrospective intent is about it when it has ended. */
+  occurrenceId?: string,
 ): Promise<SupportContext | null> {
   const appt = await prisma.appointment.findUnique({
     where: { id: appointmentId },
@@ -91,15 +102,21 @@ export async function buildSupportContext(
       consultation: {
         select: {
           consultationPlan: {
-            select: { consultantProfileId: true, title: true },
+            select: { title: true, consultantProfile: USER_ID },
           },
         },
       },
       subscription: {
         select: {
           subscriptionPlan: {
-            select: { consultantProfileId: true, title: true },
+            select: { title: true, consultantProfile: USER_ID },
           },
+        },
+      },
+      // A paid trial's expert is its plan's author, as `sessionHostUserIds` reads it.
+      trial: {
+        select: {
+          subscriptionPlan: { select: { consultantProfile: USER_ID } },
         },
       },
       // #1580 C-P1-3 — an ACCEPTED collaborator is on the provider side too,
@@ -108,16 +125,9 @@ export async function buildSupportContext(
         select: {
           webinarPlan: {
             select: {
-              consultantProfileId: true,
               title: true,
-              collaborators: {
-                // A soft-deleted profile keeps its ACCEPTED row (#1593).
-                where: {
-                  status: "ACCEPTED",
-                  consultantProfile: { deletedAt: null },
-                },
-                select: { consultantProfileId: true },
-              },
+              consultantProfile: USER_ID,
+              collaborators: ACCEPTED_HOSTS,
             },
           },
         },
@@ -126,16 +136,9 @@ export async function buildSupportContext(
         select: {
           classPlan: {
             select: {
-              consultantProfileId: true,
               title: true,
-              collaborators: {
-                // A soft-deleted profile keeps its ACCEPTED row (#1593).
-                where: {
-                  status: "ACCEPTED",
-                  consultantProfile: { deletedAt: null },
-                },
-                select: { consultantProfileId: true },
-              },
+              consultantProfile: USER_ID,
+              collaborators: ACCEPTED_HOSTS,
             },
           },
         },
@@ -144,29 +147,8 @@ export async function buildSupportContext(
   });
   if (!appt) return null;
 
-  const me = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { consultantProfileId: true },
-  });
-
-  const planConsultantId =
-    appt.consultation?.consultationPlan?.consultantProfileId ??
-    appt.subscription?.subscriptionPlan?.consultantProfileId ??
-    appt.webinar?.webinarPlan?.consultantProfileId ??
-    appt.class?.classPlan?.consultantProfileId ??
-    null;
-  const providerProfileIds = [
-    planConsultantId,
-    ...(appt.webinar?.webinarPlan?.collaborators ?? []).map(
-      (c) => c.consultantProfileId,
-    ),
-    ...(appt.class?.classPlan?.collaborators ?? []).map(
-      (c) => c.consultantProfileId,
-    ),
-  ];
-  const isProvider =
-    !!me?.consultantProfileId &&
-    providerProfileIds.includes(me.consultantProfileId);
+  // The host side is the one `sessionHostUserIds` judges reports by, so the flow and the verdict agree.
+  const isProvider = sessionHostUserIds(appt).includes(userId);
 
   const nowMs = Date.now();
   const runs = liveOccurrencesOf(appt.occurrences).map((row) => ({
@@ -179,13 +161,26 @@ export async function buildSupportContext(
   /** The most recent call that has finished. */
   const lastEndedRun =
     [...runs].reverse().find((run) => run.endsAt.getTime() <= nowMs) ?? null;
+  /** Every call that has finished, newest first: the sessions a report can be about. */
+  const endedRuns = runs
+    .filter((run) => run.endsAt.getTime() <= nowMs)
+    .reverse();
+  const namedEnded = occurrenceId
+    ? (endedRuns.find((run) => run.id === occurrenceId) ?? null)
+    : null;
+  // A named session is reportable only once it has ended; otherwise every ended one is.
+  const reportSessions = occurrenceId
+    ? namedEnded
+      ? [namedEnded]
+      : []
+    : endedRuns;
 
   // A retrospective intent is ABOUT the finished call, so that is the session
   // the whole context describes. Everything else keeps the current-or-next
   // session, falling back to the last finished one so a delivered booking
   // still has a real clock for the recording window.
   const subjectRun = RETROSPECTIVE_CATEGORIES.has(category ?? "")
-    ? (lastEndedRun ?? activeRun)
+    ? (namedEnded ?? lastEndedRun ?? activeRun)
     : (activeRun ?? lastEndedRun);
 
   const startsAt = subjectRun?.startsAt ?? null;
@@ -265,7 +260,9 @@ export async function buildSupportContext(
     stage,
     startsAt,
     endsAt,
-    lastEndedOccurrenceId: lastEndedRun?.id ?? null,
+    reportSessions,
+    reportOccurrenceId:
+      reportSessions.length === 1 ? reportSessions[0].id : null,
     refundPctIfCancelledNow,
     paymentId: appt.payment[0]?.id ?? null,
     // moneyResultExtensions has already converted the BigInt column → number paise.

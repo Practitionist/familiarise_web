@@ -70,10 +70,18 @@ export interface ThreadBooking {
   organizationId: string | null;
 }
 
+/** An ended session a report can be about. */
+export interface ReportSession {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+}
+
 export interface ThreadData {
   thread: SupportThread | null;
   intents: { category: string; title: string; escalates?: boolean }[];
   booking: ThreadBooking | null;
+  reportSessions?: ReportSession[];
 }
 
 export type SupportAction =
@@ -187,6 +195,7 @@ export async function fetchSupportThread(
     thread: json.data,
     intents: json.intents ?? [],
     booking: json.booking ?? null,
+    reportSessions: json.reportSessions ?? [],
   };
 }
 
@@ -299,7 +308,7 @@ export function useSupportThread(
   const { toast } = useToast();
   const clock = useZoneClock();
   const qc = useQueryClient();
-  const queryKey = supportKeys.thread(appointmentId);
+  const queryKey = supportKeys.thread(appointmentId, occurrenceId);
 
   // Undo the optimistic bubble. A turn sent before the first GET resolves has
   // NO snapshot to restore, so the pending bubble is filtered out instead.
@@ -575,8 +584,9 @@ export function useSupportThread(
         vars.binding ??
         bindTurn(
           vars,
-          qc.getQueryData<ThreadData>(supportKeys.thread(appointmentId))
-            ?.thread,
+          qc.getQueryData<ThreadData>(
+            supportKeys.thread(appointmentId, occurrenceId),
+          )?.thread,
           occurrenceId,
         );
       mutateTurn(
@@ -623,6 +633,10 @@ export function useSupportThread(
   return {
     query,
     data,
+    /** The session the page was opened for, when it names one. */
+    occurrenceId,
+    /** The ended sessions a report can be about, newest first. */
+    reportSessions: data?.reportSessions ?? [],
     thread,
     messages,
     history,

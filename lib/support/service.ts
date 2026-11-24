@@ -157,8 +157,19 @@ export async function runSupportTurn(
     ? appt.organizationId
     : await seatOrganizationId(prisma, appt, userId);
 
+  const ownershipScope = input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL";
+  // The intake key is scoped to this booking and scope, so one token cannot replay another booking's case.
   const intakeId = input.clientTurnId
-    ? `appointment-${createHash("sha256").update(input.clientTurnId).digest("hex")}`
+    ? `appointment-${createHash("sha256")
+        .update(
+          [
+            appointmentId,
+            ownershipScope,
+            threadOrgId ?? "",
+            input.clientTurnId,
+          ].join("|"),
+        )
+        .digest("hex")}`
     : `appointment-${crypto.randomUUID()}`;
   const intake = {
     clientIntakeId: intakeId,
@@ -166,9 +177,7 @@ export async function runSupportTurn(
     submitterUserId: userId,
     appointmentId,
     organizationId: threadOrgId,
-    ownershipScope: input.isOrgParty
-      ? ("ORG_OPERATIONS" as const)
-      : ("PERSONAL" as const),
+    ownershipScope,
     title: "Appointment support",
     description: "Appointment help requested",
     initialSender: "SYSTEM" as const,
@@ -177,7 +186,13 @@ export async function runSupportTurn(
   // A no-show report is its session's own case, never another open thread on the booking.
   const noShow = input.category === "NO_SHOW" && !input.isOrgParty;
   const noShowCtx = noShow
-    ? await buildSupportContext("pending", appointmentId, userId, "NO_SHOW")
+    ? await buildSupportContext(
+        "pending",
+        appointmentId,
+        userId,
+        "NO_SHOW",
+        input.appointmentOccurrenceId,
+      )
     : null;
   if (noShow && !noShowCtx) return null;
   const thread = await resolveThread(intake, input, noShowCtx);
@@ -543,27 +558,39 @@ async function resolveThread(
   noShowCtx: SupportContext | null,
 ): Promise<SupportCase> {
   if (noShowCtx) {
-    // A retry answers on the case its first attempt reused, even if a newer session has ended since.
-    const retried = input.clientTurnId
-      ? await prisma.supportCase.findFirst({
-          where: {
-            appointmentId: intake.appointmentId,
-            requesterUserId: intake.requesterUserId,
-            submitterUserId: intake.submitterUserId,
-            organizationId: intake.organizationId,
-            ownershipScope: intake.ownershipScope,
-            closedAt: null,
-            deletedAt: null,
-            messages: { some: { clientTurnId: input.clientTurnId } },
-          },
-        })
+    // A retry finds its committed turn first, open or closed, before any session is chosen.
+    const replayed = input.clientTurnId
+      ? await caseHoldingTurn(intake, input.clientTurnId)
       : null;
-    if (retried) return retried;
+    if (replayed) {
+      if (
+        input.appointmentOccurrenceId &&
+        replayed.appointmentOccurrenceId !== input.appointmentOccurrenceId
+      )
+        throw new CaseConflictError({
+          code: "IDEMPOTENCY_KEY_REUSED",
+          error:
+            "This request was already sent for another session. Refresh and try again.",
+        });
+      return replayed;
+    }
+    // A report is about one ended session: the one named, or the only one; otherwise the person picks.
+    const occurrenceId = noShowCtx.reportOccurrenceId;
+    if (!occurrenceId)
+      throw new CaseConflictError(
+        {
+          code: "SESSION_REQUIRED",
+          error:
+            noShowCtx.reportSessions.length > 1
+              ? "Choose which session this is about."
+              : "There is no finished session to report on yet.",
+        },
+        400,
+      );
     const { supportCase } = await createOrReuseSupportCase({
       ...intake,
       category: "NO_SHOW",
-      appointmentOccurrenceId:
-        input.appointmentOccurrenceId ?? noShowCtx.lastEndedOccurrenceId,
+      appointmentOccurrenceId: occurrenceId,
     });
     return supportCase;
   }
@@ -571,6 +598,24 @@ async function resolveThread(
   if (!input.category && input.appointmentOccurrenceId)
     return openSessionThread(intake, input.appointmentOccurrenceId);
   return openBookingThread(intake, input.category);
+}
+
+/** The caller's case in this booking and scope that already holds this turn, whatever its status. */
+async function caseHoldingTurn(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  clientTurnId: string,
+): Promise<SupportCase | null> {
+  return prisma.supportCase.findFirst({
+    where: {
+      appointmentId: intake.appointmentId,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
+      deletedAt: null,
+      messages: { some: { clientTurnId } },
+    },
+  });
 }
 
 /** The case a follow-up names, only when it is the caller's own open case in this scope, booking and session. */
@@ -668,8 +713,8 @@ async function openBookingThread(
 }
 
 /**
- * A NO_SHOW terminal's reason and when it was answered, by CAS: it fills an empty reason or replaces one that counts
- * for no verdict, so a later "I was there" is not lost behind a neutral first answer; a counted reason keeps both.
+ * A NO_SHOW terminal's reason and when it was answered, by CAS: only on a case linked to a session that has ended.
+ * It fills an empty reason or replaces one that counts for no verdict; a counted reason keeps both.
  */
 async function recordFlowReasonTx(
   tx: Tx,
@@ -679,15 +724,17 @@ async function recordFlowReasonTx(
 ): Promise<void> {
   const parsed = SupportFlowReasonEnum.safeParse(reason);
   if (category !== "NO_SHOW" || !parsed.success) return;
+  const now = new Date();
   await tx.supportCase.updateMany({
     where: {
       id: caseId,
+      occurrence: { is: { deletedAt: null, endsAt: { lte: now } } },
       OR: [
         { flowReason: null },
         { flowReason: { notIn: CLASSIFIED_REPORT_REASONS } },
       ],
     },
-    data: { flowReason: parsed.data, flowReasonAt: new Date() },
+    data: { flowReason: parsed.data, flowReasonAt: now },
   });
 }
 

@@ -144,7 +144,7 @@ describe("a no-show report on a past session", () => {
 });
 
 describe("a retried no-show intent", () => {
-  it("answers on the case its first attempt reused, after a newer session ended", async () => {
+  it("replays on the case its first attempt reused after staff closed it and a newer session ended", async () => {
     const host = await seedHost();
     const learner = await seedConsultee();
     const endsAt = new Date(Date.now() - 4 * HOUR_MS);
@@ -178,6 +178,16 @@ describe("a retried no-show intent", () => {
     );
     expect(first?.threadId).toBe(reused.id);
 
+    // The response was lost; staff close the case before the client retries.
+    const staff = await seedUser("STAFF");
+    const closed = await patchSupportCaseLifecycle({
+      caseId: reused.id,
+      actorId: staff.userId,
+      expectedUpdatedAt: await caseVersion(reused.id),
+      status: "CLOSED",
+    });
+    expect(closed.ok).toBe(true);
+
     const newer = await prisma.appointmentOccurrence.create({
       data: {
         appointmentId: booking.appointmentId,
@@ -193,7 +203,7 @@ describe("a retried no-show intent", () => {
       learner.userId,
       turn,
     );
-    expect(retry?.threadId).toBe(reused.id);
+    expect(retry).toMatchObject({ threadId: reused.id, status: "CLOSED" });
     expect(
       await prisma.supportCase.count({
         where: { appointmentOccurrenceId: newer.id },
@@ -202,6 +212,59 @@ describe("a retried no-show intent", () => {
     expect(
       await prisma.supportCaseMessage.count({
         where: { caseId: reused.id, clientTurnId: turn.clientTurnId },
+      }),
+    ).toBe(1);
+  });
+});
+
+describe("one intake token on two bookings", () => {
+  it("files the second booking's report on that booking", async () => {
+    const learner = await seedConsultee();
+    const endsAt = new Date(Date.now() - 3 * HOUR_MS);
+    const window = { startsAt: new Date(endsAt.getTime() - HOUR_MS), endsAt };
+    const shape = {
+      status: "COMPLETED" as const,
+      isTentative: false,
+      completionStatus: "COMPLETED" as const,
+    };
+    const first = await seedOneToOne(
+      "consultation",
+      await seedHost(),
+      learner,
+      window,
+      shape,
+    );
+    const second = await seedOneToOne(
+      "consultation",
+      await seedHost(),
+      learner,
+      window,
+      shape,
+    );
+    const token = randomUUID();
+
+    const onFirst = await runSupportTurn(first.appointmentId, learner.userId, {
+      category: "NO_SHOW",
+      clientTurnId: token,
+    });
+    const onSecond = await runSupportTurn(
+      second.appointmentId,
+      learner.userId,
+      {
+        category: "NO_SHOW",
+        clientTurnId: token,
+        appointmentOccurrenceId: second.occurrenceId,
+      },
+    );
+    expect(onSecond?.threadId).not.toBe(onFirst?.threadId);
+    expect(onSecond?.appointmentOccurrenceId).toBe(second.occurrenceId);
+    expect(
+      await prisma.supportCase.count({
+        where: {
+          appointmentId: second.appointmentId,
+          appointmentOccurrenceId: second.occurrenceId,
+          category: "NO_SHOW",
+        },
       }),
     ).toBe(1);
   });

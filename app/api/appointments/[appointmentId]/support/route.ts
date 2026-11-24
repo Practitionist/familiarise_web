@@ -91,13 +91,19 @@ export async function GET(
       startsAt: Date | null;
       organizationId: string | null;
     } | null = null;
+    // The ended sessions a report can be about; the page asks which one when there are several.
+    let reportSessions: { id: string; startsAt: Date; endsAt: Date }[] = [];
     try {
+      // Upcoming actions keep the next session; the report follows the session the page names.
       const ctx = await buildSupportContext(
         thread?.id ?? "unstarted",
         appointmentId,
         auth.userId,
+        undefined,
+        view.data.occurrence,
       );
       if (ctx) {
+        reportSessions = ctx.reportSessions;
         booking = {
           title: ctx.planTitle,
           kind: ctx.appointmentType,
@@ -157,6 +163,7 @@ export async function GET(
         : null,
       intents,
       booking,
+      reportSessions,
     });
   } catch (cause) {
     return supportError({

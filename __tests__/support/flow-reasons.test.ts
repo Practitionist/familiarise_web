@@ -33,7 +33,14 @@ function noShowReasons(isProvider: boolean): string[] {
     stage: "COMPLETED",
     startsAt: null,
     endsAt: null,
-    lastEndedOccurrenceId: null,
+    reportSessions: [
+      {
+        id: "occ-ended",
+        startsAt: new Date("2026-11-23T10:00:00Z"),
+        endsAt: new Date("2026-11-23T11:00:00Z"),
+      },
+    ],
+    reportOccurrenceId: "occ-ended",
     refundPctIfCancelledNow: null,
     paymentId: null,
     paymentAmountPaise: null,

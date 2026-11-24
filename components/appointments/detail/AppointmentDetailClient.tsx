@@ -109,6 +109,7 @@ import {
 } from "@/lib/appointments/reschedule-answer";
 import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
+import { sessionReportHref } from "@/lib/support/report-link";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
@@ -414,6 +415,30 @@ export function AppointmentDetailClient({
   const supportHref = `${supportRequestsBase}/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
   const openHelp = (intent?: string) =>
     router.push(intent ? `${supportHref}?intent=${intent}` : supportHref);
+  // Each ended session has its own report, opened on that session whatever else is open on the booking.
+  const reportRowAction = (session: {
+    occurrenceId: string;
+    appointmentId: string | null;
+    endsAt: Date | null;
+    isTentative: boolean;
+    completionStatus: string | null;
+  }): SessionRowAction[] => {
+    const href = sessionReportHref(
+      supportRequestsBase,
+      appointmentId,
+      session,
+      new Date(),
+    );
+    return href
+      ? [
+          {
+            key: `report-${session.occurrenceId}`,
+            label: "Report a problem with this session",
+            onSelect: () => router.push(href),
+          },
+        ]
+      : [];
+  };
 
   if (isLoading && !detail) {
     return <AppointmentDetailSkeleton />;
@@ -928,6 +953,7 @@ export function AppointmentDetailClient({
               ? classActions.rowActions(session.occurrenceId)
               : []),
             ...returnActions.rowActions(session.occurrenceId),
+            ...reportRowAction(session),
           ]}
           sessionsPerWeek={sessionsPerWeek}
           footnote={returnActions.footnote}

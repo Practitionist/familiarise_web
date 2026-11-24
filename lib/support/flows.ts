@@ -20,13 +20,15 @@ import type { FlowDefinition, SupportContext } from "./types";
 
 const notUpcoming = (ctx: SupportContext) => ctx.stage !== "UPCOMING";
 const notCompleted = (ctx: SupportContext) => ctx.stage !== "COMPLETED";
+/** A no-show report is about one ended session, so none is offered before a session ends. */
+const hasEndedSession = (ctx: SupportContext) => ctx.reportSessions.length > 0;
 
 // --- Provider/expert no-show (attendee side) — the #1 marketplace complaint ---
 const noShowFlowAttendee: FlowDefinition = {
   category: "NO_SHOW",
   title: "The expert didn't join",
   entryNodeId: "start",
-  available: (ctx) => notUpcoming(ctx) && !ctx.isProvider,
+  available: (ctx) => hasEndedSession(ctx) && !ctx.isProvider,
   nodes: {
     start: {
       id: "start",
@@ -74,7 +76,7 @@ const noShowFlowProvider: FlowDefinition = {
   category: "NO_SHOW",
   title: "The participant didn't join",
   entryNodeId: "start",
-  available: (ctx) => notUpcoming(ctx) && ctx.isProvider,
+  available: (ctx) => hasEndedSession(ctx) && ctx.isProvider,
   nodes: {
     start: {
       id: "start",

@@ -1,6 +1,6 @@
 /**
  * Which of a booking's support cases its request page shows. A new intent other than a no-show
- * lands on the booking-wide thread, so that is the default; a session's case shows when the page names it.
+ * lands on the booking-wide thread, so that is the default; a session's page shows only that session's report.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -45,7 +45,10 @@ export interface ShownThreadView {
   occurrenceId?: string;
 }
 
-/** The caller's own case the page names, else the named session's newest, else the newest booking-wide one, else the newest session case. */
+/**
+ * A session's page shows that session's report (the case it names there, else its newest no-show case), never
+ * another thread. Otherwise: the case named, else the newest booking-wide thread, else the newest session case.
+ */
 export async function readShownThread(
   appointmentId: string,
   userId: string,
@@ -63,11 +66,15 @@ export async function readShownThread(
       orderBy: { createdAt: "desc" },
       select: SHOWN_THREAD_SELECT,
     });
+  if (view.occurrenceId) {
+    const session = { appointmentOccurrenceId: view.occurrenceId };
+    return (
+      (view.caseId ? await newest({ ...session, id: view.caseId }) : null) ??
+      (await newest({ ...session, category: "NO_SHOW" }))
+    );
+  }
   return (
     (view.caseId ? await newest({ id: view.caseId }) : null) ??
-    (view.occurrenceId
-      ? await newest({ appointmentOccurrenceId: view.occurrenceId })
-      : null) ??
     (await newest({ appointmentOccurrenceId: null })) ??
     (await newest({}))
   );

@@ -95,6 +95,12 @@ function openCase(overrides: Row): Row {
     createdAt: nextAt(),
     updatedAt: nextAt(),
     ...overrides,
+    // The session a linked case is about, as the reason write's guard reads it.
+    occurrence:
+      overrides.occurrence ??
+      (overrides.appointmentOccurrenceId
+        ? { endsAt: ENDED, deletedAt: null }
+        : null),
   };
 }
 
@@ -126,6 +132,27 @@ function emulateIntake() {
   });
 }
 
+const ended = (id: string) => ({
+  id,
+  startsAt: new Date(ENDED.getTime() - 3_600_000),
+  endsAt: ENDED,
+});
+
+/** The context the real reader builds: a named ended session becomes the report's session. */
+function useContextOf(isProvider: boolean) {
+  jest
+    .mocked(buildSupportContext)
+    .mockImplementation(async (_t, _a, _u, _c, occurrenceId) => ({
+      ...context(isProvider),
+      ...(occurrenceId
+        ? {
+            reportSessions: [ended(occurrenceId)],
+            reportOccurrenceId: occurrenceId,
+          }
+        : {}),
+    }));
+}
+
 function context(isProvider: boolean): SupportContext {
   return {
     threadId: "pending",
@@ -139,7 +166,8 @@ function context(isProvider: boolean): SupportContext {
     stage: "COMPLETED",
     startsAt: new Date(ENDED.getTime() - 3_600_000),
     endsAt: ENDED,
-    lastEndedOccurrenceId: "occ-ended",
+    reportSessions: [ended("occ-ended")],
+    reportOccurrenceId: "occ-ended",
     refundPctIfCancelledNow: null,
     paymentId: null,
     paymentAmountPaise: null,
@@ -187,7 +215,7 @@ beforeEach(() => {
 it("opens the session's own case while another booking thread is open, and the follow-up lands on it", async () => {
   const other = openCase({ id: "case-other", category: "PAYMENT_STATUS" });
   cases.rows.push(other);
-  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  useContextOf(false);
 
   const first = await runSupportTurn("appointment", "learner", {
     category: "NO_SHOW",
@@ -225,7 +253,7 @@ it("an answer lands on the case of the session it names, and a turn naming none 
   // B is the newer case, so a newest-open-case lookup would pick it.
   const [a, b] = [session("occ-a"), session("occ-b")];
   cases.rows.push(a, b);
-  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  useContextOf(false);
   const on = (c: Row) =>
     db.supportCaseMessage.rows.filter((m) => m.caseId === c.id).length;
 
@@ -248,7 +276,7 @@ it("an answer lands on the case of the session it names, and a turn naming none 
 });
 
 it("files on the session the turn names over the default one", async () => {
-  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  useContextOf(false);
   await runSupportTurn("appointment", "learner", {
     category: "NO_SHOW",
     appointmentOccurrenceId: "occ-earlier",
@@ -257,7 +285,7 @@ it("files on the session the turn names over the default one", async () => {
 });
 
 it("lets a later 'I was there' replace a neutral first answer, but never turns a counted reason around", async () => {
-  jest.mocked(buildSupportContext).mockResolvedValue(context(true));
+  useContextOf(true);
   await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
   const occ = { appointmentOccurrenceId: "occ-ended" };
   await runSupportTurn("appointment", "host", {
@@ -300,7 +328,7 @@ it("lets a later 'I was there' replace a neutral first answer, but never turns a
 
 it("stores no reason for a terminal outside the no-show intent", async () => {
   cases.rows.push(openCase({ id: "case-q", category: "QUALITY_COMPLAINT" }));
-  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  useContextOf(false);
   await runSupportTurn("appointment", "learner", {
     category: "QUALITY_COMPLAINT",
   });
@@ -311,7 +339,7 @@ it("stores no reason for a terminal outside the no-show intent", async () => {
 });
 
 it("never opens a session report for an org operator, whose thread stays on the org-party intents", async () => {
-  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  useContextOf(false);
   await runSupportTurn("appointment", "learner", {
     category: "NO_SHOW",
     isOrgParty: true,
@@ -344,7 +372,7 @@ describe("an answer routed by its case", () => {
       status: "ESCALATED",
     });
     cases.rows.push(report, quality);
-    jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+    useContextOf(false);
 
     const result = await runSupportTurn("appointment", "learner", {
       chosenOptionId: "expert",
@@ -367,7 +395,7 @@ describe("an answer routed by its case", () => {
         status: "ESCALATED",
       }),
     );
-    jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+    useContextOf(false);
     await expect(
       runSupportTurn("appointment", "learner", {
         chosenOptionId: "expert",
@@ -402,7 +430,7 @@ describe("an answer routed by its case", () => {
     async (_label, overrides, occurrence) => {
       const report = noShowOn("occ-a", overrides);
       cases.rows.push(report);
-      jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+      useContextOf(false);
       await expect(
         runSupportTurn("appointment", "learner", {
           chosenOptionId: "expert",
@@ -434,7 +462,7 @@ it("lets a current org operator answer on their own org case", async () => {
     status: "ESCALATED",
   });
   cases.rows.push(orgCase);
-  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  useContextOf(false);
   const result = await runSupportTurn("appointment", "learner", {
     userMessage: "Any update on the dispute?",
     caseId: "case-org",
@@ -451,7 +479,7 @@ it("answers a retried no-show intent on the case its first attempt reused, after
     appointmentOccurrenceId: "occ-ended",
   });
   cases.rows.push(reused);
-  jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+  useContextOf(false);
   const turn = {
     category: "NO_SHOW" as const,
     chosenLabel: "The expert didn't join",
@@ -464,10 +492,105 @@ it("answers a retried no-show intent on the case its first attempt reused, after
   // A later session has ended since, so the default would now pick it.
   jest.mocked(buildSupportContext).mockResolvedValue({
     ...context(false),
-    lastEndedOccurrenceId: "occ-newer",
+    reportSessions: [ended("occ-newer"), ended("occ-ended")],
+    reportOccurrenceId: null,
   });
   const retry = await runSupportTurn("appointment", "learner", turn);
   expect(retry?.threadId).toBe("case-reused");
   expect(cases.rows).toHaveLength(1);
   expect(db.supportCaseMessage.rows).toHaveLength(sent);
+});
+
+describe("a report is about one ended session", () => {
+  it("asks which session rather than opening a booking-wide report when several have ended", async () => {
+    jest.mocked(buildSupportContext).mockResolvedValue({
+      ...context(false),
+      reportSessions: [ended("occ-b"), ended("occ-a")],
+      reportOccurrenceId: null,
+    });
+    await expect(
+      runSupportTurn("appointment", "learner", { category: "NO_SHOW" }),
+    ).rejects.toMatchObject({
+      status: 400,
+      body: { code: "SESSION_REQUIRED" },
+    });
+    expect(createOrReuseSupportCase).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a booking-wide case", { scopeKey: "APPOINTMENT:appointment" }],
+    [
+      "a case whose session has not ended",
+      {
+        scopeKey: "OCCURRENCE:occ-live",
+        appointmentOccurrenceId: "occ-live",
+        occurrence: {
+          endsAt: new Date(Date.now() + 3_600_000),
+          deletedAt: null,
+        },
+      },
+    ],
+  ])("stores no reason on %s", async (_label, overrides) => {
+    const report = openCase({
+      id: "case-old",
+      category: "NO_SHOW",
+      currentNodeId: "start",
+      ...overrides,
+    });
+    cases.rows.push(report);
+    useContextOf(false);
+    await runSupportTurn("appointment", "learner", {
+      chosenOptionId: "attended",
+      caseId: "case-old",
+    });
+    expect(report.flowReason).toBeNull();
+  });
+
+  it("refuses a replayed token that names another session than the one it filed on", async () => {
+    cases.rows.push(
+      openCase({
+        id: "case-a",
+        category: "NO_SHOW",
+        scopeKey: "OCCURRENCE:occ-a",
+        appointmentOccurrenceId: "occ-a",
+      }),
+    );
+    db.supportCaseMessage.rows.push({
+      id: "msg-k",
+      caseId: "case-a",
+      clientTurnId: "turn-k",
+      sender: "USER",
+      body: "No-show",
+    });
+    useContextOf(false);
+    await expect(
+      runSupportTurn("appointment", "learner", {
+        category: "NO_SHOW",
+        clientTurnId: "turn-k",
+        appointmentOccurrenceId: "occ-b",
+      }),
+    ).rejects.toMatchObject({ body: { code: "IDEMPOTENCY_KEY_REUSED" } });
+    expect(cases.rows).toHaveLength(1);
+  });
+
+  it("keys the intake to the booking, so one token on two bookings is two intakes", async () => {
+    useContextOf(false);
+    const intakeOn = async (appointmentId: string) => {
+      db.appointment.findUnique.mockResolvedValue({
+        id: appointmentId,
+        appointmentType: "CONSULTATION",
+        organizationId: null,
+      });
+      await runSupportTurn(appointmentId, "learner", {
+        category: "NO_SHOW",
+        clientTurnId: "same-token",
+      });
+      return jest.mocked(createOrReuseSupportCase).mock.calls.at(-1)?.[0]
+        .clientIntakeId;
+    };
+    const onA = await intakeOn("booking-a");
+    const onB = await intakeOn("booking-b");
+    expect(onA).toMatch(/^appointment-/);
+    expect(onB).not.toBe(onA);
+  });
 });

@@ -172,6 +172,7 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
       {
         ...own,
         id: "case-report",
+        category: "NO_SHOW",
         appointmentOccurrenceId: "occ-a",
         createdAt: new Date("2026-11-23T12:00:00Z"),
       },
@@ -201,12 +202,57 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     };
     expect(await shown()).toBe("case-pay");
     expect(await shown("?occurrence=occ-a")).toBe("case-report");
+    // A session's page never falls back to another thread: it starts that session's report.
+    expect(await shown("?occurrence=occ-b")).toBeUndefined();
+    expect(await shown("?occurrence=occ-b&caseId=case-pay")).toBeUndefined();
     expect(await shown("?caseId=case-report")).toBe("case-report");
     // Another person's case is never shown; the default stands.
     expect(await shown("?caseId=case-foreign")).toBe("case-pay");
     rows.splice(0, 1);
     // With no booking-wide thread, the newest session case shows.
     expect(await shown()).toBe("case-report");
+  });
+
+  it("offers the report from the session the page names, and lists the ended sessions", async () => {
+    const endedA = {
+      id: "occ-a",
+      startsAt: new Date("2026-11-23T10:00:00Z"),
+      endsAt: new Date("2026-11-23T11:00:00Z"),
+    };
+    mockedBuildContext.mockResolvedValue({
+      planTitle: "Plan",
+      appointmentType: "SUBSCRIPTION",
+      startsAt: new Date("2026-11-30T10:00:00Z"),
+      organizationId: null,
+      stage: "UPCOMING",
+      isProvider: false,
+      reportSessions: [endedA],
+      reportOccurrenceId: "occ-a",
+    });
+    const res = await GET(
+      new NextRequest(
+        `https://x.test/api/appointments/${SLUG}/support?occurrence=occ-a`,
+      ),
+      { params: Promise.resolve({ appointmentId: SLUG }) },
+    );
+    expect(mockedBuildContext).toHaveBeenCalledWith(
+      expect.any(String),
+      SLUG,
+      "u1",
+      undefined,
+      "occ-a",
+    );
+    const body = await res.json();
+    expect(body.intents.map((i: { category: string }) => i.category)).toEqual(
+      expect.arrayContaining(["NO_SHOW", "RESCHEDULE"]),
+    );
+    expect(body.reportSessions).toEqual([
+      {
+        id: "occ-a",
+        startsAt: "2026-11-23T10:00:00.000Z",
+        endsAt: "2026-11-23T11:00:00.000Z",
+      },
+    ]);
   });
 
   it("accepts uuid ids identically", async () => {

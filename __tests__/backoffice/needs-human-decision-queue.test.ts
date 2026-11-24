@@ -334,3 +334,41 @@ it("lists a reported verdict and names each counted report by side, leaving out 
     { caseId: "case-expert", side: "HOST", reason: "provider_attended" },
   ]);
 });
+
+it("counts a paid trial's expert's 'I was there' as the host's dispute in the ops list", async () => {
+  const voided = {
+    ...rows[0],
+    id: "occ-trial",
+    completionStatus: "VOIDED",
+    outcome: "HOST_ABSENT",
+    outcomeAt: new Date("2026-11-16T12:00:00Z"),
+  };
+  mockFindMany.mockResolvedValue([voided]);
+  mockCases.mockResolvedValue([
+    {
+      id: "case-trial",
+      flowReason: "provider_attended",
+      requesterUserId: "u-trial-expert",
+      ownershipScope: "PERSONAL",
+      flowReasonAt: new Date("2026-11-16T15:00:00Z"),
+      deletedAt: null,
+      appointmentOccurrenceId: "occ-trial",
+      // The trial's own plan names its expert, as the report read's select returns it.
+      occurrence: {
+        appointment: {
+          ...noPlans,
+          trial: {
+            subscriptionPlan: {
+              consultantProfile: { userId: "u-trial-expert" },
+            },
+          },
+          participants: [{ userId: "u-learner" }],
+        },
+      },
+    },
+  ]);
+  const { items } = await readSessionsNeedingHuman({ now: NOW });
+  expect(items[0].reports).toEqual([
+    { caseId: "case-trial", side: "HOST", reason: "provider_attended" },
+  ]);
+});

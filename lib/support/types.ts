@@ -47,8 +47,10 @@ export interface SupportContext {
   startsAt: Date | null;
   /** That slot's end (drives the recording-ready 48h window). */
   endsAt: Date | null;
-  /** The last live session that has ended; a no-show report is about it unless the turn names one. */
-  lastEndedOccurrenceId: string | null;
+  /** The ended sessions a report can be about, newest first: the named one if it has ended, else every ended one. */
+  reportSessions: { id: string; startsAt: Date; endsAt: Date }[];
+  /** The session a report is about: the only one in `reportSessions`, else null until the person picks. */
+  reportOccurrenceId: string | null;
   /** Policy refund % were the user to cancel now (reuse computeRefundPct). */
   refundPctIfCancelledNow: number | null;
   paymentId: string | null;

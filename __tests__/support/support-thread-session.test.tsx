@@ -73,12 +73,13 @@ function mockFetch(firstRead: ThreadData) {
   }) as unknown as typeof fetch;
 }
 
-function renderThread(occurrenceId?: string) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+function renderThread(
+  occurrenceId?: string,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  seedCategory?: string,
+) {
   const hook = renderHook(
-    () => useSupportThread("appointment", { occurrenceId }),
+    () => useSupportThread("appointment", { occurrenceId, seedCategory }),
     {
       wrapper: ({ children }) => (
         <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -240,5 +241,78 @@ it("moves the page to the booking thread a fresh intent landed on, and keeps it 
   await waitFor(() => expect(reads).toHaveLength(2));
   expect(new URL(reads[1], "https://x.test").searchParams.get("caseId")).toBe(
     "case-pay",
+  );
+});
+
+/** A thread read that answers by the session the URL names. */
+function mockSessionReads(bySession: Record<string, ThreadData["thread"]>) {
+  const reads: string[] = [];
+  global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      turnBodies.push(JSON.parse(String(init.body)));
+      return { ok: true, json: async () => ({ data: null }) };
+    }
+    reads.push(url);
+    const session = new URL(url, "https://x.test").searchParams.get(
+      "occurrence",
+    );
+    return {
+      ok: true,
+      json: async () => ({
+        data: bySession[session ?? ""] ?? null,
+        intents: [{ category: "NO_SHOW", title: "The expert didn't join" }],
+        booking: null,
+      }),
+    };
+  }) as unknown as typeof fetch;
+  return reads;
+}
+
+it("answers on session B's case from B's page, after A's page filled the same cache", async () => {
+  const reads = mockSessionReads({
+    "occ-a": shown("case-a", "occ-a").thread,
+    "occ-b": shown("case-b", "occ-b").thread,
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const pageA = renderThread("occ-a", client);
+  await waitFor(() => expect(pageA.result.current.thread?.id).toBe("case-a"));
+  pageA.unmount();
+
+  const pageB = renderThread("occ-b", client);
+  await waitFor(() => expect(pageB.result.current.thread?.id).toBe("case-b"));
+  // B's read never names A's case.
+  expect(
+    reads.some((u) => u.includes("occurrence=occ-b") && u.includes("case-a")),
+  ).toBe(false);
+  act(() => {
+    pageB.result.current.submitTurn({ chosenOptionId: "attended" });
+  });
+  await waitFor(() => expect(turnBodies).toHaveLength(1));
+  expect(sent(0)).toMatchObject({
+    chosenOptionId: "attended",
+    caseId: "case-b",
+    appointmentOccurrenceId: "occ-b",
+  });
+});
+
+it("starts a session's report on its page beside an open human payment case", async () => {
+  // The booking's only case is a payment conversation a person handles.
+  mockSessionReads({
+    "": {
+      ...shown("case-pay", "").thread!,
+      activeChannel: "HUMAN",
+      appointmentOccurrenceId: null,
+    },
+  });
+  const { result } = renderThread("occ-a", undefined, "NO_SHOW");
+  await waitFor(() => expect(turnBodies).toHaveLength(1));
+  expect(result.current.thread?.id).not.toBe("case-pay");
+  expect(sent(0)).toEqual(
+    expect.objectContaining({
+      category: "NO_SHOW",
+      appointmentOccurrenceId: "occ-a",
+    }),
   );
 });
