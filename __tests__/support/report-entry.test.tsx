@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SessionConversation } from "@/components/dashboard/shared/support/SessionConversation";
 import { sessionReportHref } from "@/lib/support/report-link";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 type ThreadState = Parameters<typeof SessionConversation>[0]["t"];
 
@@ -69,14 +70,17 @@ function threadState(over: Partial<ThreadState>): ThreadState {
   return { ...base, ...over } as unknown as ThreadState;
 }
 
+// The viewer's zone, as each customer dashboard's layout provides it.
 const renderConversation = (t: ThreadState) =>
   render(
-    <QueryClientProvider client={new QueryClient()}>
-      <SessionConversation
-        t={t}
-        requestsHref="/dashboard/consultee/p1/support"
-      />
-    </QueryClientProvider>,
+    <DisplayZoneProvider zone="Asia/Kolkata">
+      <QueryClientProvider client={new QueryClient()}>
+        <SessionConversation
+          t={t}
+          requestsHref="/dashboard/consultee/p1/support"
+        />
+      </QueryClientProvider>
+    </DisplayZoneProvider>,
   );
 
 it("offers the report beside an open human payment case and asks which session, linking each to its page", () => {
@@ -95,7 +99,7 @@ it("offers the report beside an open human payment case and asks which session, 
   ]);
   // The label is the session's start in the viewer's zone (IST here).
   expect(
-    screen.getByRole("link", { name: /23 Nov 2026, 10:00 am/ }),
+    screen.getByRole("link", { name: "23 Nov 2026, 10:00 am IST" }),
   ).toBeInTheDocument();
 });
 
@@ -141,12 +145,14 @@ it("still offers the report while another session's report is the thread shown",
 it("starts the report entry fresh when the selected session changes", () => {
   const client = new QueryClient();
   const view = (t: ThreadState) => (
-    <QueryClientProvider client={client}>
-      <SessionConversation
-        t={t}
-        requestsHref="/dashboard/consultee/p1/support"
-      />
-    </QueryClientProvider>
+    <DisplayZoneProvider zone="Asia/Kolkata">
+      <QueryClientProvider client={client}>
+        <SessionConversation
+          t={t}
+          requestsHref="/dashboard/consultee/p1/support"
+        />
+      </QueryClientProvider>
+    </DisplayZoneProvider>
   );
   const { rerender } = render(view(threadState({})));
   fireEvent.click(

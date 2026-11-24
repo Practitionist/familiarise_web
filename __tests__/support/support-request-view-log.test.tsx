@@ -8,6 +8,7 @@ jest.mock("../../hooks/use-toast", () => ({
 
 import { SupportRequestView } from "../../components/dashboard/shared/support/SupportRequestView";
 import { supportKeys } from "../../lib/support/support-keys";
+import { DisplayZoneProvider } from "../../lib/time/zoned-format";
 
 const articles = {
   payments: [],
@@ -268,19 +269,22 @@ it("names the reported session on a session's page, not the booking's next sessi
       },
     ],
   });
+  // The viewer's zone, as each customer dashboard's layout provides it.
   render(
-    <QueryClientProvider client={qc}>
-      <SupportRequestView
-        caseKey="b_appt-1"
-        occurrence="occ-14"
-        requestsHref="/dashboard/consultee/p1/support"
-        appointmentsBase="/dashboard/consultee/p1/appointments"
-        articles={articles}
-      />
-    </QueryClientProvider>,
+    <DisplayZoneProvider zone="Asia/Kolkata">
+      <QueryClientProvider client={qc}>
+        <SupportRequestView
+          caseKey="b_appt-1"
+          occurrence="occ-14"
+          requestsHref="/dashboard/consultee/p1/support"
+          appointmentsBase="/dashboard/consultee/p1/appointments"
+          articles={articles}
+        />
+      </QueryClientProvider>
+    </DisplayZoneProvider>,
   );
   expect(
-    screen.getByText(/^Report about your 14 Nov 2026, .+ session$/),
+    screen.getByText("Report about your 14 Nov 2026, 5:00 pm IST session"),
   ).toBeInTheDocument();
   expect(screen.queryByText(/26 Nov 2026/)).not.toBeInTheDocument();
   qc.clear();
