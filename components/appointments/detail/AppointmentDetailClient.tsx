@@ -1510,6 +1510,18 @@ export function AppointmentDetailClient({
               </Button>
             ))}
             {soleSession && scheduleItems.map(renderActionButton)}
+            {/* With the Sessions card folded away, the one session's report sits in the header. */}
+            {soleSession &&
+              reportRowAction(soleSession).map((report) => (
+                <Button
+                  key={report.key}
+                  variant="outline"
+                  size="sm"
+                  onClick={report.onSelect}
+                >
+                  {report.label}
+                </Button>
+              ))}
             {renderExtraActions?.(vm, { openChat: setChatTarget })}
           </div>
 

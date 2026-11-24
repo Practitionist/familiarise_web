@@ -244,14 +244,34 @@ it("moves the page to the booking thread a fresh intent landed on, and keeps it 
   );
 });
 
-/** A thread read that answers by the session the URL names. */
-function mockSessionReads(bySession: Record<string, ThreadData["thread"]>) {
+/** A complete turn result: the case and session it landed on, with the bot's reply. */
+const turnResult = (threadId: string, occurrenceId: string) => ({
+  threadId,
+  status: "IN_PROGRESS",
+  activeChannel: "SELF_SERVE",
+  currentNodeId: "start",
+  messages: [{ sender: "BOT", body: `Noted on ${threadId}`, metadata: null }],
+  escalated: false,
+  resolved: false,
+  accepted: true,
+  actions: [],
+  appointmentOccurrenceId: occurrenceId,
+});
+
+/** A thread read that answers by the session the URL names; a turn answers `onTurn`, and the refetch after it never returns. */
+function mockSessionReads(
+  bySession: Record<string, ThreadData["thread"]>,
+  onTurn: ReturnType<typeof turnResult>,
+) {
   const reads: string[] = [];
+  let turned = false;
   global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       turnBodies.push(JSON.parse(String(init.body)));
-      return { ok: true, json: async () => ({ data: null }) };
+      turned = true;
+      return { ok: true, json: async () => ({ data: onTurn }) };
     }
+    if (turned) return new Promise(() => undefined);
     reads.push(url);
     const session = new URL(url, "https://x.test").searchParams.get(
       "occurrence",
@@ -269,10 +289,13 @@ function mockSessionReads(bySession: Record<string, ThreadData["thread"]>) {
 }
 
 it("answers on session B's case from B's page, after A's page filled the same cache", async () => {
-  const reads = mockSessionReads({
-    "occ-a": shown("case-a", "occ-a").thread,
-    "occ-b": shown("case-b", "occ-b").thread,
-  });
+  const reads = mockSessionReads(
+    {
+      "occ-a": shown("case-a", "occ-a").thread,
+      "occ-b": shown("case-b", "occ-b").thread,
+    },
+    turnResult("case-b", "occ-b"),
+  );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -295,17 +318,30 @@ it("answers on session B's case from B's page, after A's page filled the same ca
     caseId: "case-b",
     appointmentOccurrenceId: "occ-b",
   });
+  // The answer is processed onto B's thread.
+  await waitFor(() =>
+    expect(pageB.result.current.messages.map((m) => m.body)).toContain(
+      "Noted on case-b",
+    ),
+  );
+  expect(pageB.result.current.thread).toMatchObject({
+    id: "case-b",
+    appointmentOccurrenceId: "occ-b",
+  });
 });
 
 it("starts a session's report on its page beside an open human payment case", async () => {
   // The booking's only case is a payment conversation a person handles.
-  mockSessionReads({
-    "": {
-      ...shown("case-pay", "").thread!,
-      activeChannel: "HUMAN",
-      appointmentOccurrenceId: null,
+  mockSessionReads(
+    {
+      "": {
+        ...shown("case-pay", "").thread!,
+        activeChannel: "HUMAN",
+        appointmentOccurrenceId: null,
+      },
     },
-  });
+    turnResult("case-report-a", "occ-a"),
+  );
   const { result } = renderThread("occ-a", undefined, "NO_SHOW");
   await waitFor(() => expect(turnBodies).toHaveLength(1));
   expect(result.current.thread?.id).not.toBe("case-pay");
@@ -315,4 +351,14 @@ it("starts a session's report on its page beside an open human payment case", as
       appointmentOccurrenceId: "occ-a",
     }),
   );
+  // The report's answer is processed onto its own session case.
+  await waitFor(() =>
+    expect(result.current.messages.map((m) => m.body)).toContain(
+      "Noted on case-report-a",
+    ),
+  );
+  expect(result.current.thread).toMatchObject({
+    id: "case-report-a",
+    appointmentOccurrenceId: "occ-a",
+  });
 });

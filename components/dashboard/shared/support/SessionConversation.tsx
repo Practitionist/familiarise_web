@@ -150,9 +150,15 @@ function useReportEntry(t: ThreadState) {
   const hrefFor = (occurrenceId: string) =>
     `${pathname ?? ""}?intent=NO_SHOW&occurrence=${encodeURIComponent(occurrenceId)}`;
   const start = () => {
-    if (t.reportSessions.length > 1) setChoosing(true);
-    else if (offered)
-      t.submitTurn({ category: "NO_SHOW", chosenLabel: offered.label });
+    const [only, ...more] = t.reportSessions;
+    if (more.length > 0) setChoosing(true);
+    // The session the page offered is the one reported, even if another ends before the click.
+    else if (offered && only)
+      t.submitTurn({
+        category: "NO_SHOW",
+        chosenLabel: offered.label,
+        binding: { appointmentOccurrenceId: only.id },
+      });
   };
   return {
     // A session's own page starts its report through the seeded intent.
@@ -268,8 +274,8 @@ function SessionControls({
             {humanExit.label}
           </Button>
         )}
-        {/* Another open thread never hides the report: it starts on its session's own page. */}
-        {report.routes && t.thread?.category !== "NO_SHOW" && (
+        {/* Another open thread, a session's report included, never hides the report of another session. */}
+        {report.routes && (
           <Button
             variant="ghost"
             size="sm"
@@ -658,7 +664,9 @@ export function SessionConversation({
         </>
       )}
       <div className="space-y-3 border-t border-border p-4">
+        {/* Each selected session starts its report entry fresh. */}
         <SessionControls
+          key={t.occurrenceId ?? "none"}
           t={t}
           escalating={escalating}
           humanExit={humanExit}

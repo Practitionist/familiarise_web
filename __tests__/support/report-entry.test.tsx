@@ -98,7 +98,7 @@ it("offers the report beside an open human payment case and asks which session, 
   ).toBeInTheDocument();
 });
 
-it("starts the report in place when only one session has ended", () => {
+it("starts the report in place when only one session has ended, bound to that session", () => {
   const t = threadState({
     reportSessions: [
       {
@@ -112,10 +112,48 @@ it("starts the report in place when only one session has ended", () => {
   fireEvent.click(
     screen.getByRole("button", { name: "Report a problem with a session" }),
   );
+  // Bound to the session offered, so one ending before the click cannot leave it unnamed.
   expect(t.submitTurn).toHaveBeenCalledWith({
     category: "NO_SHOW",
     chosenLabel: "The expert didn't join",
+    binding: { appointmentOccurrenceId: "occ-a" },
   });
+});
+
+it("still offers the report while another session's report is the thread shown", () => {
+  renderConversation(
+    threadState({
+      thread: {
+        ...payment,
+        id: "case-report-b",
+        category: "NO_SHOW",
+        appointmentOccurrenceId: "occ-b",
+      },
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Report a problem with a session" }),
+  );
+  expect(screen.getByText("Which session was it?")).toBeInTheDocument();
+});
+
+it("starts the report entry fresh when the selected session changes", () => {
+  const client = new QueryClient();
+  const view = (t: ThreadState) => (
+    <QueryClientProvider client={client}>
+      <SessionConversation
+        t={t}
+        requestsHref="/dashboard/consultee/p1/support"
+      />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(view(threadState({})));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Report a problem with a session" }),
+  );
+  expect(screen.getByText("Which session was it?")).toBeInTheDocument();
+  rerender(view(threadState({ occurrenceId: "occ-a" })));
+  expect(screen.queryByText("Which session was it?")).not.toBeInTheDocument();
 });
 
 it("links each ended session, and only an ended one, to its own report page", () => {
