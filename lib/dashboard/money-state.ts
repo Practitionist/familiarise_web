@@ -1130,7 +1130,11 @@ export function deriveBookingPresentation(
   // #1766 — the plan size is the frozen entitlement; delivered sessions are
   // named once they exist (COMPLETED and UNVERIFIED both count as held).
   const planSessions = input.plan?.sessions;
-  const completedCount = live.filter(isCompletedOccurrence).length;
+  // A parked session is UNVERIFIED, so it is held for the entitlement but not completed here.
+  const completedCount = Math.max(
+    0,
+    live.filter(isCompletedOccurrence).length - (input.parkedSessions ?? 0),
+  );
   const sessionProgress =
     (planSessions && planSessions > 1
       ? `${live.length} of ${planSessions} sessions scheduled`

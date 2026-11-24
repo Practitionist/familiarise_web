@@ -579,6 +579,8 @@ describe("a stored COMPLETED booking with a parked session reads honestly everyw
       await parkedConsultation("COMPLETED", "NOBODY_JOINED", true),
     );
     expect(labels).toMatchObject(EVERYWHERE_WAITING);
+    // The parked session is not counted completed.
+    expect(labels.progress).not.toContain("completed");
   });
 
   it("a live booking whose session ran inconclusive waits too, never Completed", async () => {
