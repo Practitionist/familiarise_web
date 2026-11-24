@@ -48,6 +48,7 @@ import {
   type SeatRefund,
 } from "./outcome-notice-copy";
 import { liveLearnerSeat } from "./participants";
+import { seatJoinedAt, seatSessionClaim } from "./seat-session";
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 
 const TITLED_PLAN = {
@@ -58,9 +59,9 @@ const TITLED_PLAN = {
 
 /** A payment's refundable balance and the funding legs its refund reverses. */
 const SEAT_PAYMENT = {
+  id: true,
   userId: true,
-  paymentStatus: true,
-  deletedAt: true,
+  createdAt: true,
   amount: true,
   currency: true,
   ...REFUNDABLE_BALANCE_SELECT,
@@ -98,7 +99,7 @@ const PARTIES_SELECT = {
   },
   participants: {
     where: liveLearnerSeat(),
-    select: { userId: true, payment: { select: SEAT_PAYMENT } },
+    select: { userId: true, status: true, createdAt: true, paymentId: true },
   },
   payment: {
     where: { paymentStatus: "SUCCEEDED", deletedAt: null },
@@ -156,15 +157,23 @@ export function refundDestinationOf(
   return organisation ? "organisation" : "you";
 }
 
+type Seat = OutcomePartiesRow["participants"][number];
+
+/** A seat held the session when it existed before the session started (`seatJoinedAt`). */
+const seatHeld = (seat: Seat, startsAt: Date) => startsAt > seatJoinedAt(seat);
+
 /**
- * One learner's refund: their seat's captured payment, else the booking's
- * payments in their name. A 1:1 consultation names the amount; a group seat's
- * per-session share is left unnamed. Null when nothing refundable was paid.
+ * One learner's refund for this session: the captured payments settlement
+ * would refund for this seat (its own payment, or any in the learner's name on
+ * a legacy seat) that `seatSessionClaim` owes automatically. A 1:1
+ * consultation names the amount; a group seat's per-session share is left
+ * unnamed. Null when none is owed.
  */
 function seatRefundOf(
   row: OutcomePartiesRow,
   booking: NoticeBooking,
-  seat: OutcomePartiesRow["participants"][number],
+  seat: Seat,
+  startsAt: Date,
 ): SeatRefund | null {
   if (
     booking !== "consultation" &&
@@ -173,24 +182,24 @@ function seatRefundOf(
   ) {
     return null;
   }
-  const own =
-    seat.payment?.paymentStatus === "SUCCEEDED" && !seat.payment.deletedAt
-      ? [seat.payment]
-      : row.payment.filter(
-          (p) => p.userId === seat.userId || booking === "consultation",
-        );
-  const paise = own.reduce(
+  const owed = row.payment.filter(
+    (p) =>
+      p.userId === seat.userId &&
+      (seat.paymentId === null || seat.paymentId === p.id) &&
+      seatSessionClaim({ startsAt }, seat, p) === "refund",
+  );
+  const paise = owed.reduce(
     (sum, p) => sum + refundableBalancePaise(Number(p.amount), p),
     0,
   );
-  const currency = own[0]?.currency;
+  const currency = owed[0]?.currency;
   if (paise <= 0 || !currency) return null;
   return {
     amountText:
       booking === "consultation"
         ? formatNotificationMoney(paise, currency)
         : null,
-    destination: refundDestinationOf(own),
+    destination: refundDestinationOf(owed),
   };
 }
 
@@ -203,21 +212,23 @@ interface Party {
   refund: SeatRefund | null;
 }
 
-async function readParties(appointmentId: string) {
+/** The hosts, and the learner seats that held this session: a seat taken after it started was never in it. */
+async function readParties(appointmentId: string, startsAt: Date) {
   const row = await readPartiesRow(appointmentId);
   const shape = row ? bookingOf(row) : null;
   if (!row || !shape) return null;
   const hosts = sessionHostUserIds(row);
-  const learners = row.participants
-    .map((p) => p.userId)
-    .filter((id) => !hosts.includes(id));
+  const heldSeats = row.participants.filter(
+    (p) => !hosts.includes(p.userId) && seatHeld(p, startsAt),
+  );
+  const learners = heldSeats.map((p) => p.userId);
   const ids = [...new Set([...hosts, ...learners])];
   const users = await prisma.user.findMany({
     where: { id: { in: ids } },
     select: { id: true, consultantProfileId: true, consulteeProfileId: true },
   });
   const byId = new Map(users.map((u) => [u.id, u]));
-  const seats = new Map(row.participants.map((p) => [p.userId, p]));
+  const seats = new Map(heldSeats.map((p) => [p.userId, p]));
   const parties: Party[] = ids.map((userId) => {
     const seat = hosts.includes(userId) ? undefined : seats.get(userId);
     return {
@@ -225,7 +236,7 @@ async function readParties(appointmentId: string) {
       side: seat ? "learner" : "host",
       consultantProfileId: byId.get(userId)?.consultantProfileId ?? null,
       consulteeProfileId: byId.get(userId)?.consulteeProfileId ?? null,
-      refund: seat ? seatRefundOf(row, shape.booking, seat) : null,
+      refund: seat ? seatRefundOf(row, shape.booking, seat, startsAt) : null,
     };
   });
   return { row, ...shape, parties };
@@ -333,7 +344,7 @@ export async function prepareProposedOutcomeNotices(
     outcomeAt: Date;
   },
 ): Promise<PreparedOutcomeNotices | null> {
-  const read = await readParties(session.appointmentId);
+  const read = await readParties(session.appointmentId, session.startsAt);
   if (!read || read.parties.length === 0) return null;
   const { row, booking, plan, parties } = read;
   const closesAt = windowClosesAt(session.outcomeAt);
@@ -396,7 +407,7 @@ export async function prepareReviewedOutcomeNotices(
     reviewedAt: Date;
   },
 ): Promise<PreparedOutcomeNotices | null> {
-  const read = await readParties(session.appointmentId);
+  const read = await readParties(session.appointmentId, session.startsAt);
   if (!read || read.parties.length === 0) return null;
   const { row, plan, parties } = read;
   const href = `${getAppUrl()}${goHref("auto", `appointments/${session.appointmentId}`)}`;

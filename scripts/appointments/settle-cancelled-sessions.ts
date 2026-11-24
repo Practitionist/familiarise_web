@@ -52,6 +52,7 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { seatLedger } from "@/lib/booking/class-series";
+import { seatJoinedAt, seatSessionClaim } from "@/lib/booking/seat-session";
 import {
   MAKEUP_WINDOW_DAYS,
   occurrenceRefundKey,
@@ -396,12 +397,10 @@ async function settleSeat(
     },
   });
   if (!seat) return false;
-  const joinedAt = new Date(
-    Math.max(seat.createdAt.getTime(), payment.createdAt.getTime()),
-  );
-  // Only a seat that held this session is owed for it.
-  if (session.startsAt <= joinedAt) return false;
-  if (seat.status === "HELD") {
+  const claim = seatSessionClaim(session, seat, payment);
+  if (claim === "none") return false;
+  const joinedAt = seatJoinedAt(seat, payment);
+  if (claim === "human") {
     // #1834 owner decision — a paid seat still HELD is a human's call, never
     // skipped silently nor auto-refunded; the session settles for the rest.
     await escalateHeldPaidSeat(session, payment, seat.id, {

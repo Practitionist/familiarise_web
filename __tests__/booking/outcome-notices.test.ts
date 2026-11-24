@@ -62,6 +62,8 @@ const plan = (title: string) => ({
   consultantProfile: { userId: "host" },
 });
 
+const BOOKED = new Date("2026-11-01T09:00:00Z");
+
 /** The row `PARTIES_SELECT` returns for a paid 1:1 consultation. */
 const consultation: OutcomePartiesRow = {
   organizationId: null,
@@ -70,9 +72,19 @@ const consultation: OutcomePartiesRow = {
   trial: null,
   webinar: null,
   class: null,
-  participants: [{ userId: "learner", payment: null }],
+  participants: [seat("learner")],
   payment: [cardPayment("learner", 150_000)],
 };
+
+/** A live learner seat as `PARTIES_SELECT` reads it, funded by `pay-<user>`. */
+function seat(userId: string, createdAt = BOOKED) {
+  return {
+    userId,
+    status: "CONFIRMED" as const,
+    createdAt,
+    paymentId: `pay-${userId}`,
+  };
+}
 
 /** A captured payment as `SEAT_PAYMENT` reads it, funded by the given legs. */
 function cardPayment(
@@ -81,11 +93,12 @@ function cardPayment(
   legs: { source: "CARD" | "WALLET"; amountPaise: number }[] = [
     { source: "CARD", amountPaise: amount },
   ],
+  createdAt = BOOKED,
 ) {
   return {
+    id: `pay-${userId}`,
     userId,
-    paymentStatus: "SUCCEEDED" as const,
-    deletedAt: null,
+    createdAt,
     amount,
     currency: "INR" as const,
     refunds: [],
@@ -236,10 +249,7 @@ it("names each group seat's refund destination from its own funding: the organis
     ...consultation,
     consultation: null,
     class: { classPlan: { ...plan("Python cohort"), collaborators: [] } },
-    participants: [
-      { userId: "sponsored", payment: sponsored },
-      { userId: "carded", payment: cardPayment("carded", 50_000) },
-    ],
+    participants: [seat("sponsored"), seat("carded")],
     payment: [sponsored, cardPayment("carded", 50_000)],
   } satisfies OutcomePartiesRow);
   findUsers.mockResolvedValue([]);
@@ -276,4 +286,45 @@ it("names each group seat's refund destination from its own funding: the organis
   expect(bell("host")).toContain(
     "hold a make-up by Mon, 7 Dec 2026 · 6:45 AM EST, or that session is refunded automatically",
   );
+});
+
+it("promises a session's refund only to a seat that held it, and tells a seat taken after it started nothing", async () => {
+  // Session 1 starts at 10:00; one seat was bought before it, one at 11:00 for sessions 2 to 4.
+  const late = new Date("2026-11-23T11:00:00Z");
+  const lateWallet = cardPayment(
+    "late",
+    60_000,
+    [{ source: "WALLET", amountPaise: 60_000 }],
+    late,
+  );
+  findAppointment.mockResolvedValue({
+    ...consultation,
+    consultation: null,
+    class: { classPlan: { ...plan("Python cohort"), collaborators: [] } },
+    participants: [seat("early"), seat("late", late)],
+    payment: [cardPayment("early", 80_000), lateWallet],
+  } satisfies OutcomePartiesRow);
+  findUsers.mockResolvedValue([]);
+  ZONES.early = "Asia/Kolkata";
+  ZONES.late = "Asia/Kolkata";
+
+  const prepared = await prepareProposedOutcomeNotices({
+    ...SESSION,
+    outcome: "CUT_SHORT",
+    outcomeAt: OUTCOME_AT,
+  });
+  const { tx, createManyAndReturn } = txWith();
+  await stageOutcomeNotices(tx, prepared!);
+  const rows = createManyAndReturn.mock.calls[0][0].data as unknown as {
+    recipients: string[];
+    payload: Record<string, string>;
+  }[];
+  // Settlement owes the late seat nothing for session 1, so it is not a party to it.
+  expect(rows.map((r) => r.recipients[0]).sort()).toEqual(["early", "host"]);
+  const emailArgs = prepareEmails.mock
+    .calls[0][0] as unknown as SessionOutcomeNoticeEmailArgs;
+  expect(emailArgs.userIds).toEqual(["host", "early"]);
+  expect(
+    rows.find((r) => r.recipients[0] === "early")!.payload.message,
+  ).toContain("or we'll refund it automatically.");
 });
