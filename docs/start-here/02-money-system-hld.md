@@ -161,7 +161,7 @@ The cancel route quotes the refund inside the cancel transaction and compares it
 
 ### 10.1 Disputes
 
-A `Dispute` is a gateway chargeback, never a support complaint. When one opens, `placeDisputeHolds()` cancels any unsent payout that batched the payment's earnings and places a `DISPUTE` hold; `settleDisputeVerdict()` (`app/api/webhooks/utils.ts`), called by both the webhook and the `reconcile-disputes` poll, settles the verdict. A win releases the hold, and a loss reverses `amount_deducted / payment.amount` of every share and raises a clawback receivable for anything already paid out. A buyer's service complaint follows a different path (a recommendation decided by a second operator). Both are in [chargebacks](../finance/30-refunds-disputes/02-chargebacks.md) and [service complaints](../finance/30-refunds-disputes/03-service-complaints-and-remedies.md).
+A `Dispute` is a gateway chargeback, never a support complaint. When one opens, `placeDisputeHolds()` cancels any unsent payout that batched the payment's earnings and places a `DISPUTE` hold; `settleDisputeVerdict()` (`app/api/webhooks/utils.ts`), called by both the webhook and the `reconcile-disputes` poll, settles the verdict. A win releases the hold, and a loss settles on `amount_deducted`, never above the disputed amount, reverses that fraction of `payment.amount` from every share on integer paise and raises a clawback receivable for anything already paid out. A buyer's service complaint follows a different path (a recommendation decided by a second operator). Both are in [chargebacks](../finance/30-refunds-disputes/02-chargebacks.md) and [service complaints](../finance/30-refunds-disputes/03-service-complaints-and-remedies.md).
 
 ## 11. Refund and cancellation policy decisions
 

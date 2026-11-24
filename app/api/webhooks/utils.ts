@@ -7,7 +7,7 @@ import prisma from "../../../lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { bookTopUpRefund } from "@/lib/payments/operations/wallet-refund";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
   isLegalDisputeTransition,
   isTerminalDisputeChange,
@@ -1490,8 +1490,9 @@ export async function settleWonDispute(
 }
 
 /**
- * LOST / CHARGE_REFUNDED: reverse `lostAmountPaise / payment.amount` of every
- * share, then release this dispute's hold, so a partial loss leaves the rest
+ * LOST / CHARGE_REFUNDED: settle on the lost amount, never above the disputed
+ * amount, reversing that fraction of `payment.amount` from every share on
+ * integers, then release this dispute's hold, so a partial loss leaves the rest
  * payable. A share goes REFUNDED only once its whole amount is reversed.
  * Callers run it once, on the CAS that moves the dispute to its verdict.
  */
@@ -1501,8 +1502,8 @@ export async function settleLostDispute(
   lostAmountPaise: number,
 ): Promise<LostDisputeSettlement> {
   const { disputeId } = dispute;
-  const lostPaise = Math.max(0, lostAmountPaise);
-  if (lostPaise === 0) {
+  const lostPaise = Math.min(Math.max(0, lostAmountPaise), dispute.amountPaise);
+  if (lostPaise <= 0) {
     await releaseDisputeHolds(tx, dispute);
     return NO_CLAWBACK_PAGE;
   }
@@ -1517,11 +1518,15 @@ export async function settleLostDispute(
       },
     })) > 0;
 
-  // Floored per share and capped at what is left to reverse.
-  const prorationFactor =
+  // Floored per share on integers; a loss of the whole payment takes the whole share.
+  const lostShareOf = (sharePaise: number): number =>
     dispute.payment.amount > 0
-      ? Math.min(lostPaise / dispute.payment.amount, 1)
-      : 1;
+      ? prorate(
+          sharePaise,
+          Math.min(lostPaise, dispute.payment.amount),
+          dispute.payment.amount,
+        )
+      : sharePaise;
 
   const lostConsultantEarnings = await tx.consultantEarnings.findMany({
     where: {
@@ -1560,7 +1565,7 @@ export async function settleLostDispute(
     const { reversedPaise: reversalNow } = await applyCappedEarningReversal(
       tx,
       earning,
-      Math.floor(earning.consultantSharePaise * prorationFactor),
+      lostShareOf(earning.consultantSharePaise),
       LOST_REVERSIBLE,
     );
     const consultantReversalApplied = reversalNow > 0;
@@ -1582,9 +1587,14 @@ export async function settleLostDispute(
     // reversed separately by recordTdsReversal.
     const payoutGross = Number(earning.payout?.amount ?? 0);
     const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
-    const netFraction =
-      payoutGross > 0 ? Math.max(0, 1 - payoutTds / payoutGross) : 1;
-    const netClawbackPaise = Math.floor(reversalNow * netFraction);
+    const netClawbackPaise =
+      payoutGross > 0
+        ? prorate(
+            reversalNow,
+            Math.max(0, payoutGross - payoutTds),
+            payoutGross,
+          )
+        : reversalNow;
 
     if (earning.status === "PAID" && consultantReversalApplied) {
       consultantManualRecoveryPaise += netClawbackPaise;
@@ -1668,11 +1678,7 @@ export async function settleLostDispute(
     // The shared CAS writer pins the prior amount and writes an absolute
     // value, so two LOST disputes compose to min(share, a + b).
     const orgApplied = (
-      await applyCappedOrgEarningReversal(
-        tx,
-        oe,
-        Math.floor(oe.orgSharePaise * prorationFactor),
-      )
+      await applyCappedOrgEarningReversal(tx, oe, lostShareOf(oe.orgSharePaise))
     ).reversedPaise;
 
     if (
@@ -1787,8 +1793,9 @@ export interface DisputeVerdictSettlement extends LostDisputeSettlement {
 }
 
 /**
- * A lost verdict settles on the reported deduction when it is above 0; a 0 or
- * missing figure is unknown, so the disputed amount is used.
+ * A lost verdict settles on the reported deduction when it is above 0, capped
+ * at the disputed amount; a 0 or missing figure is unknown, so the disputed
+ * amount is used.
  */
 function lostDisputeAmount(
   dispute: DisputeSettlementInput,
@@ -1797,7 +1804,7 @@ function lostDisputeAmount(
 ): { settledPaise: number; mismatch: DeductionMismatch | null } {
   const settledPaise =
     reportedPaise !== null && reportedPaise > 0
-      ? reportedPaise
+      ? Math.min(reportedPaise, dispute.amountPaise)
       : dispute.amountPaise;
   const mismatch =
     reportedPaise !== null && reportedPaise !== dispute.amountPaise
