@@ -687,7 +687,12 @@ claim (`noShowClaimOf` null) leaves the row for ops. The third is the void refun
 `settle-cancelled-sessions` keeps an unconfirmed negative void out of its cohort
 (`SETTLEABLE_VOID_VERDICT`, explicit about a null outcome). The fourth is the class
 series ledger, which counts no unconfirmed negative void, so the exit right and the
-reliability flag wait for `onClassVoidConfirmed` in the stamp's transaction. The pass
+reliability flag wait for `onClassVoidConfirmed` in the stamp's transaction. Every
+class remedy that prices or refunds a void (the series exit and an ordinary leave,
+`EXIT_WAITS_FOR_VERDICT`; the host's whole-class cancel, `CANCEL_WAITS_FOR_VERDICT`;
+a make-up skip's refund, `MAKEUP_SKIP_WAITS_FOR_VERDICT`, rechecked under the
+appointment lock) refuses while a void it covers is pending, through
+`pendingVoidRefusal` (`lib/booking/pending-void-gate.ts`). The pass
 reads outages with `readOverlappingOutages` (no row cap). The notices and the corrected
 "automatic full refund" copy are planned in
 `docs/decisions/2026-11-23-session-outcome-report-window.md` (step 5).
