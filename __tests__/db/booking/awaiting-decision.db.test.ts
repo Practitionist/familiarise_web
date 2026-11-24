@@ -348,9 +348,9 @@ const completionNoticesFor = (appointmentId: string) =>
     jest.requireMock("../../../lib/email/senders/booking") as {
       stageAppointmentCompletedEmails: jest.Mock;
     }
-  ).stageAppointmentCompletedEmails.mock.calls.filter((call) =>
+  ).stageAppointmentCompletedEmails.mock.calls.filter((call: unknown[]) =>
     call.some(
-      (arg) =>
+      (arg: unknown) =>
         typeof arg === "object" &&
         arg !== null &&
         (arg as { appointmentId?: string }).appointmentId === appointmentId,
