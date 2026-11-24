@@ -249,6 +249,11 @@ describe("a session parked for ops holds its booking's status", () => {
       bookingStatus({ ...plan, sessions: over, planEnded: true }, "CONSULTEE")
         .label,
     ).toBe(WAITING);
+    // A read without sessions (the back office) knows a one-session booking is over.
+    expect(
+      staffStatus(staffRow({ status: "approved", awaitingDecision: true }))
+        .label,
+    ).toBe(WAITING);
   });
 
   it("an unverified inconclusive or host-absent session is not held; a recorded no-join is", () => {
