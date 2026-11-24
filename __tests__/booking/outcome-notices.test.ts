@@ -49,6 +49,7 @@ import {
 } from "@/lib/booking/outcome-notices";
 import type { SessionOutcomeNoticeEmailArgs } from "@/lib/email/senders/booking";
 import type { Tx } from "@/lib/prisma";
+import { SupportThreadCategoryEnum } from "@/schemas/enums";
 
 const ZONES: Record<string, string> = {
   host: "America/New_York",
@@ -147,6 +148,9 @@ it("stages one proposed-verdict bell per side, dated in each recipient's zone, w
     "/dashboard/consultant/cp-1/support/requests/b_apt-1?intent=NO_SHOW&occurrence=occ-1",
   );
   expect(host.payload.message).toContain("only you and our team see");
+  // The request page seeds its turn from `?intent=`, which must name a flow category.
+  const intent = new URL(learner.payload.reportUrl).searchParams.get("intent");
+  expect(SupportThreadCategoryEnum.parse(intent)).toBe("NO_SHOW");
   expect(new Set(rows.map((r) => r.transactionId)).size).toBe(2);
 
   // The email is built from the same words, in the email recipient's own zone.
