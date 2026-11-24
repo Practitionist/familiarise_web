@@ -170,6 +170,7 @@ it("a parked session shows no stars; a verifying one the reviews rule allows kee
       }}
       supportRequestsBase="/support/requests"
       consultantId="cp-1"
+      operatorView={false}
     />,
   );
   // Both rows reach the schedule, so the difference is the page's gate.
