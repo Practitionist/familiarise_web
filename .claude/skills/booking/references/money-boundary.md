@@ -681,7 +681,8 @@ the pass, or from ops Confirm in the door's transaction. One transaction CASes t
 consultation to `CANCELLED` (its `WHERE` carries the payment, the strike session and
 `CLAIM_VETO` over every other live session), moves the proposed sessions to
 `CANCELLED` with the strike session's stamp, stamps the `consultant-no-show:<paymentId>`
-owed marker and writes the strike; the refund is driven after the commit. A declined
+owed marker and writes the strike, after re-reading outages under the cancel's row
+lock (an overlapping one rolls the claim back); the refund is driven after the commit. A declined
 claim (`noShowClaimOf` null) leaves the row for ops. The third is the void refund:
 `settle-cancelled-sessions` keeps an unconfirmed negative void out of its cohort
 (`SETTLEABLE_VOID_VERDICT`, explicit about a null outcome). The fourth is the class
