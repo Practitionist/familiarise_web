@@ -12,6 +12,15 @@ export type NoticeSide = "host" | "learner";
 export type NoticeBooking =
   "consultation" | "subscription" | "trial" | "class" | "webinar";
 
+/** Where a seat's refund goes, from its payment's funding legs: the refund cascade reverses each leg to its source. */
+export type RefundDestination = "you" | "organisation" | "split";
+
+/** The learner seat's refund: its formatted amount (null for a group session's per-session share) and destination. */
+export interface SeatRefund {
+  amountText: string | null;
+  destination: RefundDestination;
+}
+
 export interface NoticeCopy {
   subject: string;
   lines: string[];
@@ -29,8 +38,8 @@ export interface ProposedNoticeInput {
   windowClosesWhen: string;
   /** `outcomeAt` + the 14-day make-up window, when a void's refund falls due, in the recipient's zone. */
   makeUpByWhen: string;
-  /** The consultation's refundable balance, formatted from paise; null when nothing was paid. */
-  refundText: string | null;
+  /** The recipient seat's refund; null for a host, or a seat nothing was paid for. */
+  refund: SeatRefund | null;
   hasRecording: boolean;
 }
 
@@ -64,6 +73,19 @@ const RECORDED: Record<NegativeMoneyOutcome, Record<NoticeSide, string>> = {
   },
 };
 
+/** "refund ₹1,500.00 automatically after …", naming the organisation when it funded the seat. */
+function refundClause(refund: SeatRefund, tail: string): string {
+  const amount = refund.amountText ?? "it";
+  switch (refund.destination) {
+    case "you":
+      return `refund ${amount} ${tail}`;
+    case "organisation":
+      return `return ${amount} to your organisation, which paid for your seat, ${tail}`;
+    case "split":
+      return `refund ${amount} the way it was paid (your share to you, your organisation's share to your organisation) ${tail}`;
+  }
+}
+
 /** What a void does once confirmed, by the kind of booking: the settle sweep refunds it after the make-up window. */
 function voidRemedy(input: ProposedNoticeInput, side: NoticeSide): string {
   const by = input.makeUpByWhen;
@@ -76,16 +98,19 @@ function voidRemedy(input: ProposedNoticeInput, side: NoticeSide): string {
       return "the session won't count as held";
     case "consultation":
       if (side === "host") {
-        return `it counts as a missed session, and the learner is refunded in full automatically after ${by}`;
+        return `it counts as a missed session, and the booking is refunded in full automatically after ${by}`;
       }
-      return input.refundText
-        ? `it counts as a missed session, and we'll refund ${input.refundText} automatically after ${by}`
+      return input.refund
+        ? `it counts as a missed session, and we'll ${refundClause(input.refund, `automatically after ${by}`)}`
         : "it counts as a missed session";
     case "class":
     case "webinar":
-      return side === "learner"
-        ? `it counts as a missed session: the expert has until ${by} to hold a make-up, or that session is refunded to you automatically`
-        : `it counts as a missed session: hold a make-up by ${by}, or that session is refunded to your learners automatically`;
+      if (side === "host") {
+        return `it counts as a missed session: hold a make-up by ${by}, or that session is refunded automatically`;
+      }
+      return input.refund
+        ? `it counts as a missed session: the expert has until ${by} to hold a make-up, or we'll ${refundClause(input.refund, "automatically")}`
+        : `it counts as a missed session: the expert has until ${by} to hold a make-up`;
   }
 }
 
@@ -95,8 +120,8 @@ function learnerSilence(input: ProposedNoticeInput): string {
     return `If nobody tells us otherwise by ${close}, it counts as held and isn't refunded.`;
   }
   if (input.outcome === "HOST_ABSENT" && input.booking === "consultation") {
-    return input.refundText
-      ? `We'll refund ${input.refundText} automatically after ${close}, or sooner if you confirm the expert didn't join.`
+    return input.refund
+      ? `We'll ${refundClause(input.refund, `automatically after ${close}`)}, or sooner if you confirm the expert didn't join.`
       : `We'll cancel the session automatically after ${close}, or sooner if you confirm the expert didn't join.`;
   }
   return `After ${close}, or sooner if you confirm it, ${voidRemedy(input, "learner")}.`;
@@ -108,7 +133,7 @@ function hostSilence(input: ProposedNoticeInput): string {
     return `${lead} it counts as held and your fee for it stays with you.`;
   }
   if (input.outcome === "HOST_ABSENT" && input.booking === "consultation") {
-    return `${lead} the learner is refunded in full and the miss is added to your reliability record, which only you and our team see.`;
+    return `${lead} the booking is refunded in full and the miss is added to your reliability record, which only you and our team see.`;
   }
   return `${lead} ${voidRemedy(input, "host")}.`;
 }

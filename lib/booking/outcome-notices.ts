@@ -44,6 +44,8 @@ import {
   type NoticeBooking,
   type NoticeCopy,
   type NoticeSide,
+  type RefundDestination,
+  type SeatRefund,
 } from "./outcome-notice-copy";
 import { liveLearnerSeat } from "./participants";
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
@@ -54,7 +56,18 @@ const TITLED_PLAN = {
   consultantProfile: { select: { userId: true } },
 } satisfies Prisma.ConsultationPlanSelect;
 
-/** Who is on each side of the booking, what it is, and what a consultation refund would return. */
+/** A payment's refundable balance and the funding legs its refund reverses. */
+const SEAT_PAYMENT = {
+  userId: true,
+  paymentStatus: true,
+  deletedAt: true,
+  amount: true,
+  currency: true,
+  ...REFUNDABLE_BALANCE_SELECT,
+  legs: { select: { source: true, amountPaise: true } },
+} satisfies Prisma.PaymentSelect;
+
+/** Who is on each side of the booking, what it is, and what each learner seat's refund would return, and where. */
 const PARTIES_SELECT = {
   organizationId: true,
   consultation: { select: { consultationPlan: { select: TITLED_PLAN } } },
@@ -83,10 +96,13 @@ const PARTIES_SELECT = {
       },
     },
   },
-  participants: { where: liveLearnerSeat(), select: { userId: true } },
+  participants: {
+    where: liveLearnerSeat(),
+    select: { userId: true, payment: { select: SEAT_PAYMENT } },
+  },
   payment: {
     where: { paymentStatus: "SUCCEEDED", deletedAt: null },
-    select: { amount: true, currency: true, ...REFUNDABLE_BALANCE_SELECT },
+    select: SEAT_PAYMENT,
   },
 } satisfies Prisma.AppointmentSelect;
 
@@ -116,16 +132,66 @@ function bookingOf(row: OutcomePartiesRow) {
   return found?.[1] ? { booking: found[0], plan: found[1] } : null;
 }
 
-/** The refundable balance of the booking's captured payments, formatted; null when nothing was paid. */
-function refundTextOf(row: OutcomePartiesRow): string | null {
-  const paise = row.payment.reduce(
+type SeatPayment = OutcomePartiesRow["payment"][number];
+
+/** Legs an organisation funded; the refund cascade returns each to the organisation, never to the learner's card. */
+const ORGANISATION_LEGS = new Set<string>([
+  "WALLET",
+  "INVOICE_ACCRUAL",
+  "OVERAGE_INVOICE_ACCRUAL",
+  "LICENSE",
+]);
+
+/** Where a refund of these payments goes: the learner's own legs (card, referral credit), the organisation's, or both. */
+export function refundDestinationOf(
+  payments: readonly Pick<SeatPayment, "legs">[],
+): RefundDestination {
+  const funded = payments
+    .flatMap((p) => p.legs)
+    .filter((l) => l.amountPaise > 0);
+  const organisation = funded.some((l) => ORGANISATION_LEGS.has(l.source));
+  const own =
+    funded.length === 0 || funded.some((l) => !ORGANISATION_LEGS.has(l.source));
+  if (organisation && own) return "split";
+  return organisation ? "organisation" : "you";
+}
+
+/**
+ * One learner's refund: their seat's captured payment, else the booking's
+ * payments in their name. A 1:1 consultation names the amount; a group seat's
+ * per-session share is left unnamed. Null when nothing refundable was paid.
+ */
+function seatRefundOf(
+  row: OutcomePartiesRow,
+  booking: NoticeBooking,
+  seat: OutcomePartiesRow["participants"][number],
+): SeatRefund | null {
+  if (
+    booking !== "consultation" &&
+    booking !== "class" &&
+    booking !== "webinar"
+  ) {
+    return null;
+  }
+  const own =
+    seat.payment?.paymentStatus === "SUCCEEDED" && !seat.payment.deletedAt
+      ? [seat.payment]
+      : row.payment.filter(
+          (p) => p.userId === seat.userId || booking === "consultation",
+        );
+  const paise = own.reduce(
     (sum, p) => sum + refundableBalancePaise(Number(p.amount), p),
     0,
   );
-  const currency = row.payment[0]?.currency;
-  return paise > 0 && currency
-    ? formatNotificationMoney(paise, currency)
-    : null;
+  const currency = own[0]?.currency;
+  if (paise <= 0 || !currency) return null;
+  return {
+    amountText:
+      booking === "consultation"
+        ? formatNotificationMoney(paise, currency)
+        : null,
+    destination: refundDestinationOf(own),
+  };
 }
 
 interface Party {
@@ -133,6 +199,8 @@ interface Party {
   side: NoticeSide;
   consultantProfileId: string | null;
   consulteeProfileId: string | null;
+  /** A learner's refund, if their seat's verdict voids it. */
+  refund: SeatRefund | null;
 }
 
 async function readParties(appointmentId: string) {
@@ -149,12 +217,17 @@ async function readParties(appointmentId: string) {
     select: { id: true, consultantProfileId: true, consulteeProfileId: true },
   });
   const byId = new Map(users.map((u) => [u.id, u]));
-  const parties: Party[] = ids.map((userId) => ({
-    userId,
-    side: hosts.includes(userId) ? "host" : "learner",
-    consultantProfileId: byId.get(userId)?.consultantProfileId ?? null,
-    consulteeProfileId: byId.get(userId)?.consulteeProfileId ?? null,
-  }));
+  const seats = new Map(row.participants.map((p) => [p.userId, p]));
+  const parties: Party[] = ids.map((userId) => {
+    const seat = hosts.includes(userId) ? undefined : seats.get(userId);
+    return {
+      userId,
+      side: seat ? "learner" : "host",
+      consultantProfileId: byId.get(userId)?.consultantProfileId ?? null,
+      consulteeProfileId: byId.get(userId)?.consulteeProfileId ?? null,
+      refund: seat ? seatRefundOf(row, shape.booking, seat) : null,
+    };
+  });
   return { row, ...shape, parties };
 }
 
@@ -268,7 +341,6 @@ export async function prepareProposedOutcomeNotices(
   const makeUpBy = new Date(
     session.outcomeAt.getTime() + MAKEUP_WINDOW_DAYS * 86_400_000,
   );
-  const refundText = booking === "consultation" ? refundTextOf(row) : null;
   const hasRecording =
     session.outcome === "LEARNER_ABSENT" &&
     plan.recordingEnabled &&
@@ -287,7 +359,7 @@ export async function prepareProposedOutcomeNotices(
       sessionWhen: when(session.startsAt, zone),
       windowClosesWhen: when(closesAt, zone),
       makeUpByWhen: when(makeUpBy, zone),
-      refundText,
+      refund: party.refund,
       hasRecording,
     }),
     href: reportHref(party, session.appointmentId, session.occurrenceId),

@@ -70,16 +70,29 @@ const consultation: OutcomePartiesRow = {
   trial: null,
   webinar: null,
   class: null,
-  participants: [{ userId: "learner" }],
-  payment: [
-    {
-      amount: 150_000,
-      currency: "INR",
-      refunds: [],
-      disputes: [],
-    },
-  ],
+  participants: [{ userId: "learner", payment: null }],
+  payment: [cardPayment("learner", 150_000)],
 };
+
+/** A captured payment as `SEAT_PAYMENT` reads it, funded by the given legs. */
+function cardPayment(
+  userId: string,
+  amount: number,
+  legs: { source: "CARD" | "WALLET"; amountPaise: number }[] = [
+    { source: "CARD", amountPaise: amount },
+  ],
+) {
+  return {
+    userId,
+    paymentStatus: "SUCCEEDED" as const,
+    deletedAt: null,
+    amount,
+    currency: "INR" as const,
+    refunds: [],
+    disputes: [],
+    legs,
+  };
+}
 
 const SESSION = {
   occurrenceId: "occ-1",
@@ -212,4 +225,55 @@ it("stages one reviewed notice per side that opens the booking", async () => {
   expect(
     rows.find((r) => r.recipients[0] === "learner")!.payload.dateTime,
   ).toBe("Mon, 23 Nov 2026 · 3:30 PM IST");
+});
+
+it("names each group seat's refund destination from its own funding: the organisation's wallet or the learner's card", async () => {
+  // A class with a wallet-sponsored seat and a card-paid seat.
+  const sponsored = cardPayment("sponsored", 50_000, [
+    { source: "WALLET", amountPaise: 50_000 },
+  ]);
+  findAppointment.mockResolvedValue({
+    ...consultation,
+    consultation: null,
+    class: { classPlan: { ...plan("Python cohort"), collaborators: [] } },
+    participants: [
+      { userId: "sponsored", payment: sponsored },
+      { userId: "carded", payment: cardPayment("carded", 50_000) },
+    ],
+    payment: [sponsored, cardPayment("carded", 50_000)],
+  } satisfies OutcomePartiesRow);
+  findUsers.mockResolvedValue([]);
+  ZONES.sponsored = "Asia/Kolkata";
+  ZONES.carded = "Asia/Kolkata";
+
+  const prepared = await prepareProposedOutcomeNotices({
+    ...SESSION,
+    outcome: "HOST_ABSENT",
+    outcomeAt: OUTCOME_AT,
+  });
+  const { tx, createManyAndReturn } = txWith();
+  await stageOutcomeNotices(tx, prepared!);
+  const rows = createManyAndReturn.mock.calls[0][0].data as unknown as {
+    recipients: string[];
+    payload: Record<string, string>;
+  }[];
+  const bell = (id: string) =>
+    rows.find((r) => r.recipients[0] === id)!.payload.message;
+  const emailArgs = prepareEmails.mock
+    .calls[0][0] as unknown as SessionOutcomeNoticeEmailArgs;
+  const email = (id: string) =>
+    emailArgs.noticeFor(id, "Asia/Kolkata").copy.lines.join(" ");
+
+  for (const text of [bell("sponsored"), email("sponsored")]) {
+    expect(text).toContain(
+      "or we'll return it to your organisation, which paid for your seat, automatically.",
+    );
+    expect(text).not.toContain("refund it automatically");
+  }
+  for (const text of [bell("carded"), email("carded")]) {
+    expect(text).toContain("or we'll refund it automatically.");
+  }
+  expect(bell("host")).toContain(
+    "hold a make-up by Mon, 7 Dec 2026 · 6:45 AM EST, or that session is refunded automatically",
+  );
 });
