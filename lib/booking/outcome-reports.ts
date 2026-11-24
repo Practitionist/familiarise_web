@@ -123,8 +123,8 @@ export function judgeReports(
   reports: readonly OutcomeReport[],
   verdict: ReportedVerdict,
 ): "disputed" | "agreed" | "silent" {
-  const effects = reports.map((r) => countedEffect(r, verdict));
-  if (effects.includes("dispute")) return "disputed";
-  if (effects.includes("agree")) return "agreed";
+  const effects = new Set(reports.map((r) => countedEffect(r, verdict)));
+  if (effects.has("dispute")) return "disputed";
+  if (effects.has("agree")) return "agreed";
   return "silent";
 }

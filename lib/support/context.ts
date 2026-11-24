@@ -169,11 +169,8 @@ export async function buildSupportContext(
     ? (endedRuns.find((run) => run.id === occurrenceId) ?? null)
     : null;
   // A named session is reportable only once it has ended; otherwise every ended one is.
-  const reportSessions = occurrenceId
-    ? namedEnded
-      ? [namedEnded]
-      : []
-    : endedRuns;
+  let reportSessions = endedRuns;
+  if (occurrenceId) reportSessions = namedEnded ? [namedEnded] : [];
 
   // A retrospective intent is ABOUT the finished call, so that is the session
   // the whole context describes. Everything else keeps the current-or-next

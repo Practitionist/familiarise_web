@@ -601,7 +601,7 @@ async function resolveThread(
 }
 
 /** The caller's case in this booking and scope that already holds this turn, whatever its status. */
-async function caseHoldingTurn(
+function caseHoldingTurn(
   intake: CreateSupportCaseInput & { appointmentId: string },
   clientTurnId: string,
 ): Promise<SupportCase | null> {
