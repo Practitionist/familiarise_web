@@ -1079,12 +1079,13 @@ async function firstPaymentIdOfOrder(
 }
 
 /**
- * List all refunds for a payment: an order id, or the `pay_…` id of one
- * capture when a Payment row records a single duplicate capture.
+ * One page of the refunds of a payment: an order id, or the `pay_…` id of one
+ * capture. A page shorter than `limit` is the last one.
  */
 export async function listRazorpayRefunds(
   orderId: string,
   limit: number = 10,
+  skip: number = 0,
 ): Promise<RefundResult[]> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
@@ -1109,6 +1110,7 @@ export async function listRazorpayRefunds(
       () =>
         razorpayClient.payments.fetchMultipleRefund(paymentId, {
           count: limit,
+          skip,
         }),
     );
 
@@ -1122,8 +1124,11 @@ export async function listRazorpayRefunds(
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
     const refundError = handleRazorpayRefundError(error);
-    // The reconciler reports an unknown order once per run, not per row.
-    if (!isRazorpayUnknownOrderError(refundError)) {
+    // The reconciler reports an unknown id once per run, not per row.
+    if (
+      !isRazorpayUnknownOrderError(refundError) &&
+      !isRazorpayUnknownRefundIdError(refundError)
+    ) {
       reportSentryError(error, {
         subsystem: "payments",
         tags: { provider: "razorpay" },

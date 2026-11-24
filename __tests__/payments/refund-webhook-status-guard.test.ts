@@ -116,6 +116,16 @@ const PAYMENT_ROW = {
   billingAccountId: null,
 };
 
+/** What a hand refund records when it settles an owed refund. */
+const SETTLED_OWED = {
+  key: "owed:pay_1",
+  reason: "booking cancelled",
+  owedPaise: 10_000,
+  settledPaise: 10_000,
+  stillOwedPaise: 0,
+  note: "settled by hand",
+};
+
 const store: { refunds: RefundRow[] } = { refunds: [] };
 
 function resetStore() {
@@ -209,11 +219,13 @@ function txStub() {
           where,
           data,
         }: {
-          where: { id: string; status: RefundStatus };
+          where: { id: string; status?: RefundStatus };
           data: Partial<RefundRow>;
         }) => {
           const row = store.refunds.find(
-            (r) => r.id === where.id && r.status === where.status,
+            (r) =>
+              r.id === where.id &&
+              (where.status === undefined || r.status === where.status),
           );
           if (!row) return { count: 0 };
           Object.assign(row, data);
@@ -280,6 +292,46 @@ describe("handleRefundCreated status transition guard", () => {
     await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "processed");
 
     expect(store.refunds[0].status).toBe("SUCCEEDED");
+    expect(applyRefundCascade).toHaveBeenCalledTimes(1);
+    expect(applyRefundCascade).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ paymentId: "pay_1", refundId: "row_1" }),
+    );
+  });
+
+  test("a late refund.processed claims the FAILED placeholder its notes name instead of booking a second row", async () => {
+    store.refunds.push({
+      id: "row_1",
+      refundId: "pending_row_1",
+      status: "FAILED",
+      paymentId: "pay_1",
+      amountPaise: 10_000,
+      // A hand refund whose settled owed amount was given back when it failed.
+      metadata: {
+        settledOwed: SETTLED_OWED,
+        settledOwedRestored: true,
+      },
+    });
+
+    await handleRefundCreated(
+      "rfnd_late",
+      "order_1",
+      10_000,
+      "INR",
+      "processed",
+      "pay_gateway_1",
+      { reservationId: "row_1" },
+    );
+
+    expect(store.refunds).toEqual([
+      expect.objectContaining({
+        id: "row_1",
+        refundId: "rfnd_late",
+        status: "SUCCEEDED",
+        // The late success takes the given-back owed refund off again, once.
+        metadata: expect.objectContaining({ settledOwedResettled: true }),
+      }),
+    ]);
     expect(applyRefundCascade).toHaveBeenCalledTimes(1);
     expect(applyRefundCascade).toHaveBeenCalledWith(
       expect.anything(),

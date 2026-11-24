@@ -2031,7 +2031,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           reconciledCount: r.reconciledCount,
           failedCount: r.failedCount,
           skippedCount: r.skippedCount,
-          failedUnknownId: r.failedUnknownId,
+          unknownAtGateway: r.unknownAtGateway,
           redrivenCount: r.redrivenCount,
           redriveFailedCount: r.redriveFailedCount,
           redriveDeadLettered: r.redriveDeadLettered,

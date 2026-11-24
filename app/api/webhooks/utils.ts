@@ -946,13 +946,18 @@ export async function handleRefundCreated(
               amountPaise: amount,
               refundId: { startsWith: "pending_" },
             },
-            select: { id: true, refundId: true, reason: true },
+            select: { id: true, refundId: true, reason: true, status: true },
           });
           if (reservation) {
+            // A success for a placeholder already marked FAILED moved the money
+            // after all: it claims that row rather than booking a second one.
+            const lateSuccess =
+              reservation.status === "FAILED" &&
+              mappedNewStatus === "SUCCEEDED";
             const claimed = await tx.refund.updateMany({
               where: {
                 id: reservation.id,
-                status: "PENDING",
+                status: lateSuccess ? "FAILED" : "PENDING",
                 refundId: reservation.refundId,
               },
               data: {
@@ -965,6 +970,9 @@ export async function handleRefundCreated(
               if (mappedNewStatus === "FAILED") {
                 await restoreOwedOnFailedRefund(tx, reservation.id);
                 await countOwedDriveFailure(tx, reservation.id);
+              }
+              if (lateSuccess) {
+                await resettleOwedOnLateSuccess(tx, reservation.id);
               }
               if (mappedNewStatus === "SUCCEEDED") {
                 await runRefundSideEffects(
