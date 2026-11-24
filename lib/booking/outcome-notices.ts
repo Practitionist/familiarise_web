@@ -90,9 +90,16 @@ const PARTIES_SELECT = {
   },
 } satisfies Prisma.AppointmentSelect;
 
-export type OutcomePartiesRow = Prisma.AppointmentGetPayload<{
-  select: typeof PARTIES_SELECT;
-}>;
+const readPartiesRow = (appointmentId: string) =>
+  prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    select: PARTIES_SELECT,
+  });
+
+/** The row as the client returns it: money columns are numbers at this boundary. */
+export type OutcomePartiesRow = NonNullable<
+  Awaited<ReturnType<typeof readPartiesRow>>
+>;
 
 function bookingOf(row: OutcomePartiesRow) {
   const shapes: [
@@ -129,10 +136,7 @@ interface Party {
 }
 
 async function readParties(appointmentId: string) {
-  const row = await prisma.appointment.findUnique({
-    where: { id: appointmentId },
-    select: PARTIES_SELECT,
-  });
+  const row = await readPartiesRow(appointmentId);
   const shape = row ? bookingOf(row) : null;
   if (!row || !shape) return null;
   const hosts = sessionHostUserIds(row);

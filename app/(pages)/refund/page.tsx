@@ -230,8 +230,8 @@ export default function RefundPolicyPage() {
                     <li>
                       Either side can report a problem with the record inside
                       that window. If the call record is incomplete, or the
-                      other side disputes it, our team checks it before anything
-                      is applied.
+                      other side tells us otherwise, our team checks it before
+                      anything is applied.
                     </li>
                     <li>
                       Live classes and webinars: a voided session is offered as
