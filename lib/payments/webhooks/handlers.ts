@@ -48,7 +48,12 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isExclusionViolation, isWriteConflict } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
+import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
+import { consulteeHasOverlappingSession } from "@/lib/payments/checkout/occupancy-validate";
 import {
   recordSystemError,
   recordSystemErrorSafe,
@@ -1978,25 +1983,20 @@ async function confirmSeatAfterCapture(
     eventId: string;
     appointmentId: string;
     userId: string;
-    /** Set when the seat's hold lapsed before this capture: it confirms only if a place is still free. */
-    lapsedAt?: Date;
+    /** The one clock of this confirmation. */
+    now: Date;
+    /** The seat's hold lapsed before this capture: it confirms only if a place is still free. */
+    holdExpired: boolean;
   },
 ): Promise<SeatCaptureOutcome> {
-  // A lapsed seat stopped counting for capacity, so another buyer may hold
-  // the last place now; without room it is released and the capture refunded.
+  // A HELD seat is promoted only while checkout would still sell it to this
+  // buyer; otherwise it is released here and the capture refunded.
+  const refusal = await heldSeatRefusal(tx, args);
+  const releasedHere =
+    refusal !== null &&
+    (await transitionParticipant(tx, args.casWhere, "CANCELLED")) > 0;
   if (
-    args.lapsedAt &&
-    !(await seatStillFits(
-      tx,
-      args.kind,
-      args.eventId,
-      args.userId,
-      args.lapsedAt,
-    ))
-  ) {
-    await transitionParticipant(tx, args.casWhere, "CANCELLED");
-  }
-  if (
+    !releasedHere &&
     (await transitionParticipant(tx, args.casWhere, "CONFIRMED", {
       history: { reason: "registered", actorUserId: args.userId },
     })) > 0
@@ -2040,12 +2040,105 @@ async function confirmSeatAfterCapture(
     eventId: args.eventId,
     appointmentId: args.appointmentId,
     userId: args.userId,
-    reason: `the seat is ${fresh.status} — the buyer left before the payment captured`,
+    reason:
+      releasedHere && refusal
+        ? refusal
+        : `the seat is ${fresh.status} — the buyer left before the payment captured`,
     participantId: fresh.id,
     seatStatus: fresh.status,
     seatPaymentId: fresh.paymentId,
   });
   return { kind: "released" };
+}
+
+/**
+ * Why checkout would not sell this seat to this buyer now, or null: the sale
+ * rule of the webinar and class checkout handlers (a session ahead, enrolment
+ * open), room for a seat whose hold lapsed, then the buyer's own calendar.
+ */
+async function heldSeatRefusal(
+  tx: Tx,
+  args: {
+    kind: "class" | "webinar";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+    now: Date;
+    holdExpired: boolean;
+  },
+): Promise<string | null> {
+  const { kind, eventId, now } = args;
+  const sessions = await tx.appointmentOccurrence.findMany({
+    where: {
+      appointment:
+        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+      deletedAt: null,
+    },
+    orderBy: { startsAt: "asc" },
+    select: {
+      ordinal: true,
+      startsAt: true,
+      endsAt: true,
+      completionStatus: true,
+    },
+  });
+  if (kind === "webinar") {
+    const webinar = await tx.webinar.findUnique({
+      where: { id: eventId },
+      select: { status: true },
+    });
+    if (webinar?.status !== "SCHEDULED") {
+      return `the webinar is ${webinar?.status ?? "missing"}`;
+    }
+    const first = sessions.find((s) => !isDeadOccurrence(s));
+    if (!first) return "the webinar has no live session";
+    if (first.endsAt < now) return "the webinar has ended";
+  } else {
+    const batch = await tx.class.findUnique({
+      where: { id: eventId },
+      select: {
+        classPlan: {
+          select: {
+            price: true,
+            totalSessions: true,
+            lateJoinUntilSession: true,
+          },
+        },
+      },
+    });
+    if (!batch) return "the class is missing";
+    const last = sessions.findLast((s) => s.completionStatus !== "CANCELLED");
+    if (last && last.endsAt < now) return "the class has ended";
+    const enrolment = classEnrolmentFrom({
+      pricePaise: batch.classPlan.price,
+      N: batch.classPlan.totalSessions,
+      lateJoinUntilSession: batch.classPlan.lateJoinUntilSession,
+      sessions,
+      now,
+    });
+    if (enrolment.state !== "open") {
+      return `enrolment for the class is ${enrolment.state}`;
+    }
+  }
+  // A lapsed seat stopped counting for capacity, so another buyer may hold
+  // the last place now.
+  if (
+    args.holdExpired &&
+    !(await seatStillFits(tx, kind, eventId, args.userId, now))
+  ) {
+    return "the hold lapsed and the event has no place left";
+  }
+  for (const s of sessions) {
+    if (isDeadOccurrence(s) || s.endsAt <= now) continue;
+    const busy = await consulteeHasOverlappingSession(tx, {
+      userId: args.userId,
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      selfHoldAppointmentIds: [args.appointmentId],
+    });
+    if (busy) return "the buyer has another live booking at that time";
+  }
+  return null;
 }
 
 /** Whether the event still has a place for this buyer, counting only seats that hold one now. */
@@ -2491,7 +2584,8 @@ export async function confirmExistingAppointment(
       eventId: classId,
       appointmentId,
       userId,
-      lapsedAt: opts?.holdExpired ? (opts.now ?? new Date()) : undefined,
+      now: opts?.now ?? new Date(),
+      holdExpired: opts?.holdExpired === true,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };
@@ -2532,7 +2626,8 @@ export async function confirmExistingAppointment(
       eventId: webinarId,
       appointmentId,
       userId,
-      lapsedAt: opts?.holdExpired ? (opts.now ?? new Date()) : undefined,
+      now: opts?.now ?? new Date(),
+      holdExpired: opts?.holdExpired === true,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };
