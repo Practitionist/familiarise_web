@@ -947,8 +947,11 @@ function deriveTimeline(
   };
   const completed: TimelineEvent = {
     at: null,
-    actor: c,
-    label: "Completed",
+    actor: booking === "AWAITING_DECISION" ? "" : c,
+    label:
+      booking === "AWAITING_DECISION"
+        ? "Our team decides what happened"
+        : "Completed",
     done: booking === "COMPLETED",
   };
 
