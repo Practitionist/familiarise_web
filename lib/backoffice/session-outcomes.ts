@@ -57,6 +57,7 @@ import {
   type StagedOutcomeNotices,
 } from "@/lib/booking/outcome-notices";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { reportSentryError } from "@/lib/observability/report";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import {
   NEEDS_HUMAN_DEFAULT_SORT,
@@ -331,10 +332,12 @@ export async function overturnSessionOutcome(args: {
           outcome: args.outcome,
           reviewedAt: now,
         }).catch((err: unknown) => {
-          console.error(
-            "[session.set-outcome] Failed to prepare the reviewed notices:",
-            err,
-          );
+          // The overturn stands without its notice; one request, one report.
+          reportSentryError(err, {
+            subsystem: "booking",
+            op: "session.set-outcome.reviewed-notice",
+            extra: { occurrenceId: args.occurrenceId },
+          });
           return null;
         })
       : null;

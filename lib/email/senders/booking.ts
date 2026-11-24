@@ -45,9 +45,11 @@ import {
   paragraph,
 } from "@/emails/components/styles";
 import { shownMoves, type SessionMove } from "@/lib/booking/session-moves";
-import type { EmailRecipient } from "../preferences";
+import { SENDERS } from "../config";
+import { loadEmailRecipients, type EmailRecipient } from "../preferences";
 import {
   attemptStaged,
+  prepareRecipientEmails,
   screenPreparedEmails,
   type ScreenedRecipientEmails,
   type SendToRecipientsResult,
@@ -970,7 +972,11 @@ export interface SessionOutcomeNoticeEmailArgs {
   ) => { copy: NoticeCopy; href: string };
 }
 
-/** Renders and screens a session-outcome notice before the verdict's transaction stages it. */
+/**
+ * Renders and screens a session-outcome notice before the verdict's transaction
+ * stages it. A render failure for any recipient the email may reach throws, with
+ * no per-row Sentry event, so the caller defers the write and reports once.
+ */
 export async function prepareSessionOutcomeNoticeEmails(
   args: SessionOutcomeNoticeEmailArgs,
 ): Promise<ScreenedRecipientEmails> {
@@ -991,7 +997,24 @@ export async function prepareSessionOutcomeNoticeEmails(
       });
     },
   };
-  return screenPreparedEmails(await prepareSpecEmails(spec, args.userIds));
+  const recipients = await loadEmailRecipients(args.userIds, spec.category);
+  const prepared = await prepareRecipientEmails(
+    {
+      recipients,
+      emailType: spec.emailType,
+      from: SENDERS.notifications,
+      subject: spec.subject,
+      render: spec.render,
+      entityRef: spec.entityRef,
+    },
+    { reportToSentry: false },
+  );
+  if (prepared.failed > 0) {
+    throw new Error(
+      `${spec.emailType}: ${prepared.failed} of ${recipients.length} email(s) failed to render`,
+    );
+  }
+  return screenPreparedEmails(prepared);
 }
 
 export interface AppointmentCompletedEmailArgs {
