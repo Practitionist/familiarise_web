@@ -429,9 +429,12 @@ async function settleSeat(
 async function alreadySpent(dedupeKey: string): Promise<boolean> {
   const spent = await prisma.refund.findUnique({
     where: { dedupeKey },
-    select: { dedupeKey: true, status: true },
+    select: { status: true },
   });
-  return sessionRefundSpent(spent ? [spent] : [], dedupeKey);
+  return sessionRefundSpent(
+    spent ? [{ dedupeKey, status: spent.status }] : [],
+    dedupeKey,
+  );
 }
 
 /** Never ask for more than the seat still has: an over-ask retries forever. */
