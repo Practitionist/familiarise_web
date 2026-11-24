@@ -1,7 +1,10 @@
 "use client";
 
 import { memo, useState } from "react";
+import Image from "next/image";
 import { Briefcase, ChevronDown, ChevronUp } from "lucide-react";
+
+import { fieldDetail } from "@/components/home/fields";
 
 interface DomainWithCount {
   id: string;
@@ -44,32 +47,53 @@ function DomainGridImpl({
     );
   }
 
-  if (domains.length === 0) return null;
+  // Only fields with verified experts, most experts first.
+  const listed = domains
+    .filter((domain) => domain.consultantCount > 0)
+    .sort((x, y) => y.consultantCount - x.consultantCount);
+  if (listed.length === 0) return null;
 
-  const displayed = expanded ? domains : domains.slice(0, INITIAL_DISPLAY);
-  const hasMore = domains.length > INITIAL_DISPLAY;
+  const displayed = expanded ? listed : listed.slice(0, INITIAL_DISPLAY);
+  const hasMore = listed.length > INITIAL_DISPLAY;
 
   return (
     <div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-        {displayed.map((domain) => (
-          <button
-            key={domain.id}
-            onClick={() => onDomainSelect(domain.id)}
-            className="group text-left rounded-xl border border-border bg-card p-5 hover:border-border hover:shadow-md transition-all duration-200"
-          >
-            <div className="w-10 h-10 rounded-lg bg-muted group-hover:bg-primary flex items-center justify-center mb-3 transition-colors">
-              <Briefcase className="w-5 h-5 text-muted-foreground group-hover:text-primary-foreground transition-colors" />
-            </div>
-            <h3 className="font-semibold text-foreground text-sm mb-1 line-clamp-1">
-              {domain.name}
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              {domain.consultantCount}{" "}
-              {domain.consultantCount === 1 ? "expert" : "experts"}
-            </p>
-          </button>
-        ))}
+        {displayed.map((domain) => {
+          const photo = fieldDetail(domain.name)?.photo;
+          return (
+            <button
+              key={domain.id}
+              type="button"
+              onClick={() => onDomainSelect(domain.id)}
+              className="group relative isolate flex h-36 flex-col justify-end overflow-hidden rounded-2xl bg-zinc-900 p-4 text-left text-white transition-shadow hover:shadow-elevation-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {photo ? (
+                <Image
+                  src={photo.src}
+                  alt=""
+                  fill
+                  sizes="(min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+                  className="-z-10 object-cover transition-transform duration-500 group-hover:scale-105"
+                />
+              ) : (
+                <Briefcase
+                  aria-hidden="true"
+                  className="absolute right-4 top-4 h-5 w-5 text-zinc-500"
+                />
+              )}
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 -z-10 bg-gradient-to-t from-black/85 via-black/40 to-black/10"
+              />
+              <h3 className="font-semibold line-clamp-1">{domain.name}</h3>
+              <p className="text-sm text-zinc-300">
+                {domain.consultantCount}{" "}
+                {domain.consultantCount === 1 ? "expert" : "experts"}
+              </p>
+            </button>
+          );
+        })}
       </div>
 
       {hasMore && (

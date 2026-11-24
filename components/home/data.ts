@@ -5,22 +5,16 @@ import {
   Briefcase,
   Calendar,
   Clock,
-  Code,
   FileCheck,
-  Globe,
   GraduationCap,
   HeadphonesIcon,
-  HeartHandshake,
   LayoutDashboard,
-  Lightbulb,
   ListChecks,
   Lock,
   MessageSquare,
   Monitor,
-  Palette,
   Shield,
   Star,
-  TrendingUp,
   Users,
   Video,
   Zap,
@@ -53,48 +47,6 @@ export const FEATURES = [
     description:
       "Ongoing programs with regular live sessions over a set period.",
     gradient: "from-gray-600 to-gray-800",
-  },
-];
-
-// #1490 — the hardcoded "150+ experts" line under each category is gone. The
-// card now renders a real per-domain consultant count, looked up by name from
-// the landing loader, and renders no line at all where that count is zero.
-export const CATEGORIES = [
-  {
-    icon: Code,
-    name: "Technology",
-    color: "bg-zinc-900",
-  },
-  {
-    icon: Briefcase,
-    name: "Business",
-    color: "bg-zinc-800",
-  },
-  { icon: Palette, name: "Design", color: "bg-zinc-700" },
-  {
-    icon: TrendingUp,
-    name: "Marketing",
-    color: "bg-zinc-800",
-  },
-  {
-    icon: HeartHandshake,
-    name: "Career Coach",
-    color: "bg-zinc-900",
-  },
-  {
-    icon: GraduationCap,
-    name: "Education",
-    color: "bg-zinc-700",
-  },
-  {
-    icon: Lightbulb,
-    name: "Startups",
-    color: "bg-zinc-800",
-  },
-  {
-    icon: Globe,
-    name: "Languages",
-    color: "bg-zinc-900",
   },
 ];
 

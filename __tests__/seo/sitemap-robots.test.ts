@@ -287,11 +287,17 @@ describe("placeholder pages and outbound links", () => {
   it("links fields through their category pages, never a name in a query string", () => {
     const read = (file: string) =>
       readFileSync(path.join(process.cwd(), file), "utf8");
-    // The navbar's "Browse by field" chips are the shared field links; the footer has none.
-    expect(read("lib/navigation/public-nav.ts")).toContain("domainPath(");
+    // The navbar chips and the landing field tiles link fields; the footer has none.
+    for (const file of [
+      "lib/navigation/public-nav.ts",
+      "components/home/CategoriesSection.tsx",
+    ]) {
+      expect(read(file)).toContain("domainPath(");
+    }
     for (const file of [
       "components/Footer.tsx",
       "lib/navigation/public-nav.ts",
+      "components/home/CategoriesSection.tsx",
     ]) {
       expect(read(file)).not.toContain("?domain=");
     }
