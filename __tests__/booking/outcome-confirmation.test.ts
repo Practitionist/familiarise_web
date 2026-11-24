@@ -9,16 +9,15 @@
 
 jest.mock("../../lib/prisma", () => {
   const { memTable } = jest.requireActual("../fixtures/mem-db");
-  return {
-    __esModule: true,
-    default: {
-      appointmentOccurrence: memTable([], "occ"),
-      maintenanceWindow: memTable([], "mw"),
-      platformIncident: memTable([], "pi"),
-      refund: memTable([], "rf"),
-      bookingStatusHistory: memTable([], "h"),
-    },
+  const client: Record<string, unknown> = {
+    appointmentOccurrence: memTable([], "occ"),
+    maintenanceWindow: memTable([], "mw"),
+    platformIncident: memTable([], "pi"),
+    refund: memTable([], "rf"),
+    bookingStatusHistory: memTable([], "h"),
   };
+  client.$transaction = (fn: (tx: unknown) => unknown) => fn(client);
+  return { __esModule: true, default: client };
 });
 jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: jest.fn(
@@ -30,6 +29,14 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/booking/class-sessions", () => ({
   onClassSessionVoided: jest.fn(),
+  onClassVoidConfirmed: jest.fn(async () => ({
+    bells: [],
+    cancelEmailArgs: null,
+    exitEmailArgs: null,
+  })),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/booking/consultant-no-show", () => ({
   confirmConsultantNoShow: jest.fn(async () => ({
@@ -60,6 +67,7 @@ import {
 } from "@/lib/backoffice/session-outcomes";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { readJobCheckpoint } from "@/lib/cron/with-cron-lock";
+import { onClassVoidConfirmed } from "@/lib/booking/class-sessions";
 import {
   claimNoShowTx,
   confirmConsultantNoShow,
@@ -708,5 +716,39 @@ describe("a proposed consultant no-show", () => {
       confirmSessionOutcome(tx, { occurrenceId: "a", outcome: "HOST_ABSENT" }),
     ).rejects.toMatchObject({ code: "NO_SHOW_NOT_CLAIMABLE" });
     expect(claimNoShowTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("a host-attributed class void", () => {
+  it("counts toward the series only when the pass stamps it, in the stamp's transaction", async () => {
+    const classVoid = (id: string, overrides: Row = {}) =>
+      hostAbsent(id, {
+        appointmentId: `apt-${id}`,
+        appointment: {
+          ...(verdict(id).appointment as Row),
+          consultation: null,
+          class: {
+            classPlan: {
+              consultantProfile: { userId: "hannah" },
+              collaborators: [],
+            },
+          },
+          classId: `cls-${id}`,
+        },
+        ...overrides,
+      });
+    occurrences.rows.push(
+      classVoid("closed"),
+      classVoid("open", { outcomeAt: hoursAgo(5) }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("closed").outcomeConfirmedAt).toEqual(NOW);
+    expect(onClassVoidConfirmed).toHaveBeenCalledTimes(1);
+    expect(onClassVoidConfirmed).toHaveBeenCalledWith(prisma, {
+      appointmentId: "apt-closed",
+      occurrenceId: "closed",
+      confirmedAt: NOW,
+    });
   });
 });

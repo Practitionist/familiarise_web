@@ -67,6 +67,8 @@ const occurrences = (misses: number) =>
       hostCancelledAt: i < misses && !voided ? missAt(misses, i) : null,
       voidedAt: voided ? missAt(misses, i) : null,
       outcome: voided ? db.lastMissVoid : null,
+      // An ops relabel confirms the verdict it writes.
+      outcomeConfirmedAt: voided ? missAt(misses, i) : null,
     };
   });
 const db = {
@@ -90,6 +92,11 @@ jest.mock("../../lib/prisma", () => {
     $executeRaw: (...a: unknown[]) => db.rowLock(...a),
     appointmentOccurrence: {
       findUniqueOrThrow: async () => ({ startsAt: new Date() }),
+      // The voided session as written: an ops verdict, confirmed when written.
+      findUnique: async () => ({
+        outcome: db.lastMissVoid,
+        outcomeConfirmedAt: new Date(),
+      }),
       findMany: async () => occurrences(db.misses),
       findFirst: async () => ({
         ordinal: 5,

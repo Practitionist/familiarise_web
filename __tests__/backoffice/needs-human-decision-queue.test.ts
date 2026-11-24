@@ -245,7 +245,7 @@ it("the route refuses an unknown sort with 400 and reads a valid one", async () 
   expect(body.total).toBe(41);
 });
 
-it("offers Confirm only on an applied negative verdict nobody confirmed", async () => {
+it("offers Confirm on an applied negative verdict nobody confirmed and on a consultation's proposed no-show", async () => {
   const closed = {
     ...rows[0],
     completionStatus: "COMPLETED",
@@ -256,14 +256,28 @@ it("offers Confirm only on an applied negative verdict nobody confirmed", async 
     { ...closed, id: "occ-done", outcomeConfirmedAt: NOW },
     {
       ...closed,
+      id: "occ-proposed",
+      completionStatus: "UNVERIFIED",
+      outcome: "HOST_ABSENT",
+    },
+    {
+      ...closed,
       id: "occ-parked",
       completionStatus: "UNVERIFIED",
       outcome: "HOST_ABSENT",
+      appointment: { ...closed.appointment, appointmentType: "SUBSCRIPTION" },
     },
     rows[0],
   ]);
   const { items } = await readSessionsNeedingHuman({ now: NOW });
-  expect(items.map((i) => i.canConfirm)).toEqual([true, false, false, false]);
+  // Confirming the consultation's proposal runs the no-show claim; another parked row is decided through set-outcome.
+  expect(items.map((i) => i.canConfirm)).toEqual([
+    true,
+    false,
+    true,
+    false,
+    false,
+  ]);
 });
 
 it("lists a reported verdict and names each counted report by side, leaving out one that does not count", async () => {

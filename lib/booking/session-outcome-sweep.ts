@@ -75,7 +75,7 @@ import {
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { onClassSessionVoided } from "./class-sessions";
+import { onClassSessionVoided, onClassVoidConfirmed } from "./class-sessions";
 import { confirmConsultantNoShow } from "./consultant-no-show";
 
 export const OUTCOME_SLOT_SELECT = {
@@ -842,6 +842,7 @@ export const OUTCOME_REPORT_FIELDS = {
 
 const CONFIRM_SELECT = {
   id: true,
+  appointmentId: true,
   startsAt: true,
   endsAt: true,
   completionStatus: true,
@@ -860,7 +861,9 @@ const CONFIRM_SELECT = {
     where: { deletedAt: null, flowReason: { in: CLASSIFIED_REPORT_REASONS } },
     select: OUTCOME_REPORT_FIELDS,
   },
-  appointment: { select: { ...REPORT_PARTIES_SELECT, consultationId: true } },
+  appointment: {
+    select: { ...REPORT_PARTIES_SELECT, consultationId: true, classId: true },
+  },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
 type ConfirmRow = Prisma.AppointmentOccurrenceGetPayload<{
@@ -1003,7 +1006,34 @@ function confirmGuard(
 const isNoShowProposal = (row: ConfirmRow) =>
   row.completionStatus === "UNVERIFIED" &&
   row.outcome === "HOST_ABSENT" &&
-  row.appointment.consultationId !== null;
+  !!row.appointment.consultationId;
+
+/** A class void: confirming it lets the miss count toward the exit right and the reliability flag. */
+const isClassVoid = (row: ConfirmRow) =>
+  row.completionStatus === "VOIDED" && !!row.appointment.classId;
+
+/** Stamps a class void and re-checks its series in the same transaction; the notices go after the commit. */
+async function confirmClassVoid(
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  row: Parameters<typeof confirmGuard>[1] & { appointmentId: string },
+  now: Date,
+): Promise<boolean> {
+  const voided = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.appointmentOccurrence.updateMany({
+      where: confirmGuard(where, row),
+      data: { outcomeConfirmedAt: now },
+    });
+    if (count === 0) return null;
+    return onClassVoidConfirmed(tx, {
+      appointmentId: row.appointmentId,
+      occurrenceId: row.id,
+      confirmedAt: now,
+    });
+  });
+  if (!voided) return false;
+  await flushClassVoidNotices(voided);
+  return true;
+}
 
 type PageResult = "judged" | "capped" | "out-of-time";
 
@@ -1030,10 +1060,12 @@ async function confirmPage(
   const closedBefore = now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000;
   const strong: {
     id: string;
+    appointmentId: string;
     outcome: NegativeMoneyOutcome;
     endsAt: Date;
     outcomeAt: Date;
     claim: boolean;
+    classVoid: boolean;
   }[] = [];
   for (const row of rows) {
     if (!isNegativeMoneyOutcome(row.outcome) || !row.outcomeAt) continue;
@@ -1049,10 +1081,12 @@ async function confirmPage(
     if (isStrongVerdict(row, row.outcome, outages)) {
       strong.push({
         id: row.id,
+        appointmentId: row.appointmentId,
         outcome: row.outcome,
         endsAt: row.endsAt,
         outcomeAt: row.outcomeAt,
         claim: isNoShowProposal(row),
+        classVoid: isClassVoid(row),
       });
     } else {
       run.weak++;
@@ -1061,7 +1095,7 @@ async function confirmPage(
   // One CAS per row, so each is held only by a dispute in its own window; a relabel or confirm since the read skips it too.
   const counts = await Promise.all(
     strong
-      .filter((row) => !row.claim)
+      .filter((row) => !row.claim && !row.classVoid)
       .map((row) =>
         prisma.appointmentOccurrence.updateMany({
           where: confirmGuard(where, row),
@@ -1070,6 +1104,15 @@ async function confirmPage(
       ),
   );
   run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
+  for (const row of strong.filter((r) => r.classVoid)) {
+    try {
+      if (await confirmClassVoid(where, row, now)) run.confirmed++;
+    } catch (error) {
+      run.errors.push(
+        `Failed to confirm the class void on ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   // A no-show's claim drives a refund, so it runs one at a time inside the pass's share.
   for (const row of strong.filter((r) => r.claim)) {
     if (ctx.pastDeadline()) return "out-of-time";

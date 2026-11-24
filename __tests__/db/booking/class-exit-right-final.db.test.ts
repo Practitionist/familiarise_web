@@ -49,6 +49,8 @@ it("an ops un-void withdraws an unused exit right; a used one stays final", asyn
         completionStatus: "VOIDED",
         voidedAt: new Date(Date.now() - (i + 1) * 24 * HOUR_MS),
         outcome: "HOST_ABSENT",
+        // Confirmed, so each void counts toward the exit right.
+        outcomeConfirmedAt: new Date(),
       },
     });
   }
@@ -73,14 +75,14 @@ it("an ops un-void withdraws an unused exit right; a used one stays final", asyn
   expect(await refundedPaise(used.paymentId)).toBe(paidOnExit);
 });
 
-/** An outcome-sweep void through the real write helper, which also writes the history row. */
+/** An outcome-sweep outage void through the real write helper, which also writes the history row; it needs no confirmation to count. */
 const voidAsSweep = (tx: Tx, occurrenceId: string, at: Date) =>
   transitionOccurrenceCompletion(tx, {
     where: { id: occurrenceId, voidedAt: null },
     to: "VOIDED",
     fromIn: ["SCHEDULED"],
-    data: { outcome: "HOST_ABSENT", outcomeAt: at, voidedAt: at },
-    reason: "session-outcome:HOST_ABSENT",
+    data: { outcome: "PLATFORM_OUTAGE", outcomeAt: at, voidedAt: at },
+    reason: "session-outcome:PLATFORM_OUTAGE",
   });
 
 const voidedMiss = (
@@ -94,7 +96,7 @@ const voidedMiss = (
     occurrenceId,
     startsAt: at,
     voidedAt: at,
-    hostAttributed: true,
+    hostAttributed: false,
   });
 
 /** A class two host misses short of nothing: the next miss trips the exit right. */

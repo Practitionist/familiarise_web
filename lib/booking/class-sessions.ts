@@ -75,7 +75,12 @@ import {
   retimeLeaveUntil,
   splitByClash,
 } from "./retime-leave";
-import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
+import {
+  isNegativeMoneyOutcome,
+  MAKEUP_WINDOW_DAYS,
+  MISS_WHERE,
+  missedAt,
+} from "./misses";
 import {
   formatForViewer,
   UTC_ZONE,
@@ -474,7 +479,8 @@ export async function cancelClassSession(
 /**
  * #1569 — the outcome sweep voided one class session, inside its transaction:
  * the seats hear their make-up window (the cancel bell's voided variant), and
- * the exit right is re-checked because a void is a miss.
+ * the exit right is re-checked because a void is a miss. A void whose negative
+ * verdict is unconfirmed re-checks nothing until `onClassVoidConfirmed`.
  */
 export async function onClassSessionVoided(
   tx: Tx,
@@ -566,22 +572,90 @@ export async function onClassSessionVoided(
       )),
     );
   }
-  const { ledger, heldBefore } = await seriesLedgerAfterMiss(
-    tx,
-    args.appointmentId,
-    { occurrenceId: args.occurrenceId, relabelled: args.relabelled },
-    args.voidedAt,
-  );
-  if (ledger.exitRight) {
-    const exit = await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+  const voided = await tx.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: { outcome: true, outcomeConfirmedAt: true },
+  });
+  const awaitsConfirmation =
+    isNegativeMoneyOutcome(voided?.outcome ?? null) &&
+    !voided?.outcomeConfirmedAt;
+  if (!awaitsConfirmation) {
+    const exit = await exitRightAfterMiss(tx, hosted, seatUserIds, {
+      landed: { occurrenceId: args.occurrenceId, relabelled: args.relabelled },
       missedAt: args.voidedAt,
       hostAttributed: args.hostAttributed,
-      firstTrip: !heldBefore,
     });
     bells.push(...exit.bells);
     exitEmailArgs = exit.exitEmailArgs;
   }
   return { bells, cancelEmailArgs, exitEmailArgs };
+}
+
+/** The series ledger after a miss lands, and the flag and first-trip exit bells it calls for. */
+async function exitRightAfterMiss(
+  tx: Tx,
+  hosted: HostedClass,
+  seatUserIds: string[],
+  args: {
+    landed: { occurrenceId: string; relabelled?: boolean };
+    missedAt: Date;
+    hostAttributed: boolean;
+  },
+): Promise<{
+  bells: StagedTrigger[];
+  exitEmailArgs: ClassExitAvailableEmailArgs | null;
+}> {
+  const { ledger, heldBefore } = await seriesLedgerAfterMiss(
+    tx,
+    hosted.appointment.id,
+    args.landed,
+    args.missedAt,
+  );
+  if (!ledger.exitRight) return { bells: [], exitEmailArgs: null };
+  return onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+    missedAt: args.missedAt,
+    hostAttributed: args.hostAttributed,
+    firstTrip: !heldBefore,
+  });
+}
+
+/**
+ * A class void's host-attributed verdict was just confirmed, in the caller's
+ * transaction: the miss now counts, so the flag and the exit right are
+ * re-checked as `onClassSessionVoided` would have at the void.
+ */
+export async function onClassVoidConfirmed(
+  tx: Tx,
+  args: { appointmentId: string; occurrenceId: string; confirmedAt: Date },
+): Promise<{
+  bells: StagedTrigger[];
+  cancelEmailArgs: null;
+  exitEmailArgs: ClassExitAvailableEmailArgs | null;
+}> {
+  const appointment = await tx.appointment.findUnique({
+    where: { id: args.appointmentId },
+    select: HOSTED_CLASS_SELECT,
+  });
+  const cls = appointment?.class;
+  if (!appointment || !cls) {
+    return { bells: [], cancelEmailArgs: null, exitEmailArgs: null };
+  }
+  const seats = await tx.appointmentParticipant.findMany({
+    where: { appointmentId: args.appointmentId, ...SEATED },
+    select: { userId: true },
+  });
+  const exit = await exitRightAfterMiss(
+    tx,
+    { found: true, appointment, cls },
+    seats.map((s) => s.userId),
+    {
+      landed: { occurrenceId: args.occurrenceId },
+      // Counted from its confirmation, so a flag ops cleared before it is raised again.
+      missedAt: args.confirmedAt,
+      hostAttributed: true,
+    },
+  );
+  return { ...exit, cancelEmailArgs: null };
 }
 
 /**

@@ -14,13 +14,17 @@ import {
 } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
-import { onClassSessionVoided } from "@/lib/booking/class-sessions";
+import {
+  onClassSessionVoided,
+  onClassVoidConfirmed,
+} from "@/lib/booking/class-sessions";
 import {
   classifySessionOutcome,
   COMPLETION_FOR_OUTCOME,
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
 import {
+  flushClassVoidNotices,
   OUTCOME_REPORT_FIELDS,
   readOutageWindows,
   readRoomEnd,
@@ -115,6 +119,7 @@ const OVERTURN_SELECT = {
   endsAt: true,
   completionStatus: true,
   outcome: true,
+  outcomeConfirmedAt: true,
   seatsSettledAt: true,
   deletedAt: true,
   isTentative: true,
@@ -198,10 +203,16 @@ async function relabel(
   if (count === 0) {
     throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
   }
-  // A relabel moves no money, but a void newly blamed on the host feeds D6's flag.
+  // A relabel moves no money, but a void newly counted against the host feeds D6's flag;
+  // an unconfirmed host void was not counted yet, so ops writing one counts it as a new miss.
+  const wasPending =
+    isNegativeMoneyOutcome(occ.outcome) && occ.outcomeConfirmedAt === null;
+  const wasCountedHost =
+    !!occ.outcome &&
+    HOST_ATTRIBUTED_OUTCOMES.includes(occ.outcome) &&
+    !wasPending;
   const nowHostAttributed =
-    HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome) &&
-    !(occ.outcome && HOST_ATTRIBUTED_OUTCOMES.includes(occ.outcome));
+    HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome) && !wasCountedHost;
   if (
     occ.completionStatus === "VOIDED" &&
     nowHostAttributed &&
@@ -213,7 +224,7 @@ async function relabel(
       startsAt: occ.startsAt,
       voidedAt: now,
       hostAttributed: true,
-      relabelled: true,
+      relabelled: !wasPending,
     });
   }
 }
@@ -376,9 +387,27 @@ export async function confirmSessionOutcome(
     }
     throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
   }
+  // A confirmed class void now counts toward the exit right and the reliability flag.
+  const stamped = await tx.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: {
+      completionStatus: true,
+      appointmentId: true,
+      appointment: { select: { classId: true } },
+    },
+  });
+  const voided =
+    stamped?.completionStatus === "VOIDED" && stamped.appointment.classId
+      ? await onClassVoidConfirmed(tx, {
+          appointmentId: stamped.appointmentId,
+          occurrenceId: args.occurrenceId,
+          confirmedAt: now,
+        })
+      : null;
   return {
     before: { outcome, outcomeConfirmedAt: null },
     after: { outcome, outcomeConfirmedAt: now.toISOString() },
+    ...(voided && { afterCommit: () => flushClassVoidNotices(voided) }),
   };
 }
 
