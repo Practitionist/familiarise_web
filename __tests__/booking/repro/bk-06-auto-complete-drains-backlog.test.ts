@@ -36,6 +36,11 @@ jest.mock("../../../lib/booking/session-outcome-sweep", () => ({
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
   escalateAgedNeedsHuman: async () => 0,
+  readOutcomeQueueAge: async () => ({
+    oldestUndecidedMinutes: 400,
+    needsHuman: 7,
+    oldestNeedsHumanMinutes: 9000,
+  }),
   confirmClosedOutcomes: async (_now: Date, pastDeadline: () => boolean) => {
     confirmDeadlines.push(pastDeadline());
     return { confirmed: 0, weak: 0, errors: [], checkpoint: null };
@@ -152,6 +157,20 @@ describe("autoCompleteAppointments backlog", () => {
     expect(reports[0][1]).toMatchObject({
       level: "warning",
       extra: { count: 1, sample: [{ deferred: BACKLOG }] },
+    });
+  });
+
+  it("returns the queue's age in the run summary", async () => {
+    const result = await autoCompleteAppointments({
+      maxParents: BITE,
+      maxSlotOutcomes: BITE,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      oldestUndecidedSessionMinutes: 400,
+      needsHumanSessions: 7,
+      oldestNeedsHumanMinutes: 9000,
     });
   });
 

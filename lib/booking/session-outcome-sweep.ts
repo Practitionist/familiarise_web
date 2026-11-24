@@ -802,6 +802,58 @@ export async function alertStaleNeedsHuman(
   return stale;
 }
 
+export interface OutcomeQueueAge {
+  /** Minutes since the booked end of the oldest session still without an outcome; null when none waits. */
+  oldestUndecidedMinutes: number | null;
+  /** Sessions on the needs-human list. */
+  needsHuman: number;
+  /** Minutes the oldest of them has waited, from its verdict or else its booked end; null when the list is empty. */
+  oldestNeedsHumanMinutes: number | null;
+}
+
+const minutesSince = (from: Date | null | undefined, now: Date) =>
+  from
+    ? Math.max(0, Math.floor((now.getTime() - from.getTime()) / 60_000))
+    : null;
+
+/** The outcome queue's age for the run summary; `undecided` is the slot pass's own cohort. */
+export async function readOutcomeQueueAge(
+  db: Pick<Tx, "appointmentOccurrence">,
+  now: Date,
+  undecided: Prisma.AppointmentOccurrenceWhereInput,
+): Promise<OutcomeQueueAge> {
+  const waiting = needsHumanWhere(now);
+  const [oldestUndecided, needsHuman, oldestVerdict, oldestUnjudged] =
+    await Promise.all([
+      db.appointmentOccurrence.findFirst({
+        where: undecided,
+        orderBy: { endsAt: "asc" },
+        select: { endsAt: true },
+      }),
+      db.appointmentOccurrence.count({ where: waiting }),
+      db.appointmentOccurrence.findFirst({
+        where: { AND: [waiting, { outcomeAt: { not: null } }] },
+        orderBy: { outcomeAt: "asc" },
+        select: { outcomeAt: true },
+      }),
+      db.appointmentOccurrence.findFirst({
+        where: { AND: [waiting, { outcomeAt: null }] },
+        orderBy: { endsAt: "asc" },
+        select: { endsAt: true },
+      }),
+    ]);
+  // A waiting session ages from its verdict, or from its booked end when none was written.
+  const waits = [
+    minutesSince(oldestVerdict?.outcomeAt, now),
+    minutesSince(oldestUnjudged?.endsAt, now),
+  ].filter((m): m is number => m !== null);
+  return {
+    oldestUndecidedMinutes: minutesSince(oldestUndecided?.endsAt, now),
+    needsHuman,
+    oldestNeedsHumanMinutes: waits.length > 0 ? Math.max(...waits) : null,
+  };
+}
+
 /** Closed unconfirmed verdicts judged per page; the pass pages by keyset until its deadline, so weak rows cannot hide older ones. */
 const OUTCOME_CONFIRM_PAGE = 100;
 
