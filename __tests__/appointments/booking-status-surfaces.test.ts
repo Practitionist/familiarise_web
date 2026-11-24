@@ -6,7 +6,10 @@
  */
 
 import { staffStatus } from "@/components/dashboard/shared/OperatorAppointmentsClient";
-import { slotStatus } from "@/components/appointments/SessionTimeline";
+import {
+  sessionTakesRating,
+  slotStatus,
+} from "@/components/appointments/SessionTimeline";
 import { bookingStatus } from "@/lib/appointments/booking-status";
 import { deriveBucket } from "@/lib/appointments/bucket";
 import { buildScheduleModel } from "@/lib/appointments/session-schedule";
@@ -349,7 +352,7 @@ describe("a session parked for ops holds its booking's status", () => {
     ).toBe(WAITING);
   });
 
-  it("a parked session waits on a decision; an unverified one not parked is still verifying", () => {
+  it("a parked session waits on a decision; an unverified one not parked is still verifying; neither takes a rating", () => {
     const [parked, verifying, delivered] = occurrencesOfAppointment({
       id: "a3",
       occurrences: [
@@ -368,6 +371,11 @@ describe("a session parked for ops holds its booking's status", () => {
     expect(
       [parked, verifying, delivered].map((o) => slotStatus(o, undefined, NOW)),
     ).toEqual(["waitingDecision", "inconclusive", "completed"]);
+    expect(
+      [parked, verifying, delivered].map((o) =>
+        sessionTakesRating(o, undefined, NOW),
+      ),
+    ).toEqual([false, false, true]);
   });
 
   it("a booking waiting on several sessions counts them", () => {

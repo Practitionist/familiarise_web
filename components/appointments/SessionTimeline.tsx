@@ -95,6 +95,16 @@ interface SessionGroup {
  * hour, dropping whoever clicked it into a fresh empty room. Routing through
  * the shared predicate makes an ended run non-joinable here too.
  */
+/** A session still being verified or decided takes no rating until it settles. */
+export function sessionTakesRating(
+  slot: OccurrenceVM,
+  joinWindowMs?: number,
+  now?: Date,
+): boolean {
+  const status = slotStatus(slot, joinWindowMs, now);
+  return status !== "inconclusive" && status !== "waitingDecision";
+}
+
 export function slotStatus(
   slot: OccurrenceVM,
   joinWindowMs: number = CONSULTEE_JOIN_WINDOW_MS,
