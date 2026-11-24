@@ -665,8 +665,9 @@ strong evidence (`judgeOutcomeEvidence`). It first runs `judgeReports`: a counte
 dispute (the accused party's `*_join_issue` or `*_attended` reason) means it never
 stamps, and `disputed` is counted in its run. A report counts only from a non-org case
 whose reporter is on the reason's side, answered (`flowReasonAt`, not `createdAt`)
-between `endsAt` and `outcomeAt` + 48 h (`countedEffect`); the stamp's CAS repeats the
-dispute check coarsely (`disputeSinceReadWhere`), so a dispute after the read holds it; `REPORT_EFFECT` is the one table of which reason disputes or agrees.
+between `endsAt` and `outcomeAt` + 48 h (`countedEffect`); each row's stamp CAS repeats
+the dispute check in that row's window (`disputeSinceReadWhere`), so a dispute committed
+before the stamp's statement holds it; one committed after is fixed by `session.set-outcome`; `REPORT_EFFECT` is the one table of which reason disputes or agrees.
 A weak, disputed or reported verdict stays for ops, who confirm it with
 `session.confirm-outcome` (`confirmSessionOutcome`, which leaves `outcomeAt` alone)
 or decide it with `session.set-outcome` (a negative outcome is stamped at once, any

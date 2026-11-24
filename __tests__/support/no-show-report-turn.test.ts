@@ -264,13 +264,16 @@ it("lets a later 'I was there' replace a neutral first answer, but never turns a
     flowReason: "provider_attended",
   });
 
-  // A counted reason then stands against a later neutral answer.
+  // The case is with a person now: a later guided choice is refused, and the counted reason stands.
   const answeredAt = noShow.flowReasonAt;
   await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
-  await runSupportTurn("appointment", "host", {
-    chosenOptionId: "client",
-    ...occ,
-  });
+  await expect(
+    runSupportTurn("appointment", "host", {
+      chosenOptionId: "client",
+      caseId: String(noShow.id),
+      ...occ,
+    }),
+  ).rejects.toMatchObject({ body: { code: "OPTION_NOT_AVAILABLE" } });
   expect(noShow).toMatchObject({
     flowReason: "provider_attended",
     flowReasonAt: answeredAt,
@@ -299,4 +302,96 @@ it("never opens a session report for an org operator, whose thread stays on the 
     expect.not.objectContaining({ appointmentOccurrenceId: "occ-ended" }),
   );
   expect(cases.rows[0]).toMatchObject({ scopeKey: "APPOINTMENT:appointment" });
+});
+
+describe("an answer routed by its case", () => {
+  const noShowOn = (occ: string, overrides: Row = {}) =>
+    openCase({
+      id: `report-${occ}`,
+      category: "NO_SHOW",
+      scopeKey: `OCCURRENCE:${occ}`,
+      appointmentOccurrenceId: occ,
+      currentNodeId: "start",
+      ...overrides,
+    });
+
+  it("lands on the no-show case it names past a newer person-handled case on the same session", async () => {
+    const report = noShowOn("occ-a");
+    const quality = openCase({
+      id: "quality-a",
+      category: "QUALITY_COMPLAINT",
+      scopeKey: "OCCURRENCE:occ-a",
+      appointmentOccurrenceId: "occ-a",
+      activeChannel: "HUMAN",
+      status: "ESCALATED",
+    });
+    cases.rows.push(report, quality);
+    jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+
+    const result = await runSupportTurn("appointment", "learner", {
+      chosenOptionId: "expert",
+      caseId: String(report.id),
+      appointmentOccurrenceId: "occ-a",
+    });
+    expect(result?.threadId).toBe(report.id);
+    expect(report.flowReason).toBe("provider_no_show");
+    expect(quality.flowReason).toBeNull();
+  });
+
+  it("refuses a guided choice that reaches a person-handled case instead of answering it as accepted", async () => {
+    cases.rows.push(
+      openCase({
+        id: "human-a",
+        category: "NO_SHOW",
+        scopeKey: "OCCURRENCE:occ-a",
+        appointmentOccurrenceId: "occ-a",
+        activeChannel: "HUMAN",
+        status: "ESCALATED",
+      }),
+    );
+    jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+    await expect(
+      runSupportTurn("appointment", "learner", {
+        chosenOptionId: "expert",
+        caseId: "human-a",
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      body: { code: "OPTION_NOT_AVAILABLE" },
+    });
+    expect(db.supportCaseMessage.rows).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      "another person's case",
+      { requesterUserId: "someone", submitterUserId: "someone" },
+      undefined,
+    ],
+    [
+      "a closed case",
+      { closedAt: new Date("2026-11-24T08:00:00Z") },
+      undefined,
+    ],
+    ["a case on another session than the turn names", {}, "occ-b"],
+  ])(
+    "refuses %s with 404 and writes nothing",
+    async (_label, overrides, occurrence) => {
+      const report = noShowOn("occ-a", overrides);
+      cases.rows.push(report);
+      jest.mocked(buildSupportContext).mockResolvedValue(context(false));
+      await expect(
+        runSupportTurn("appointment", "learner", {
+          chosenOptionId: "expert",
+          caseId: String(report.id),
+          ...(occurrence ? { appointmentOccurrenceId: occurrence } : {}),
+        }),
+      ).rejects.toMatchObject({
+        status: 404,
+        body: { code: "CASE_UNAVAILABLE" },
+      });
+      expect(report.flowReason).toBeNull();
+      expect(db.supportCaseMessage.rows).toHaveLength(0);
+    },
+  );
 });

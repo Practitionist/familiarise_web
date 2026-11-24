@@ -65,6 +65,8 @@ export interface RunTurnInput {
    * session, and any other turn with a session answers on that session's open case.
    */
   appointmentOccurrenceId?: string;
+  /** The case a follow-up answers; refused unless it is the caller's own open case on this booking. */
+  caseId?: string;
   /**
    * Caller reached this appointment only via the org-operator party branch.
    * Restricted to org-party categories while permitting human escalation inside them.
@@ -244,6 +246,13 @@ async function advanceThread(
   }
 
   if (thread.activeChannel === "HUMAN") {
+    // A guided choice means nothing to a person-handled case, so it is refused rather than dropped.
+    if (input.chosenOptionId && !input.userMessage)
+      throw new CaseConflictError({
+        code: "OPTION_NOT_AVAILABLE",
+        error:
+          "Our team has this conversation now, so that choice no longer applies. Write your message instead.",
+      });
     return persistHumanTurn(
       thread,
       input.userMessage,
@@ -542,9 +551,40 @@ async function resolveThread(
     });
     return supportCase;
   }
+  if (!input.category && input.caseId) return openNamedCase(intake, input);
   if (!input.category && input.appointmentOccurrenceId)
     return openSessionThread(intake, input.appointmentOccurrenceId);
   return openBookingThread(intake, input.category);
+}
+
+/** The case a follow-up names, only when it is the caller's own open case on this booking and session. */
+async function openNamedCase(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  input: RunTurnInput,
+): Promise<SupportCase> {
+  const named = await prisma.supportCase.findFirst({
+    where: {
+      id: input.caseId,
+      appointmentId: intake.appointmentId,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      closedAt: null,
+      deletedAt: null,
+      ...(input.appointmentOccurrenceId
+        ? { appointmentOccurrenceId: input.appointmentOccurrenceId }
+        : {}),
+    },
+  });
+  if (!named)
+    throw new CaseConflictError(
+      {
+        code: "CASE_UNAVAILABLE",
+        error:
+          "This conversation is no longer open. Start a new support request.",
+      },
+      404,
+    );
+  return named;
 }
 
 /** The requester's newest open case on one session of the booking, else a new one there. */

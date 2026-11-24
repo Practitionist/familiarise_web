@@ -948,25 +948,18 @@ function judgeRowReports(
 }
 
 /**
- * A dispute that may count against one of the group's verdicts, bounded by the group's earliest end and latest close.
- * The reporter's side and each row's own window stay with the per-row judgement, so the recheck only errs toward ops.
+ * A dispute that may count against this verdict: its outcome's reason, outside an org operator's case, answered in its window.
+ * Whether the reporter is on the reason's side stays with the per-row judgement, so the recheck only errs toward ops.
  */
 function disputeSinceReadWhere(
   outcome: NegativeMoneyOutcome,
-  group: ConfirmRow[],
+  row: { endsAt: Date; outcomeAt: Date },
 ): Prisma.SupportCaseWhereInput {
-  const ends = group.map((r) => r.endsAt.getTime());
-  const closes = group.flatMap((r) =>
-    r.outcomeAt ? [reportWindowClosesAt(r.outcomeAt).getTime()] : [],
-  );
   return {
     deletedAt: null,
     ownershipScope: { not: "ORG_OPERATIONS" },
     flowReason: { in: [...REPORT_EFFECT[outcome].dispute] },
-    flowReasonAt: {
-      gte: new Date(Math.min(...ends)),
-      lte: new Date(Math.max(...closes)),
-    },
+    flowReasonAt: { gte: row.endsAt, lte: reportWindowClosesAt(row.outcomeAt) },
   };
 }
 
@@ -990,7 +983,12 @@ async function confirmPage(
     return false;
   }
   const closedBefore = now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000;
-  const strong = new Map<NegativeMoneyOutcome, ConfirmRow[]>();
+  const strong: {
+    id: string;
+    outcome: NegativeMoneyOutcome;
+    endsAt: Date;
+    outcomeAt: Date;
+  }[] = [];
   for (const row of rows) {
     if (!isNegativeMoneyOutcome(row.outcome) || !row.outcomeAt) continue;
     const reports = judgeRowReports(row, row.outcome, row.outcomeAt);
@@ -1003,20 +1001,29 @@ async function confirmPage(
       continue;
     }
     if (isStrongVerdict(row, row.outcome, outages)) {
-      strong.set(row.outcome, [...(strong.get(row.outcome) ?? []), row]);
+      strong.push({
+        id: row.id,
+        outcome: row.outcome,
+        endsAt: row.endsAt,
+        outcomeAt: row.outcomeAt,
+      });
     } else {
       run.weak++;
     }
   }
-  // A relabel, a confirm or a disputing report since the read makes the CAS skip the row.
+  // One CAS per row, so each is held only by a dispute in its own window; a relabel or confirm since the read skips it too.
   const counts = await Promise.all(
-    [...strong].map(([outcome, group]) =>
+    strong.map((row) =>
       prisma.appointmentOccurrence.updateMany({
         where: {
           AND: [
             where,
-            { id: { in: group.map((r) => r.id) }, outcome },
-            { supportCases: { none: disputeSinceReadWhere(outcome, group) } },
+            { id: row.id, outcome: row.outcome },
+            {
+              supportCases: {
+                none: disputeSinceReadWhere(row.outcome, row),
+              },
+            },
           ],
         },
         data: { outcomeConfirmedAt: now },

@@ -193,6 +193,30 @@ describe("the window-close pass", () => {
     expect(row("strong").outcomeConfirmedAt).toBeNull();
   });
 
+  it("holds each row only on a dispute inside its own window, even when the rows are stamped together", async () => {
+    // A's window closed 12 hours ago, B's 2 hours ago.
+    occurrences.rows.push(
+      verdict("a", { outcomeAt: hoursAgo(60) }),
+      verdict("b", { outcomeAt: hoursAgo(50) }),
+    );
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementationOnce(async (args) => {
+      const rows = (await read(args)) as Row[];
+      const pageRows = rows.map((r) => ({ ...r, supportCases: [] }));
+      // Both answered 5 hours ago, after the read: late for A, inside B's window.
+      for (const id of ["a", "b"]) {
+        row(id).supportCases = [
+          { ...filed("attendee_attended", "priya"), flowReasonAt: hoursAgo(5) },
+        ];
+      }
+      return pageRows;
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("a").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("b").outcomeConfirmedAt).toBeNull();
+  });
+
   it("confirms nothing when an outage read fills its cap, since an overlapping window may be missing", async () => {
     const incidents = prisma.platformIncident as unknown as Table;
     occurrences.rows.push(verdict("strong"));

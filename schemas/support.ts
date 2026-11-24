@@ -80,6 +80,8 @@ export const SupportTurnSchema = z
     reopen: z.boolean().optional(),
     /** The session a retrospective intent is about; the route checks it belongs to the booking and has ended. */
     appointmentOccurrenceId: z.string().min(1).max(64).optional(),
+    /** The case a follow-up answers; the turn checks it is the caller's own open case on this booking. */
+    caseId: z.string().min(1).max(64).optional(),
   })
   .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
     message: "A turn needs a category, a chosen option, or a message",

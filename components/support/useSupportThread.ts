@@ -94,6 +94,7 @@ interface TurnResult {
   actions: SupportAction[];
   outcomeId?: string | null;
   replyByAt?: string | null;
+  threadId?: string;
   appointmentOccurrenceId?: string | null;
 }
 
@@ -109,22 +110,59 @@ export interface TurnVars {
   reopen?: boolean;
   /** Client-only echo of what was pressed. Never sent. */
   chosenLabel?: string;
+  /** Client-only: what the turn answers, fixed when it is first sent so a retry resends it unchanged. */
+  binding?: TurnBinding;
+}
+
+/** The case and session a turn answers, and whether it is a reply to a person. */
+export interface TurnBinding {
+  caseId?: string;
+  appointmentOccurrenceId?: string;
+  human?: boolean;
 }
 
 /**
- * The POST body of one turn. Every turn names the session of the thread it answers; a new intent prefers the
- * session the page was opened for.
+ * A new intent names only the session the page was opened for, so the server's default applies otherwise;
+ * a follow-up names the case and session of the thread it answers.
  */
-export function supportTurnBody(
-  { chosenLabel: _chosenLabel, ...body }: TurnVars,
-  sessions: { thread?: string | null; page?: string },
-) {
-  const occurrenceId = body.category
-    ? (sessions.page ?? sessions.thread)
-    : sessions.thread;
-  return occurrenceId
-    ? { ...body, appointmentOccurrenceId: occurrenceId }
-    : body;
+export function bindTurn(
+  vars: TurnVars,
+  thread:
+    | Pick<SupportThread, "id" | "activeChannel" | "appointmentOccurrenceId">
+    | null
+    | undefined,
+  pageOccurrenceId: string | undefined,
+): TurnBinding {
+  if (vars.category)
+    return pageOccurrenceId
+      ? { appointmentOccurrenceId: pageOccurrenceId }
+      : {};
+  if (!thread || thread.id === "local") return {};
+  return {
+    caseId: thread.id,
+    ...(thread.appointmentOccurrenceId
+      ? { appointmentOccurrenceId: thread.appointmentOccurrenceId }
+      : {}),
+    human:
+      thread.activeChannel === "HUMAN" &&
+      !!vars.userMessage &&
+      !vars.chosenOptionId,
+  };
+}
+
+/** The POST body of one turn, carrying its binding. */
+export function supportTurnBody({
+  chosenLabel: _chosenLabel,
+  binding,
+  ...body
+}: TurnVars) {
+  return {
+    ...body,
+    ...(binding?.caseId ? { caseId: binding.caseId } : {}),
+    ...(binding?.appointmentOccurrenceId
+      ? { appointmentOccurrenceId: binding.appointmentOccurrenceId }
+      : {}),
+  };
 }
 
 /** Ids for locally-rendered bubbles; never collide with the server's uuids. */
@@ -285,18 +323,10 @@ export function useSupportThread(
   const turn = useMutation({
     mutationFn: async (vars: TurnVars): Promise<TurnResult> => {
       const current = qc.getQueryData<ThreadData>(queryKey)?.thread;
-      const body = supportTurnBody(vars, {
-        thread: current?.appointmentOccurrenceId,
-        page: occurrenceId,
-      });
-      if (
-        current?.activeChannel === "HUMAN" &&
-        current.id !== "local" &&
-        body.userMessage &&
-        !body.category &&
-        !body.chosenOptionId
-      ) {
-        const res = await fetch(`/api/support/cases/${current.id}/messages`, {
+      const body = supportTurnBody(vars);
+      const humanCaseId = vars.binding?.human ? vars.binding.caseId : undefined;
+      if (humanCaseId && body.userMessage) {
+        const res = await fetch(`/api/support/cases/${humanCaseId}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -307,13 +337,15 @@ export function useSupportThread(
         });
         if (!res.ok) await throwSupportError(res, "support reply");
         // A plain reply is a follow-up; only "This didn't fix it" reopens.
+        const shown = current?.id === humanCaseId ? current : undefined;
         return {
+          threadId: humanCaseId,
           status:
-            body.reopen && current.status === "RESOLVED"
+            body.reopen && shown?.status === "RESOLVED"
               ? "OPEN"
-              : current.status,
+              : (shown?.status ?? "OPEN"),
           activeChannel: "HUMAN",
-          currentNodeId: current.currentNodeId,
+          currentNodeId: shown?.currentNodeId ?? null,
           messages: [],
           escalated: false,
           resolved: false,
@@ -371,6 +403,15 @@ export function useSupportThread(
         setLastReplyByAt(result.replyByAt ?? null);
       }
       qc.setQueryData<ThreadData>(queryKey, (old) => {
+        // A retry can answer a case the page no longer shows; the refetch then shows what is current.
+        const shownId = old?.thread?.id;
+        if (
+          result.threadId &&
+          shownId &&
+          shownId !== "local" &&
+          shownId !== result.threadId
+        )
+          return old;
         const merged = appendMessages(
           old,
           result.messages.map((m) => ({
@@ -384,10 +425,11 @@ export function useSupportThread(
           ...merged,
           thread: {
             ...merged.thread,
+            ...(result.threadId ? { id: result.threadId } : {}),
             status: result.status,
             activeChannel: result.activeChannel,
             currentNodeId: result.currentNodeId,
-            // Kept before the refetch, so an option pressed at once still answers this session.
+            // Kept before the refetch, so an option pressed at once still answers this case and session.
             ...(result.appointmentOccurrenceId !== undefined
               ? { appointmentOccurrenceId: result.appointmentOccurrenceId }
               : {}),
@@ -500,13 +542,26 @@ export function useSupportThread(
     (vars: TurnVars): boolean => {
       if (inFlight.current) return false;
       inFlight.current = true;
+      // A retry carries its first binding; only a fresh turn binds to the thread shown now.
+      const binding =
+        vars.binding ??
+        bindTurn(
+          vars,
+          qc.getQueryData<ThreadData>(supportKeys.thread(appointmentId))
+            ?.thread,
+          occurrenceId,
+        );
       mutateTurn(
-        { ...vars, clientTurnId: vars.clientTurnId ?? crypto.randomUUID() },
+        {
+          ...vars,
+          binding,
+          clientTurnId: vars.clientTurnId ?? crypto.randomUUID(),
+        },
         { onSettled: () => (inFlight.current = false) },
       );
       return true;
     },
-    [mutateTurn],
+    [mutateTurn, qc, appointmentId, occurrenceId],
   );
   const retryTurn = (id: string) => {
     const failed = failedTurns[id];

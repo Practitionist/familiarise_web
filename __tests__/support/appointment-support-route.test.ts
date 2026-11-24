@@ -80,7 +80,11 @@ import { applyRateLimit } from "../../lib/rate-limit";
 import prisma from "../../lib/prisma";
 import { buildSupportContext } from "../../lib/support/context";
 import { runSupportTurn } from "../../lib/support/service";
-import { supportTurnBody } from "../../components/support/useSupportThread";
+import {
+  bindTurn,
+  supportTurnBody,
+  type TurnVars,
+} from "../../components/support/useSupportThread";
 import { SupportTurnSchema } from "../../schemas/support";
 import type { memTable } from "../fixtures/mem-db";
 import {
@@ -306,42 +310,48 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       mockedRunTurn.mockResolvedValue({ messages: [], actions: [] });
     });
 
-    it("every turn the thread sends names its session and parses through the route's schema", () => {
-      // A new intent prefers the session the page was opened for.
-      expect(
+    it("every turn the thread sends names what it answers and parses through the route's schema", () => {
+      const threadA = {
+        id: "case-a",
+        activeChannel: "SELF_SERVE",
+        appointmentOccurrenceId: "occ-ended",
+      };
+      const sent = (vars: TurnVars, page?: string) =>
         SupportTurnSchema.parse(
-          supportTurnBody(
-            {
-              category: "NO_SHOW",
-              chosenLabel: "No-show",
-              clientTurnId: "t-1",
-            },
-            { thread: "occ-other", page: "occ-ended" },
-          ),
-        ),
+          supportTurnBody({ ...vars, binding: bindTurn(vars, threadA, page) }),
+        );
+      // A new intent names only the page's session, never the shown thread's.
+      expect(
+        sent({ category: "NO_SHOW", clientTurnId: "t-1" }, "occ-other"),
       ).toEqual({
         category: "NO_SHOW",
         clientTurnId: "t-1",
-        appointmentOccurrenceId: "occ-ended",
+        appointmentOccurrenceId: "occ-other",
       });
-      // An answer names the session of the thread it answers, whatever the page says.
+      expect(sent({ category: "NO_SHOW", chosenLabel: "No-show" })).toEqual({
+        category: "NO_SHOW",
+      });
+      // An answer names the case and session it answers, whatever the page says.
       expect(
-        SupportTurnSchema.parse(
-          supportTurnBody(
-            { chosenOptionId: "expert", chosenLabel: "The expert" },
-            { thread: "occ-ended", page: "occ-other" },
-          ),
+        sent(
+          { chosenOptionId: "expert", chosenLabel: "The expert" },
+          "occ-other",
         ),
       ).toEqual({
         chosenOptionId: "expert",
+        caseId: "case-a",
         appointmentOccurrenceId: "occ-ended",
       });
-      // A booking-wide thread names none.
+      // A thread not yet stored names nothing.
       expect(
-        supportTurnBody(
-          { userMessage: "Hello" },
-          { thread: null, page: "occ-ended" },
-        ),
+        supportTurnBody({
+          userMessage: "Hello",
+          binding: bindTurn(
+            { userMessage: "Hello" },
+            { ...threadA, id: "local" },
+            undefined,
+          ),
+        }),
       ).toEqual({ userMessage: "Hello" });
     });
 
