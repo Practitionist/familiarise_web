@@ -36,6 +36,17 @@ const reportSentryError = jest.fn();
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...a: unknown[]) => reportSentryError(...a),
 }));
+// The proposed-verdict notices: prepared before the write, staged only inside a write that moved the row.
+const proposal = { entityRef: "appointment:apt-1", bells: [], emails: null };
+const prepareProposed = jest.fn(async (..._a: unknown[]) => proposal);
+const stageNotices = jest.fn(async (..._a: unknown[]) => ({
+  bells: [],
+  emails: [],
+}));
+jest.mock("../../lib/booking/outcome-notices", () => ({
+  prepareProposedOutcomeNotices: (...a: unknown[]) => prepareProposed(...a),
+  stageOutcomeNotices: (...a: unknown[]) => stageNotices(...a),
+}));
 const recording = { current: null as { id: string } | null };
 const seatUpdate = jest.fn().mockResolvedValue({ count: 1 });
 jest.mock("../../lib/prisma", () => {
@@ -214,7 +225,7 @@ it.each([
       now: at(120),
       outages: [],
     });
-    // Only the absent seat, keyed like the 1:1 no-show bell.
+    // Only the absent seat, keyed per seat.
     expect(stageBell.mock.calls.map((c) => c[1])).toEqual(
       Array.from({ length: bells }, () =>
         expect.objectContaining({
@@ -224,6 +235,32 @@ it.each([
         }),
       ),
     );
+  },
+);
+
+it("a proposed negative verdict stages both sides' notices once, inside the write that moved the row", async () => {
+  const db = jest.requireMock("../../lib/prisma").default;
+  await decideSlotOutcome(slot(30), { now: at(120), outages: [] });
+  expect(prepareProposed).toHaveBeenCalledWith({
+    occurrenceId: "occ-1",
+    appointmentId: "apt-1",
+    startsAt: at(0),
+    outcome: "CUT_SHORT",
+    outcomeAt: at(120),
+  });
+  expect(stageNotices).toHaveBeenCalledTimes(1);
+  expect(stageNotices).toHaveBeenCalledWith(db, proposal);
+});
+
+it.each([
+  ["a held session", 60, 1],
+  ["a lost CAS", 30, 0],
+])(
+  "%s stages no proposed-verdict notice",
+  async (_label, hostLeaves, moved) => {
+    transition.mockResolvedValueOnce(moved);
+    await decideSlotOutcome(slot(hostLeaves), { now: at(120), outages: [] });
+    expect(stageNotices).not.toHaveBeenCalled();
   },
 );
 

@@ -214,7 +214,7 @@ Every sending address is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NE
 4. Novu Cloud deduplicates a resend on the `Idempotency-Key` header (derived from the row's `transactionId`, `firstAttemptAt`, recipients and payload) and runs the family's single in-app step, which pushes to the subscriber's WebSocket and appears in the bell.
 5. The app filters recipients by bell policy in Postgres when it stages the row and once more before the first attempt of each generation.
 
-**Events and families:** all 101 events and the 16 families that carry them are listed in [02-workflows-and-api.md](./02-workflows-and-api.md#workflow-families). They are not repeated here.
+**Events and families:** all 102 events and the 16 families that carry them are listed in [02-workflows-and-api.md](./02-workflows-and-api.md#workflow-families). They are not repeated here.
 
 **Delivery audit trail:** the `NotificationOutbox` row is the record of what was staged, sent, retried or dead-lettered, with its `lastError` reason. The Novu activity feed keeps only 24 hours on the Free plan, so it is not the audit trail.
 
@@ -506,7 +506,7 @@ The two relays are the outbox halves of the design: every email and every Novu t
 
 ## Deprecated & Superseded Approaches
 
-- **Novu as a multi-channel orchestrator.** Earlier versions of this map showed a Novu email step, push channel and digest steps, a hand-built dashboard workflow per event, and a "Tier 1/2/3" list of 40 workflow ids. Novu is now in-app only, workflows are 16 families written from `lib/novu/templates/`, and there are 101 events. Delete any residual reference to a Novu email step or a per-event workflow.
+- **Novu as a multi-channel orchestrator.** Earlier versions of this map showed a Novu email step, push channel and digest steps, a hand-built dashboard workflow per event, and a "Tier 1/2/3" list of 40 workflow ids. Novu is now in-app only, workflows are 16 families written from `lib/novu/templates/`, and there are 102 events. Delete any residual reference to a Novu email step or a per-event workflow.
 - **Maintenance notifications.** The `maintenance-*` events were removed; see [the decision record](../decisions/2026-11-06-notification-single-preference-owner.md).
 - **Novu as the delivery audit trail.** The Novu activity feed (24 hours on Free) was once treated as the delivery log. `NotificationOutbox` is the audit trail now.
 - **Cron by GitHub Actions.** Earlier notes scheduled reminders, auto-complete and the relays from GitHub Actions or as an unbounded backstop. They run on the ticker, and no Actions workflow schedules a registry job.

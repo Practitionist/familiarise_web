@@ -221,8 +221,17 @@ export default function RefundPolicyPage() {
                   <ul>
                     <li>
                       One-on-one consultation: a host no-show or a session cut
-                      short by the host is cancelled with a full, automatic
-                      refund of the amount you paid (see Section 6).
+                      short by the host is refunded in full, automatically, for
+                      the amount you paid (see Section 6). We apply it after a
+                      48-hour window from our record of the session, or sooner
+                      if you confirm the host didn&apos;t join; the notice we
+                      send you gives the exact date.
+                    </li>
+                    <li>
+                      Either side can report a problem with the record inside
+                      that window. If the call record is incomplete, or the
+                      other side disputes it, our team checks it before
+                      anything is applied.
                     </li>
                     <li>
                       Live classes and webinars: a voided session is offered as
@@ -243,11 +252,12 @@ export default function RefundPolicyPage() {
                   </p>
                   <ul>
                     <li>
-                      A learner no-show is not refunded. You&apos;ll get a
-                      support link on the appointment if you couldn&apos;t get
-                      in, along with a link to the session recording when your
-                      plan records sessions and a recording exists. Our support
-                      team can review and correct the outcome if it was recorded
+                      A learner no-show is not refunded. We tell you what we
+                      recorded and give you 48 hours from our record to report
+                      it if you were there or couldn&apos;t get in, with a
+                      link to the session recording when your plan records
+                      sessions and a recording exists. Our support team can
+                      review and correct the outcome if it was recorded
                       incorrectly.
                     </li>
                   </ul>

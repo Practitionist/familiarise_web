@@ -103,15 +103,27 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
-    workflowId: W.SESSION_NO_SHOW,
-    name: "Session missed by the learner",
+    workflowId: W.SESSION_OUTCOME_PROPOSED,
+    name: "Session outcome proposed",
     description:
-      "The learner of a 1:1 session who never joined it (#1569 D7); the session counts as held.",
+      "Both sides of a session the sweep recorded as host-absent, cut short or learner-absent: what was recorded, when the report window closes and what happens if nobody reports.",
     category: "appointments",
     inApp: {
-      subject: "We didn't see you in your session",
-      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} went ahead without you, so it counts as held. If you couldn't get in, tell support and we will look at the call record.{% if payload.recordingUrl %} A recording is available in your dashboard.{% endif %}",
-      redirect: "supportUrl",
+      subject: "{{payload.subject}}",
+      body: "{{payload.message}}",
+      redirect: "reportUrl",
+    },
+  },
+  {
+    workflowId: W.SESSION_OUTCOME_REVIEWED,
+    name: "Session outcome reviewed",
+    description:
+      "Both sides of a session whose host-absent, cut-short or learner-absent verdict ops changed through set-outcome.",
+    category: "appointments",
+    inApp: {
+      subject: "{{payload.subject}}",
+      body: "{{payload.message}}",
+      redirect: "dashboardUrl",
     },
   },
   {

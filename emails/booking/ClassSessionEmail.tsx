@@ -13,7 +13,6 @@ export type ClassSessionEmailKind =
   | "MAKEUP_SCHEDULED"
   | "SESSION_REFUNDED"
   | "EXIT_AVAILABLE"
-  | "NO_SHOW"
   | "MISSED_RECORDING"
   | "COMPLETED";
 
@@ -29,7 +28,6 @@ export interface ClassSessionEmailProps {
   missedCount?: number;
   voided?: boolean;
   recordingUrl?: string | null;
-  supportUrl?: string | null;
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
 }
@@ -51,8 +49,6 @@ export function classSessionSubject(
       return `Session refund processed: ${args.planTitle}`;
     case "EXIT_AVAILABLE":
       return `Full exit refund option available: ${args.planTitle}`;
-    case "NO_SHOW":
-      return `We missed you in your session: ${args.planTitle}`;
     case "MISSED_RECORDING":
       return `Recording ready from your session: ${args.planTitle}`;
     case "COMPLETED":
@@ -65,7 +61,6 @@ const ACTION_LABEL_BY_KIND: Record<ClassSessionEmailKind, string> = {
   MAKEUP_SCHEDULED: "Open dashboard",
   SESSION_REFUNDED: "Open dashboard",
   EXIT_AVAILABLE: "Open dashboard",
-  NO_SHOW: "Contact support",
   MISSED_RECORDING: "Watch recording",
   COMPLETED: "Rate session",
 };
@@ -74,10 +69,8 @@ function resolveClassSessionActionHref(
   kind: ClassSessionEmailKind,
   dashboardUrl: string,
   recordingUrl?: string | null,
-  supportUrl?: string | null,
 ): string {
   if (kind === "MISSED_RECORDING" && recordingUrl) return recordingUrl;
-  if (kind === "NO_SHOW" && supportUrl) return supportUrl;
   return dashboardUrl;
 }
 
@@ -91,7 +84,6 @@ function renderClassSessionBody(args: {
   amountText?: string;
   missedCount: number;
   voided: boolean;
-  recordingUrl?: string | null;
 }): React.ReactNode {
   const {
     kind,
@@ -103,7 +95,6 @@ function renderClassSessionBody(args: {
     amountText,
     missedCount,
     voided,
-    recordingUrl,
   } = args;
   const sessionPrefix = startsAtText ? `${startsAtText} ` : "";
 
@@ -161,15 +152,6 @@ function renderClassSessionBody(args: {
           your dashboard for a full refund of upcoming sessions.
         </Text>
       );
-    case "NO_SHOW":
-      return (
-        <Text style={paragraph}>
-          Your {sessionPrefix}session of <strong>{planTitle}</strong> went ahead
-          without you and counts as held. If you were unable to connect, reach
-          out to support so we can review the call record.
-          {recordingUrl ? " A recording is available in your dashboard." : ""}
-        </Text>
-      );
     case "MISSED_RECORDING":
       return (
         <Text style={paragraph}>
@@ -200,7 +182,6 @@ export function ClassSessionEmail({
   missedCount = 1,
   voided = false,
   recordingUrl,
-  supportUrl,
   dashboardUrl,
   unsubscribeUrl,
 }: Readonly<ClassSessionEmailProps>) {
@@ -215,7 +196,6 @@ export function ClassSessionEmail({
     kind,
     dashboardUrl,
     recordingUrl,
-    supportUrl,
   );
   const actionLabel = ACTION_LABEL_BY_KIND[kind];
 
@@ -234,7 +214,6 @@ export function ClassSessionEmail({
         amountText,
         missedCount,
         voided,
-        recordingUrl,
       })}
 
       <Section style={buttonContainer}>

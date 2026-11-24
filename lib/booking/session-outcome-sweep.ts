@@ -60,6 +60,10 @@ import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
+import {
+  prepareProposedOutcomeNotices,
+  stageOutcomeNotices,
+} from "./outcome-notices";
 
 export const OUTCOME_SLOT_SELECT = {
   id: true,
@@ -279,6 +283,22 @@ async function writeSlotOutcomeTransaction(
   fence: { room: RoomFence | null; requireUnsettled: boolean },
 ): Promise<boolean> {
   const { requireUnsettled } = fence;
+  // Rendered before the transaction; staged in it only when this write moves the row.
+  const proposal = isNegativeMoneyOutcome(verdict.outcome)
+    ? await prepareProposedOutcomeNotices({
+        occurrenceId: slot.id,
+        appointmentId: slot.appointmentId,
+        startsAt: slot.startsAt,
+        outcome: verdict.outcome,
+        outcomeAt: now,
+      }).catch((err: unknown) => {
+        console.error(
+          "[session-outcome-sweep] Failed to prepare the proposed-verdict notices:",
+          err,
+        );
+        return null;
+      })
+    : null;
   const txResult = await prisma.$transaction(
     async (tx) => {
       if (
@@ -287,7 +307,7 @@ async function writeSlotOutcomeTransaction(
       ) {
         return {
           applied: false,
-          noShow: null,
+          proposed: null,
           missedRecording: null,
           voided: null,
         };
@@ -330,17 +350,16 @@ async function writeSlotOutcomeTransaction(
           { fromIn: ["CONFIRMED"] },
         );
       }
-      const noShow =
-        count > 0 && verdict.outcome === "LEARNER_ABSENT"
-          ? await stageNoShowBells(tx, { ...slot, presences }, "one-to-one")
-          : null;
-      // Owner decision — a group seat absent from a held session hears only of its recording.
+      // Both sides hear of a proposed negative verdict, once, with the write that made it.
+      const proposed =
+        count > 0 && proposal ? await stageOutcomeNotices(tx, proposal) : null;
+      // A group seat absent from a held session hears only of its recording.
       const isGroup = !!(
         slot.appointment.classId ?? slot.appointment.webinarId
       );
       const missedRecording =
         count > 0 && verdict.outcome === "HELD" && isGroup
-          ? await stageNoShowBells(tx, { ...slot, presences }, "group")
+          ? await stageMissedRecordingBells(tx, { ...slot, presences })
           : null;
       // A void is a class miss: bells, and the exit right re-checked in this tx.
       const voided =
@@ -353,23 +372,12 @@ async function writeSlotOutcomeTransaction(
               hostAttributed: verdict.hostAttributed,
             })
           : null;
-      return { applied: count > 0, noShow, missedRecording, voided };
+      return { applied: count > 0, proposed, missedRecording, voided };
     },
     { timeout: 15_000 },
   );
-  const [noShowEmails, missedRecordingEmails, voidedEmails] = await Promise.all(
+  const [missedRecordingEmails, voidedEmails] = await Promise.all(
     [
-      txResult.noShow?.emailArgs
-        ? stageSessionOutcomeEmails(prisma, txResult.noShow.emailArgs).catch(
-            (err) => {
-              console.error(
-                "[session-outcome-sweep] Failed to stage NO_SHOW emails:",
-                err,
-              );
-              return [];
-            },
-          )
-        : Promise.resolve([]),
       txResult.missedRecording?.emailArgs
         ? stageSessionOutcomeEmails(
             prisma,
@@ -388,14 +396,14 @@ async function writeSlotOutcomeTransaction(
   await flushNotificationsAfter(
     {
       bells: [
-        ...(txResult.noShow?.bells ?? []),
+        ...(txResult.proposed?.bells ?? []),
         ...(txResult.missedRecording?.bells ?? []),
         ...(txResult.voided?.bells ?? []),
       ],
       emails: [
         {
-          rows: noShowEmails,
-          emailType: "CLASS_SESSION_NO_SHOW",
+          rows: txResult.proposed?.emails ?? [],
+          emailType: "SESSION_OUTCOME_PROPOSED",
         },
         {
           rows: missedRecordingEmails,
@@ -527,64 +535,27 @@ export async function decideSlotOutcome(
 
 const PLAN_BELL = { select: { title: true, recordingEnabled: true } } as const;
 
-function resolveNoShowPlan(
-  row: {
-    consultation?: {
-      consultationPlan: { title: string; recordingEnabled: boolean };
-    } | null;
-    subscription?: {
-      subscriptionPlan: { title: string; recordingEnabled: boolean };
-    } | null;
-    trial?: {
-      subscriptionPlan: { title: string; recordingEnabled: boolean };
-    } | null;
-    webinar?: {
-      webinarPlan: { title: string; recordingEnabled: boolean };
-    } | null;
-    class?: {
-      classPlan: { title: string; recordingEnabled: boolean };
-    } | null;
-  } | null,
-  shape: "one-to-one" | "group",
-) {
-  if (!row) return null;
-  if (shape === "group") {
-    return row.class?.classPlan ?? row.webinar?.webinarPlan ?? null;
-  }
-  return (
-    row.consultation?.consultationPlan ??
-    row.subscription?.subscriptionPlan ??
-    row.trial?.subscriptionPlan ??
-    null
-  );
-}
-
-/** The slot fields a no-show bell reads; `presences` is who was in the call. */
+/** The slot fields a missed-recording bell reads; `presences` is who was in the call. */
 type BellSlot = Pick<OutcomeSlot, "id" | "appointmentId" | "startsAt"> & {
   presences: readonly { userId: string }[];
 };
 
-async function buildSeatNoShowBell(
+async function buildSeatMissedRecordingBell(
   tx: Tx,
   args: {
     slot: BellSlot;
     seat: { userId: string; user: { consulteeProfileId: string | null } };
-    shape: "one-to-one" | "group";
     planTitle: string;
     zone?: string;
-    hasRecording: boolean;
   },
 ): Promise<StagedTrigger | null> {
-  const { slot, seat, shape, planTitle, zone, hasRecording } = args;
+  const { slot, seat, planTitle, zone } = args;
   const profileId = seat.user.consulteeProfileId;
   const recordingUrl = profileId
     ? personalHref("consultee", profileId, "recordings")
     : `${getAppUrl()}/dashboard`;
   return stageBell(tx, {
-    workflowId:
-      shape === "group"
-        ? NOVU_WORKFLOWS.SESSION_MISSED_RECORDING
-        : NOVU_WORKFLOWS.SESSION_NO_SHOW,
+    workflowId: NOVU_WORKFLOWS.SESSION_MISSED_RECORDING,
     recipients: [seat.userId],
     payload: {
       planTitle,
@@ -592,22 +563,19 @@ async function buildSeatNoShowBell(
         formatNotificationDateTime(slot.startsAt, zone) ??
         slot.startsAt.toISOString(),
       supportUrl: `${getAppUrl()}/support`,
-      ...(hasRecording && { recordingUrl }),
+      recordingUrl,
     },
     dedupeKey: `no-show:${slot.id}:${seat.userId}`,
   });
 }
 
 /**
- * D7 — a 1:1 learner who never joined forfeits the session; one bell says so,
- * links "couldn't get in?" to support, and names the recording when there is
- * one. A group seat with no presence in a held session gets one bell only when
- * a recording exists, and nothing otherwise. No money moves either way.
+ * A class or webinar seat with no presence in a held, recorded session gets one
+ * bell and one email naming the recording, and nothing otherwise. No money moves.
  */
-async function stageNoShowBells(
+async function stageMissedRecordingBells(
   tx: Tx,
   slot: BellSlot,
-  shape: "one-to-one" | "group",
 ): Promise<{
   bells: StagedTrigger[];
   emailArgs: SessionOutcomeEmailArgs | null;
@@ -615,9 +583,6 @@ async function stageNoShowBells(
   const row = await tx.appointment.findUnique({
     where: { id: slot.appointmentId },
     select: {
-      consultation: { select: { consultationPlan: PLAN_BELL } },
-      subscription: { select: { subscriptionPlan: PLAN_BELL } },
-      trial: { select: { subscriptionPlan: PLAN_BELL } },
       webinar: { select: { webinarPlan: PLAN_BELL } },
       class: { select: { classPlan: PLAN_BELL } },
       participants: {
@@ -629,36 +594,29 @@ async function stageNoShowBells(
       },
     },
   });
-  const plan = resolveNoShowPlan(row, shape);
-  if (!row || !plan) return { bells: [], emailArgs: null };
-  const recording = plan.recordingEnabled
-    ? await tx.recording.findFirst({
-        where: {
-          meeting: { appointmentOccurrenceId: slot.id },
-          status: { in: ["READY", "AVAILABLE"] },
-        },
-        select: { id: true },
-      })
-    : null;
-  if (shape === "group" && !recording) return { bells: [], emailArgs: null };
+  const plan = row?.class?.classPlan ?? row?.webinar?.webinarPlan ?? null;
+  if (!row || !plan?.recordingEnabled) return { bells: [], emailArgs: null };
+  const recording = await tx.recording.findFirst({
+    where: {
+      meeting: { appointmentOccurrenceId: slot.id },
+      status: { in: ["READY", "AVAILABLE"] },
+    },
+    select: { id: true },
+  });
+  if (!recording) return { bells: [], emailArgs: null };
   const present = new Set(slot.presences.map((p) => p.userId));
-  const absent =
-    shape === "group"
-      ? row.participants.filter((seat) => !present.has(seat.userId))
-      : row.participants;
+  const absent = row.participants.filter((seat) => !present.has(seat.userId));
   const zones = await resolveRecipientTimezones(
     absent.map((seat) => seat.userId),
     tx,
   );
   const bells: StagedTrigger[] = [];
   for (const seat of absent) {
-    const bell = await buildSeatNoShowBell(tx, {
+    const bell = await buildSeatMissedRecordingBell(tx, {
       slot,
       seat,
-      shape,
       planTitle: plan.title,
       zone: zones.get(seat.userId),
-      hasRecording: Boolean(recording),
     });
     if (bell) bells.push(bell);
   }
@@ -668,13 +626,9 @@ async function stageNoShowBells(
       ? {
           appointmentId: slot.appointmentId,
           userIds: absentUserIds,
-          outcome:
-            shape === "group"
-              ? ("MISSED_RECORDING" as const)
-              : ("NO_SHOW" as const),
+          outcome: "MISSED_RECORDING" as const,
           planTitle: plan.title,
           startsAt: slot.startsAt,
-          supportUrl: `${getAppUrl()}/support`,
           dashboardUrl: `${getAppUrl()}/dashboard`,
         }
       : null;

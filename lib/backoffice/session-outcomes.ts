@@ -50,6 +50,13 @@ import {
   type HeadlineUser,
 } from "@/lib/data/appointment-headline";
 import { meetingEndReasonSchema } from "@/lib/meetings/end-reasons";
+import {
+  prepareReviewedOutcomeNotices,
+  stageOutcomeNotices,
+  type PreparedOutcomeNotices,
+  type StagedOutcomeNotices,
+} from "@/lib/booking/outcome-notices";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import {
   NEEDS_HUMAN_DEFAULT_SORT,
@@ -113,7 +120,15 @@ type OverturnArgs = {
   outcome: OccurrenceOutcome;
   actorUserId: string;
   now?: Date;
+  /** Rendered before the transaction for the negative verdict read then; staged only if it still stands. */
+  review?: { from: OccurrenceOutcome; notices: PreparedOutcomeNotices };
 };
+
+/** Ops changing a negative verdict to anything else: both sides were told of it, so both hear the result. */
+const isNegativeOverturn = (
+  from: OccurrenceOutcome | null,
+  to: OccurrenceOutcome,
+) => isNegativeMoneyOutcome(from) && from !== to;
 
 /** Only a live, past session the sweep has decided may be overturned. */
 function assertDecided(
@@ -275,9 +290,17 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   }
   if (to === occ.completionStatus) await relabel(tx, occ, args, now);
   else await moveStatus(tx, occ, args, to, now);
+  const review = args.review;
+  const notices: StagedOutcomeNotices | null =
+    review &&
+    review.from === occ.outcome &&
+    isNegativeOverturn(occ.outcome, args.outcome)
+      ? await stageOutcomeNotices(tx, review.notices)
+      : null;
   return {
     before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
     after: { completionStatus: to, outcome: args.outcome },
+    notices,
   };
 }
 
@@ -292,14 +315,53 @@ export async function overturnSessionOutcome(args: {
 }) {
   const occ = await prisma.appointmentOccurrence.findUnique({
     where: { id: args.occurrenceId },
-    select: { appointmentId: true },
+    select: { appointmentId: true, startsAt: true, outcome: true },
   });
   if (!occ) {
     throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
   }
-  return withAppointmentLock(occ.appointmentId, () =>
-    prisma.$transaction((tx) => setSessionOutcome(tx, args)),
+  const now = new Date();
+  const from = occ.outcome;
+  const notices =
+    from && isNegativeOverturn(from, args.outcome)
+      ? await prepareReviewedOutcomeNotices({
+          occurrenceId: args.occurrenceId,
+          appointmentId: occ.appointmentId,
+          startsAt: occ.startsAt,
+          outcome: args.outcome,
+          reviewedAt: now,
+        }).catch((err: unknown) => {
+          console.error(
+            "[session.set-outcome] Failed to prepare the reviewed notices:",
+            err,
+          );
+          return null;
+        })
+      : null;
+  const result = await withAppointmentLock(occ.appointmentId, () =>
+    prisma.$transaction((tx) =>
+      setSessionOutcome(tx, {
+        ...args,
+        now,
+        ...(from && notices && { review: { from, notices } }),
+      }),
+    ),
   );
+  if (result.notices) {
+    await flushNotificationsAfter(
+      {
+        bells: result.notices.bells,
+        emails: [
+          {
+            rows: result.notices.emails,
+            emailType: "SESSION_OUTCOME_REVIEWED",
+          },
+        ],
+      },
+      "session.set-outcome",
+    );
+  }
+  return result;
 }
 
 /**
