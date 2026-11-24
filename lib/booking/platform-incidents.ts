@@ -27,7 +27,10 @@ import {
   subscriptionIsOver,
   subscriptionPlanEnd,
 } from "./entitlement";
-import { incidentRefundKey } from "./incident-keys";
+import {
+  INCIDENT_NO_SHOW_CLAIM_PREFIX,
+  incidentRefundKey,
+} from "./incident-keys";
 import { onClassSessionVoided } from "./class-sessions";
 import { LIVE_PARTICIPANT_STATUSES } from "./participants";
 import { flushClassVoidNotices } from "./session-outcome-sweep";
@@ -487,6 +490,67 @@ export async function enumerateIncident(
     cursor = page.at(-1)?.id ?? cursor;
     if (page.length < opts.limit) return complete;
   }
+}
+
+/**
+ * The incident's own record of a no-show claim that won the race against it:
+ * the claim re-reads outages after its row lock, so this catches only an
+ * incident committed after that read, whose session the walk can no longer void.
+ */
+export async function reportClaimedNoShows(
+  incident: IncidentRow,
+): Promise<string[]> {
+  const claimed = await prisma.appointmentOccurrence.findMany({
+    where: {
+      startsAt: { lt: incident.endsAt },
+      endsAt: { gt: incident.startsAt },
+      isTentative: false,
+      deletedAt: { not: null },
+      completionStatus: "CANCELLED",
+      outcome: "HOST_ABSENT",
+      outcomeConfirmedAt: { not: null },
+      appointment: { consultationId: { not: null } },
+    },
+    select: {
+      id: true,
+      appointmentId: true,
+      appointment: {
+        select: {
+          payment: {
+            where: { paymentStatus: "SUCCEEDED", deletedAt: null },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+    orderBy: { id: "asc" },
+    take: 200,
+  });
+  const reported: string[] = [];
+  for (const occ of claimed) {
+    const correlationId = `${INCIDENT_NO_SHOW_CLAIM_PREFIX}${incident.id}:${occ.id}`;
+    const seen = await prisma.systemEvent.findFirst({
+      where: { correlationId },
+      select: { id: true },
+    });
+    if (seen) continue;
+    await recordSystemEvent({
+      strict: true,
+      category: "BOOKING",
+      severity: "WARN",
+      message: `A consultant no-show was refunded and struck inside incident ${incident.id}; review the strike and the expert's earnings`,
+      context: {
+        incidentId: incident.id,
+        occurrenceId: occ.id,
+        appointmentId: occ.appointmentId,
+        paymentId: occ.appointment.payment[0]?.id ?? null,
+      },
+      correlationId,
+    });
+    reported.push(occ.id);
+  }
+  return reported;
 }
 
 /** One page of the walk: "deadline" stops the run, "pending" leaves work for a later one. */

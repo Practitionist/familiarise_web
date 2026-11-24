@@ -56,6 +56,7 @@ import {
 } from "@/lib/booking/misses";
 import {
   claimNoShowTx,
+  NoShowDuringOutageError,
   readNoShowClaim,
   settleClaimedNoShow,
 } from "@/lib/booking/consultant-no-show";
@@ -434,6 +435,12 @@ async function confirmNoShowProposal(
   } catch (error) {
     if (error instanceof IllegalTransitionError) {
       throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+    }
+    if (error instanceof NoShowDuringOutageError) {
+      throw new OpsRefusal(
+        "NO_SHOW_DURING_OUTAGE",
+        "An outage overlaps this session, so it is not a consultant no-show; decide it with Set outcome.",
+      );
     }
     throw error;
   }

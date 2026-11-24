@@ -24,8 +24,10 @@ import {
   enumerateIncident,
   extendPlanForIncident,
   freeTrialPair,
+  reportClaimedNoShows,
   type IncidentRow,
 } from "@/lib/booking/platform-incidents";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { refundIncidentSeat } from "@/lib/payments/operations/incident-refunds";
 import {
   sendIncidentDigests,
@@ -226,6 +228,15 @@ async function enumerate(
   );
   result.voided += tally.voided;
   result.remediesCreated += tally.remediesCreated;
+  // A no-show claim that committed inside the incident is never voided by the walk; ops review it.
+  const claimed = await reportClaimedNoShows(incident);
+  if (claimed.length > 0) {
+    await reportStandingFinding({
+      key: `settle-platform-incidents:no-show-claimed:${incident.id}`,
+      ids: claimed,
+      message: `${claimed.length} consultant no-show(s) were refunded and struck inside incident ${incident.id}`,
+    });
+  }
   if (!complete) return null;
   const stampedAt = new Date();
   await prisma.platformIncident.updateMany({

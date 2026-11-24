@@ -42,6 +42,7 @@ import {
   transitionOccurrenceCompletion,
 } from "./transitions";
 import { recordExpertStrike } from "./expert-reliability";
+import { readOverlappingOutages } from "./outage-windows";
 
 /** Outcomes in which the consultant never appeared; a no-show booking holds only these. */
 export const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
@@ -162,6 +163,7 @@ const CLAIM_SELECT = {
         select: {
           id: true,
           startsAt: true,
+          endsAt: true,
           deletedAt: true,
           isTentative: true,
           completionStatus: true,
@@ -189,6 +191,8 @@ export interface NoShowClaim {
   strikeOccurrenceId: string;
   /** Every standing session of the proposal, the strike's included. */
   occurrenceIds: string[];
+  /** Their booked times, which an outage declared since the verdict must not overlap. */
+  windows: { startsAt: Date; endsAt: Date }[];
   consultantProfileId: string;
   consultantUserId: string;
   consulteeUserId: string;
@@ -247,6 +251,7 @@ export function noShowClaimOf(
     organizationId: appointment.organizationId,
     strikeOccurrenceId,
     occurrenceIds: proposal.map((o) => o.id),
+    windows: proposal.map((o) => ({ startsAt: o.startsAt, endsAt: o.endsAt })),
     consultantProfileId: row.consultationPlan.consultantProfileId,
     consultantUserId,
     consulteeUserId,
@@ -271,6 +276,16 @@ export async function readNoShowClaim(
   return row ? noShowClaimOf(row, occurrenceId) : null;
 }
 
+/** An outage now overlaps a proposed session: the claim rolls back and the next pass judges it weak. */
+export class NoShowDuringOutageError extends Error {
+  constructor(readonly consultationId: string) {
+    super(
+      `An outage overlaps consultation ${consultationId}'s proposed no-show`,
+    );
+    this.name = "NoShowDuringOutageError";
+  }
+}
+
 /** The full refund a consultant no-show owes, under the arm's own key. */
 export function noShowRefundOwed(paymentId: string): RefundOwedMarker {
   return {
@@ -286,8 +301,9 @@ export function noShowRefundOwed(paymentId: string): RefundOwedMarker {
 /**
  * The claim, on the caller's transaction: CAS the consultation to CANCELLED,
  * then its proposed sessions (the strike's stamped confirmed), stamp the owed
- * refund and write the strike. Any CAS miss throws IllegalTransitionError, so
- * nothing commits; `guard` narrows the strike session's CAS further.
+ * refund and write the strike. Any CAS miss throws IllegalTransitionError, and an
+ * outage now overlapping the sessions NoShowDuringOutageError, so nothing commits;
+ * `guard` narrows the strike session's CAS further.
  */
 export async function claimNoShowTx(
   tx: Tx,
@@ -322,6 +338,10 @@ export async function claimNoShowTx(
       cancelledAt: now,
     },
   });
+  // Read after the cancel's row lock, so an incident or maintenance window committed while the claim waited is seen.
+  if ((await readOverlappingOutages(tx, claim.windows)).length > 0) {
+    throw new NoShowDuringOutageError(claim.consultationId);
+  }
   await transitionOccurrenceCompletion(tx, {
     where: { AND: [opts.guard ?? {}, strike] },
     to: OccurrenceCompletionStatus.CANCELLED,
@@ -487,7 +507,9 @@ export type NoShowConfirmation =
   /** The booking no longer meets the detector's rules; it stays parked for ops. */
   | { kind: "declined" }
   /** A writer moved the booking between the read and the claim, or the guard held it. */
-  | { kind: "lost" };
+  | { kind: "lost" }
+  /** An outage declared since the pass's read overlaps it; the next pass judges it weak. */
+  | { kind: "outage" };
 
 /** The window-close pass's door: claim a confirmed proposal in its own transaction, then refund and notify. */
 export async function confirmConsultantNoShow(
@@ -512,6 +534,7 @@ export async function confirmConsultantNoShow(
     ));
   } catch (error) {
     if (error instanceof IllegalTransitionError) return { kind: "lost" };
+    if (error instanceof NoShowDuringOutageError) return { kind: "outage" };
     throw error;
   }
   const { refunded } = await settleClaimedNoShow(claim, held, opts);

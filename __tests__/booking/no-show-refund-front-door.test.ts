@@ -215,6 +215,7 @@ function proposedClaimRow(payment: { id: string }) {
         {
           id: "occ-1",
           startsAt: new Date("2026-09-01T10:00:00Z"),
+          endsAt: new Date("2026-09-01T11:00:00Z"),
           deletedAt: null,
           isTentative: false,
           completionStatus: "UNVERIFIED",

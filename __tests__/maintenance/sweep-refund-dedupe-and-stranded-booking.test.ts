@@ -265,6 +265,7 @@ function noShowCandidate(paymentId: string) {
         {
           id: "occ-1",
           startsAt: hoursAgo(4),
+          endsAt: hoursAgo(3),
           completionStatus: "UNVERIFIED",
           outcome: "HOST_ABSENT",
           outcomeConfirmedAt: null,

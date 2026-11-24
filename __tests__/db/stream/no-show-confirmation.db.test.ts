@@ -11,12 +11,16 @@ import { createOrReuseSupportCase } from "../../../lib/support/case-service";
 import { intakeFor } from "../seed";
 import { refundOnRowsEachTest } from "../booking/harness-refunds";
 import { fakeStream } from "./harness-stream";
+import { settlePlatformIncidentForOne } from "../../../scripts/appointments/settle-platform-incidents";
+import { readRefundNeedsHuman } from "../../../lib/backoffice/needs-human";
 import {
   HOUR,
+  lockWaiters,
   MIN,
   type Room,
   seedConsultationRoom,
   stay,
+  waitFor,
 } from "./harness-rooms";
 
 jest.mock(
@@ -38,9 +42,9 @@ jest.mock("../../../lib/email", () => ({
 refundOnRowsEachTest();
 beforeEach(() => fakeStream.reset());
 
-/** A paid hour that ended 7 h ago: the learner waited it out, the consultant never came, every session announced. */
-async function seedNoShow(): Promise<Room> {
-  const room = await seedConsultationRoom(7, { paid: true });
+/** A paid hour that ended `endedHoursAgo` ago: the learner waited it out, the consultant never came, every session announced. */
+async function seedNoShow(endedHoursAgo = 7): Promise<Room> {
+  const room = await seedConsultationRoom(endedHoursAgo, { paid: true });
   fakeStream.calls.set(room.streamCallId, {
     occurrenceId: room.occurrenceId,
     sessions: [
@@ -97,7 +101,17 @@ async function moneyOf(room: Room) {
       deletedAt: true,
     },
   });
-  return { status: consultation.status, refunds, strikes, session };
+  const { refundOwedKey } = await prisma.payment.findUniqueOrThrow({
+    where: { id: room.payment!.id },
+    select: { refundOwedKey: true },
+  });
+  return {
+    status: consultation.status,
+    refunds,
+    strikes,
+    session,
+    refundOwedKey,
+  };
 }
 
 /** A no-show report on the session, its reason answered at `answeredAt`. */
@@ -155,6 +169,7 @@ it("the detector proposes and moves no money; at the close the pass refunds once
       outcomeConfirmedAt: afterClose,
       deletedAt: afterClose,
     },
+    refundOwedKey: null,
   });
 
   await confirmClosedOutcomes(
@@ -195,4 +210,80 @@ it("the consultant's dispute leaves no refund and no strike, even after the wind
     strikes: 0,
     session: { completionStatus: "UNVERIFIED", outcomeConfirmedAt: null },
   });
+});
+
+/** A declared incident over the room's booked hour, removed with its remedies afterwards so no other suite sees it. */
+const declareIncident = (room: Room) =>
+  prisma.platformIncident.create({
+    data: {
+      startsAt: room.startsAt,
+      endsAt: room.endsAt,
+      reason: "Database tier incident",
+    },
+  });
+
+it("a claim that waited on the consultation's lock while an incident was declared over the hour cancels, refunds and strikes nothing", async () => {
+  const room = await seedNoShow(9);
+  const proposed = await propose(room);
+  const afterClose = new Date(proposed.outcomeAt!.getTime() + 49 * HOUR);
+  let pass: Promise<unknown> | undefined;
+  let incidentId: string | undefined;
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        // Something else holds the consultation while the pass judges the proposal strong.
+        await tx.$executeRaw`SELECT 1 FROM "Consultation" WHERE id = ${room.consultationId} FOR UPDATE`;
+        pass = confirmClosedOutcomes(afterClose, () => false);
+        await waitFor(async () => (await lockWaiters()) >= 1);
+        // The incident commits on another connection before the lock is released.
+        incidentId = (await declareIncident(room)).id;
+      },
+      { timeout: 20_000 },
+    );
+    await pass;
+
+    expect(await moneyOf(room)).toMatchObject({
+      status: "APPROVED",
+      refunds: [],
+      strikes: 0,
+      refundOwedKey: null,
+      session: { completionStatus: "UNVERIFIED", outcomeConfirmedAt: null },
+    });
+  } finally {
+    if (incidentId) {
+      await prisma.platformIncident.delete({ where: { id: incidentId } });
+    }
+  }
+});
+
+it("an incident declared after a claim committed lists the claimed no-show for ops", async () => {
+  const room = await seedNoShow(10);
+  const proposed = await propose(room);
+  await confirmClosedOutcomes(
+    new Date(proposed.outcomeAt!.getTime() + 49 * HOUR),
+    () => false,
+  );
+  expect((await moneyOf(room)).status).toBe("CANCELLED");
+  const incident = await declareIncident(room);
+  try {
+    await settlePlatformIncidentForOne(incident.id);
+    await settlePlatformIncidentForOne(incident.id);
+
+    const events = await prisma.systemEvent.findMany({
+      where: {
+        correlationId: `incident-no-show-claim:${incident.id}:${room.occurrenceId}`,
+      },
+    });
+    expect(events).toHaveLength(1);
+    const items = await readRefundNeedsHuman();
+    expect(
+      items.filter(
+        (i) =>
+          i.kind === "incident-no-show-claim" &&
+          i.occurrenceId === room.occurrenceId,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await prisma.platformIncident.delete({ where: { id: incident.id } });
+  }
 });

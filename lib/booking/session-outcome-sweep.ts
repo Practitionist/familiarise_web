@@ -76,6 +76,11 @@ import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided, onClassVoidConfirmed } from "./class-sessions";
+import {
+  OUTAGE_SELECTS,
+  readOverlappingOutages,
+  toOutageWindows,
+} from "./outage-windows";
 import { confirmConsultantNoShow } from "./consultant-no-show";
 
 export const OUTCOME_SLOT_SELECT = {
@@ -127,76 +132,6 @@ export type SlotDecision =
 
 /** Rows read per outage source by the recent-window read. */
 const OUTAGE_READ_CAP = 200;
-
-const OUTAGE_SELECTS = {
-  maintenance: { startedAt: true, endedAt: true },
-  incident: { startsAt: true, endsAt: true },
-} as const;
-
-/** Both sources' rows as tagged outage windows. */
-function toOutageWindows(
-  rows: { startedAt: Date | null; endedAt: Date | null }[],
-  incidents: { startsAt: Date; endsAt: Date }[],
-): OutageWindow[] {
-  return [
-    ...rows
-      .filter((r): r is { startedAt: Date; endedAt: Date | null } =>
-        Boolean(r.startedAt),
-      )
-      .map((r) => ({
-        startsAt: r.startedAt,
-        endsAt: r.endedAt,
-        source: "maintenance" as const,
-      })),
-    ...incidents.map((i) => ({
-      startsAt: i.startsAt,
-      endsAt: i.endsAt,
-      source: "incident" as const,
-    })),
-  ];
-}
-
-/**
- * Every maintenance window and declared incident that overlaps one of the
- * booked windows, with no row cap: one read per source, an OR of the windows.
- */
-export async function readOverlappingOutages(
-  db: Pick<Tx, "maintenanceWindow" | "platformIncident">,
-  windows: readonly { startsAt: Date; endsAt: Date }[],
-): Promise<OutageWindow[]> {
-  const distinct = [
-    ...new Map(
-      windows.map((w) => [`${w.startsAt.getTime()}|${w.endsAt.getTime()}`, w]),
-    ).values(),
-  ];
-  if (distinct.length === 0) return [];
-  const [rows, incidents] = await Promise.all([
-    db.maintenanceWindow.findMany({
-      where: {
-        organizationId: null,
-        // An ended window flips to OFF, so only an open one is read by phase.
-        OR: distinct.map((w) => ({
-          startedAt: { lt: w.endsAt },
-          OR: [
-            { endedAt: null, phase: { not: "OFF" as const } },
-            { endedAt: { gt: w.startsAt } },
-          ],
-        })),
-      },
-      select: OUTAGE_SELECTS.maintenance,
-    }),
-    db.platformIncident.findMany({
-      where: {
-        OR: distinct.map((w) => ({
-          startsAt: { lt: w.endsAt },
-          endsAt: { gt: w.startsAt },
-        })),
-      },
-      select: OUTAGE_SELECTS.incident,
-    }),
-  ]);
-  return toOutageWindows(rows, incidents);
-}
 
 /** Platform-wide DEGRADED/OFFLINE windows and declared incidents that overlap [from, now]. */
 export async function readOutageWindows(
@@ -1163,6 +1098,9 @@ async function confirmPage(
         run.claimed++;
       } else if (result.kind === "declined") {
         run.declined++;
+      } else if (result.kind === "outage") {
+        // An outage declared since this page's read; the next pass reads it and leaves the row weak.
+        run.weak++;
       }
     } catch (error) {
       run.errors.push(
