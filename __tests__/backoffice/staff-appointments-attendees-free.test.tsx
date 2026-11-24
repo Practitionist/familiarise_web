@@ -47,7 +47,7 @@ const freeConsultation = {
   createdAt: new Date("2026-11-10T10:00:00Z"),
   appointmentType: "CONSULTATION",
   deletedAt: null,
-  _count: { participants: 1 },
+  _count: { participants: 1, occurrences: 0 },
   rescheduleRequests: [],
   occurrences: [
     {

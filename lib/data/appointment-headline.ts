@@ -43,12 +43,16 @@ export const APPOINTMENT_HEADLINE_SELECT = {
       id: true,
       status: true,
       bookingSource: true,
+      planEndsAt: true,
+      schedulingPeriodStartsAt: true,
+      schedulingTimezone: true,
       subscriptionPlan: {
         select: {
           id: true,
           title: true,
           price: true,
           priceCurrency: true,
+          durationInMonths: true,
           consultantProfile: USER_ID,
         },
       },

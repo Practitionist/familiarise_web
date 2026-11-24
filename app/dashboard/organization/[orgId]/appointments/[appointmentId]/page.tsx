@@ -26,6 +26,7 @@ import { DelivererDetailClient } from "./DelivererDetailClient";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { OrgActorDetail, type OrgActorDetailProps } from "./OrgActorDetail";
+import { orgActorStatusFacts } from "@/lib/appointments/org-actor-status";
 
 type Appointment = TAppointmentDetail["appointment"];
 
@@ -64,8 +65,7 @@ function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
     kind: appointment.appointmentType,
     status,
     source: booking?.bookingSource ?? null,
-    // A settled charge, so a paid plan waiting for its times is not read as unpaid.
-    paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
+    ...orgActorStatusFacts(appointment, new Date()),
     // The live proposal, so the badge reads "Being moved" here as on every page.
     reschedule: open
       ? {

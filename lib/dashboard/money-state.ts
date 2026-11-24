@@ -207,6 +207,8 @@ export interface BookingPresentationInput {
    * widen their `where` as well as their `select` where a reason matters.
    */
   history?: HistoryEdgeInput[];
+  /** Sessions parked for ops, counted by the reader with `AWAITING_HUMAN`. */
+  parkedSessions?: number;
   /** How the booking began: a pay-first checkout hold or a submitted request. */
   source?: string | null;
   /** The open reschedule proposal; null when none is open. */
@@ -509,6 +511,7 @@ function statusFacts(
     allocateBy: allocateDeadline(input.payments),
     nextBatch: input.entitlement?.nextBatch ?? 0,
     history: input.history,
+    parkedSessions: input.parkedSessions,
     completedNote: planEndedShortWhy(input),
     names: input.names,
   };
@@ -726,6 +729,7 @@ function deriveMoney(
     input.sponsorOrgName &&
     (booking === "CONFIRMED" ||
       booking === "COMPLETED" ||
+      booking === "AWAITING_DECISION" ||
       booking === "AWAITING_ALLOCATION")
   ) {
     return build(
@@ -876,7 +880,8 @@ function deriveTimeline(
   viewer: Viewer,
   paidAt: Date | null,
   holdExpiresAt: Date | null,
-  zone?: string | null,
+  zone: string | null | undefined,
+  now: Date,
 ): TimelineEvent[] {
   const c = input.names.consultant;
   const p = input.names.payer;
@@ -936,12 +941,18 @@ function deriveTimeline(
     at: null,
     actor: c,
     label: single ? "Session confirmed" : "Sessions confirmed",
-    done: booking === "CONFIRMED" || booking === "COMPLETED",
+    done:
+      booking === "CONFIRMED" ||
+      booking === "AWAITING_DECISION" ||
+      booking === "COMPLETED",
   };
   const completed: TimelineEvent = {
     at: null,
-    actor: c,
-    label: "Completed",
+    actor: booking === "AWAITING_DECISION" ? "" : c,
+    label:
+      booking === "AWAITING_DECISION"
+        ? "Our team decides what happened"
+        : "Completed",
     done: booking === "COMPLETED",
   };
 
@@ -974,10 +985,47 @@ function deriveTimeline(
   const events = [
     ...steps.filter((e) => e.done || !terminal),
     confirmed,
-    completed,
+    ...(terminal ? [completed] : finalSteps(input, booking, completed, now)),
   ];
   const kept = terminal ? events.filter((e) => e.done) : events;
   return [...kept, ...(terminal ? [terminal] : []), ...refunds];
+}
+
+/**
+ * A live booking with parked sessions does not show Completed as next: its next
+ * session, when one is ahead, then ops deciding the parked ones.
+ */
+function finalSteps(
+  input: BookingPresentationInput,
+  booking: BookingStateKind,
+  completed: TimelineEvent,
+  now: Date,
+): TimelineEvent[] {
+  const parked = input.parkedSessions ?? 0;
+  if (
+    parked === 0 ||
+    booking === "AWAITING_DECISION" ||
+    booking === "COMPLETED"
+  ) {
+    return [completed];
+  }
+  const next = input.occurrences
+    .filter((o) => !isDeadOccurrence(o) && !o.isTentative)
+    .map((o) => toDate(o.startsAt))
+    .filter((at) => at.getTime() > now.getTime())
+    .sort((a, b) => a.getTime() - b.getTime())[0];
+  const decides: TimelineEvent = {
+    at: null,
+    actor: "",
+    label:
+      parked === 1
+        ? "Our team decides 1 session"
+        : `Our team decides ${parked} sessions`,
+    done: false,
+  };
+  return next
+    ? [{ at: next, actor: "", label: "Next session", done: false }, decides]
+    : [decides];
 }
 
 // Razorpay (rfnd_) and Stripe (re_) ids; the front doors stamp a placeholder first.
@@ -1108,6 +1156,7 @@ export function deriveBookingPresentation(
     paidRow ? toDate(paidRow.createdAt) : null,
     holdExpiresAt,
     zone,
+    now,
   );
   // Money in but nothing confirmed: rows still tentative, or a single-sitting
   // kind with no live row at all (a subscription/class allocates lazily).
@@ -1123,7 +1172,11 @@ export function deriveBookingPresentation(
   // #1766 — the plan size is the frozen entitlement; delivered sessions are
   // named once they exist (COMPLETED and UNVERIFIED both count as held).
   const planSessions = input.plan?.sessions;
-  const completedCount = live.filter(isCompletedOccurrence).length;
+  // A parked session is UNVERIFIED, so it is held for the entitlement but not completed here.
+  const completedCount = Math.max(
+    0,
+    live.filter(isCompletedOccurrence).length - (input.parkedSessions ?? 0),
+  );
   const sessionProgress =
     (planSessions && planSessions > 1
       ? `${live.length} of ${planSessions} sessions scheduled`

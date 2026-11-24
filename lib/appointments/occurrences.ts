@@ -26,6 +26,7 @@ import {
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
 import { bookingStatus, bookingStatusBadge } from "./booking-status";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
+import { PARKED_OUTCOMES } from "@/lib/booking/misses";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
@@ -507,15 +508,22 @@ export function isOccurrenceOver(
   return occurrenceEnd(occurrence) + graceMs < now.getTime();
 }
 
-/** A session's outcome is recorded: delivered, parked for a human, voided, or attended. */
+/** A session's outcome is recorded: delivered, voided, or attended. One parked for ops on any booking is not held yet. */
 export function isOccurrenceHeld(o: {
   completionStatus?: string | null;
   outcome?: string | null;
 }): boolean {
+  if (o.completionStatus === "UNVERIFIED" && isParkedOutcome(o.outcome)) {
+    return false;
+  }
   return (
     isCompletedOccurrence(o) || o.completionStatus === "VOIDED" || !!o.outcome
   );
 }
+
+const PARKED = new Set<string>(PARKED_OUTCOMES);
+const isParkedOutcome = (outcome?: string | null) =>
+  !!outcome && PARKED.has(outcome);
 
 /** True when every live session's outcome is recorded or its call was ended by the host. */
 export function allOccurrencesHeld(occurrences: OccurrenceVM[]): boolean {
@@ -615,6 +623,8 @@ type ChipVM = Pick<AppointmentVM, "status" | "kind"> &
       | "refunded"
       | "unpaidLinkSeen"
       | "history"
+      | "parkedSessions"
+      | "planEnded"
     >
   >;
 
@@ -635,6 +645,8 @@ function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
       refunded: vm.refunded,
       unpaidLinkSeen: vm.unpaidLinkSeen,
       history: vm.history,
+      parkedSessions: vm.parkedSessions,
+      planEnded: vm.planEnded,
       sessions:
         vm.occurrences && live ? listSessions(vm.occurrences, live) : undefined,
     },

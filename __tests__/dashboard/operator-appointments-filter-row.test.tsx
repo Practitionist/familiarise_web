@@ -61,6 +61,8 @@ const APPOINTMENT = {
   bookingSource: "DIRECT_CHECKOUT",
   free: true,
   removed: false,
+  parkedSessions: 0,
+  planEnded: false,
   hasIssue: false,
   issueType: null,
   payment: null,

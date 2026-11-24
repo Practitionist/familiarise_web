@@ -53,6 +53,7 @@ function seedList() {
         id: "appt-1",
         createdAt: new Date("2026-11-01T00:00:00Z"),
         occurrences: [],
+        _count: { participants: 0, occurrences: 0 },
         webinar: {
           webinarPlan: {
             collaborators: [

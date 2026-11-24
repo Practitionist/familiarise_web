@@ -36,7 +36,11 @@ const classRow = (
   status: "SCHEDULED",
   schedulingPeriodEndsAt,
   classPlan: { title: "Ten weeks of Python", totalSessions },
-  appointment: { occurrences: [], _count: { occurrences: accountedRows } },
+  appointment: {
+    id: "appt-cls-1",
+    occurrences: [],
+    _count: { occurrences: accountedRows },
+  },
 });
 const mockTransitionClassEvent = jest.fn();
 const mockStamp = jest.fn();

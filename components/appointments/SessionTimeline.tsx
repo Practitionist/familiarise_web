@@ -35,6 +35,7 @@ type SessionStatus =
   | "cutShort"
   | "noShow"
   | "inconclusive"
+  | "waitingDecision"
   | "noRecord"
   | "upcoming"
   | "joinable";
@@ -94,6 +95,13 @@ interface SessionGroup {
  * hour, dropping whoever clicked it into a fresh empty room. Routing through
  * the shared predicate makes an ended run non-joinable here too.
  */
+/** A session parked for ops takes no rating until ops decide; every other session follows the reviews rule (`heldOccurrence`). */
+export function sessionTakesRating(
+  slot: Pick<OccurrenceVM, "parked">,
+): boolean {
+  return !slot.parked;
+}
+
 export function slotStatus(
   slot: OccurrenceVM,
   joinWindowMs: number = CONSULTEE_JOIN_WINDOW_MS,
@@ -103,6 +111,8 @@ export function slotStatus(
   if (state === "joinable") return "joinable";
   if (state === "countdown") return "upcoming";
 
+  // Parked for ops, read from the database predicate the reader stamped.
+  if (slot.parked) return "waitingDecision";
   if (slot.outcome === "DELIVERED") return "completed";
   if (slot.outcome === "CUT_SHORT") return "cutShort";
   if (
@@ -160,6 +170,7 @@ const statusIcon: Record<SessionStatus, string> = {
   cutShort: "⚠️",
   noShow: "⚠️",
   inconclusive: "⏳",
+  waitingDecision: "⏳",
   noRecord: "⚠️",
   joinable: "◉",
   upcoming: "○",
@@ -177,6 +188,7 @@ const statusLabel: Record<SessionStatus, string> = {
   cutShort: "CUT SHORT",
   noShow: "NO-SHOW",
   inconclusive: "VERIFYING",
+  waitingDecision: "WAITING ON A DECISION",
   noRecord: "NO RECORD",
   joinable: "IN PROGRESS",
   upcoming: "upcoming",
@@ -190,6 +202,7 @@ const INERT_STATUS_TITLES: Partial<Record<SessionStatus, string>> = {
   cutShort: "This session ended earlier than the scheduled duration.",
   noShow: "One or more participants did not attend this session.",
   inconclusive: "Session attendance is being verified.",
+  waitingDecision: "Our team is checking what happened in this session.",
   noRecord:
     "No meeting record found for this session. It may have been missed or held outside the platform.",
   joinable:
@@ -372,7 +385,8 @@ export function SessionTimeline({
               (status === "noRecord" ||
                 status === "cutShort" ||
                 status === "noShow" ||
-                status === "inconclusive") &&
+                status === "inconclusive" ||
+                status === "waitingDecision") &&
                 "opacity-80",
             )}
             onClick={joinable ? () => onJoinSession?.(joinable) : undefined}
@@ -451,6 +465,8 @@ export function SessionTimeline({
                     status === "noShow") &&
                     "text-amber-700 dark:text-amber-400",
                   status === "inconclusive" && "text-sky-600 dark:text-sky-400",
+                  status === "waitingDecision" &&
+                    "text-amber-600 dark:text-amber-400",
                 )}
                 title={INERT_STATUS_TITLES[status]}
               >

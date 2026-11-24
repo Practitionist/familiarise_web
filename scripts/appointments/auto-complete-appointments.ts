@@ -43,6 +43,7 @@ import {
   startDeadline,
   startDeadlineShare,
   SWEEP_START_DEADLINE_MS,
+  type RunDeadline,
 } from "@/lib/cron/run-deadline";
 import {
   EVENT_ALLOWED_FROM,
@@ -86,6 +87,12 @@ import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+  SWEEP_LOCK_RETRY_CONFIG,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 import {
   ACCOUNTED_SESSION,
   ClassNotFinishedError,
@@ -143,6 +150,11 @@ function endedAndSettled(
 }
 
 const AUTO_COMPLETE_REASON = "auto-complete";
+
+// Every final CAS repeats it: a session parked after the cohort read keeps the booking open.
+const NO_PARKED_SESSION = {
+  appointment: { occurrences: { none: AWAITING_HUMAN } },
+};
 
 // The pass cohorts, shared by each pass's read and the ticker's idle probe.
 type SettledAnd = Prisma.AppointmentWhereInput["AND"];
@@ -320,18 +332,43 @@ export interface AutoCompleteResult {
   checkpoint?: string | null;
 }
 
+/** A pass's completion helper, its lock calls bounded by the pass's start deadline. */
+function lockedCompletion(deadline: RunDeadline) {
+  return (appointmentId: string | undefined, run: () => Promise<unknown>) =>
+    completeUnderLock(appointmentId, deadline, run);
+}
+
 /**
- * Run one guarded completion; false when the CAS matched nothing because the
- * row moved since the cohort read (the helper's throw IS the old count === 0).
+ * One guarded completion under the appointment lock the lifecycle doors and the
+ * ops outcome door hold, so a park through them either committed before the CAS
+ * reads or waits for it. False when the CAS matched nothing, or the lock was busy,
+ * stalled or unreachable: the booking waits for the next run.
  */
-async function completeThroughHelper(
+async function completeUnderLock(
+  appointmentId: string | undefined,
+  deadline: RunDeadline,
   run: () => Promise<unknown>,
 ): Promise<boolean> {
+  // The cohort requires the wrapper; a row without one is left alone.
+  if (!appointmentId) return false;
+  // Each Redis call gets the smaller of its own bound and the run's time left; a stall skips the booking.
+  const left = (deadline.until ?? Infinity) - Date.now();
+  const callTimeoutMs = Math.min(SWEEP_LOCK_RETRY_CONFIG.callTimeoutMs, left);
+  if (callTimeoutMs <= 0) return false;
   try {
-    await run();
+    await withAppointmentLock(appointmentId, run, {
+      ...SWEEP_LOCK_RETRY_CONFIG,
+      callTimeoutMs,
+    });
     return true;
   } catch (error) {
-    if (error instanceof IllegalTransitionError) return false;
+    if (
+      error instanceof IllegalTransitionError ||
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return false;
+    }
     throw error;
   }
 }
@@ -345,6 +382,7 @@ async function completeWebinars(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
@@ -388,10 +426,11 @@ async function completeWebinars(
       // CAS (#1319): a webinar cancelled since the cohort read must not be
       // resurrected as COMPLETED — that would release earnings for nothing.
       // #1583 A-P1-03 — through the helper, so the history row rides along.
-      const moved = await completeThroughHelper(() =>
+      const moved = await completeThroughHelper(webinar.appointment?.id, () =>
         prisma.$transaction((tx) =>
           transitionWebinarEvent(tx, {
             where: { id: webinar.id },
+            whereAnd: NO_PARKED_SESSION,
             to: WebinarStatus.COMPLETED,
             fromIn: EVENT_ALLOWED_FROM.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
@@ -440,6 +479,7 @@ async function completeClasses(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
   const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
 
@@ -501,12 +541,14 @@ async function completeClasses(
       // the CAS it meets. The completing commit also stamps each seat's refund
       // for sessions sold but never placed.
       let notFinished = false;
-      const moved = await completeThroughHelper(async () => {
+      const wrapperId = cls.appointment?.id;
+      const moved = await completeThroughHelper(wrapperId, async () => {
         try {
           const settlement = await prisma.$transaction(
             async (tx) => {
               await transitionClassEvent(tx, {
                 where: { id: cls.id },
+                whereAnd: NO_PARKED_SESSION,
                 to: ClassStatus.COMPLETED,
                 fromIn: EVENT_ALLOWED_FROM.COMPLETED,
                 reason: AUTO_COMPLETE_REASON,
@@ -572,6 +614,7 @@ async function completeConsultations(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
@@ -647,15 +690,17 @@ async function completeConsultations(
 
       // #836 — guard rides the WHERE: a cancel landing between the sweep's
       // read and this write must not be overwritten by COMPLETED.
-      const moved = await completeThroughHelper(() =>
-        prisma.$transaction((tx) =>
-          transitionConsultationRequest(tx, {
-            where: { id: consultation.id },
-            to: AppointmentStatus.COMPLETED,
-            fromIn: REQUEST_ALLOWED_FROM.COMPLETED,
-            reason: AUTO_COMPLETE_REASON,
-          }),
-        ),
+      const moved = await completeThroughHelper(
+        consultation.appointment?.id,
+        () =>
+          prisma.$transaction((tx) =>
+            transitionConsultationRequest(tx, {
+              where: { id: consultation.id, ...NO_PARKED_SESSION },
+              to: AppointmentStatus.COMPLETED,
+              fromIn: REQUEST_ALLOWED_FROM.COMPLETED,
+              reason: AUTO_COMPLETE_REASON,
+            }),
+          ),
       );
       if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since sweep read`);
@@ -740,6 +785,7 @@ async function completeSubscriptions(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
@@ -825,7 +871,7 @@ async function completeSubscriptions(
       // holds are stamped first in the same commit: a session-count refund
       // can end the entitlement with no delivery left to stamp them.
       const appointmentId = subscription.appointment?.id;
-      const moved = await completeThroughHelper(() =>
+      const moved = await completeThroughHelper(appointmentId, () =>
         prisma.$transaction(async (tx) => {
           if (appointmentId)
             await settleSubscriptionCycle(tx, {
@@ -833,7 +879,7 @@ async function completeSubscriptions(
               now: new Date(),
             });
           return transitionSubscriptionRequest(tx, {
-            where: { id: subscription.id },
+            where: { id: subscription.id, ...NO_PARKED_SESSION },
             to: AppointmentStatus.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
           });
@@ -925,6 +971,7 @@ async function completeTrials(
   pastDeadline: () => boolean,
 ): Promise<PassBite> {
   const errors: string[] = [];
+  const completeThroughHelper = lockedCompletion(pastDeadline);
   let completed = 0;
 
   const bufferTime = new Date(
@@ -981,19 +1028,20 @@ async function completeTrials(
       );
 
       // CAS (#1319): a trial cancelled or converted since the read stays put.
-      try {
-        const completedAt = new Date();
-        await prisma.$transaction(async (tx) => {
+      const completedAt = new Date();
+      const moved = await completeThroughHelper(trial.appointment?.id, () =>
+        prisma.$transaction(async (tx) => {
           await transitionTrial(tx, {
             where: { id: trial.id },
+            whereAnd: NO_PARKED_SESSION,
             to: TrialStatus.COMPLETED,
             data: { completedAt },
           });
           // #1775 C-9 — delivery starts the paid trial's earnings hold.
           await stampTrialEarningsHold(tx, trial.paymentId, completedAt);
-        });
-      } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        }),
+      );
+      if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
         continue;
       }
