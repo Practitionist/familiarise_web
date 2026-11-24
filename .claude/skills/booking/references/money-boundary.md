@@ -654,8 +654,8 @@ released automatically. A free session where nobody joined has no money to hold 
 completes. Widen this predicate, never a caller's copy of it.
 
 A negative verdict (`NEGATIVE_MONEY_OUTCOMES`: `HOST_ABSENT`, `CUT_SHORT`,
-`LEARNER_ABSENT`) is written with `outcomeConfirmedAt` null. The only money reader of
-that stamp is `release-earnings`: `UNCONFIRMED_LEARNER_ABSENT` inside
+`LEARNER_ABSENT`) is written with `outcomeConfirmedAt` null. Four money readers wait
+for that stamp. `release-earnings`: `UNCONFIRMED_LEARNER_ABSENT` inside
 `RELEASABLE_PAYMENT` keeps the earning `PENDING` (never `HELD`), scoped like
 `EARNINGS_HOLDING_MISS`, so a subscription is excluded. `confirmClosedOutcomes`
 (`lib/booking/session-outcome-sweep.ts`, run by `auto-complete-appointments`, candidates
@@ -671,11 +671,25 @@ before the stamp's statement holds it; one committed after is fixed by `session.
 A weak, disputed or reported verdict stays for ops, who confirm it with
 `session.confirm-outcome` (`confirmSessionOutcome`, which leaves `outcomeAt` alone)
 or decide it with `session.set-outcome` (a negative outcome is stamped at once, any
-other clears the stamp). Never let a reader treat a null stamp as confirmed. The
-detector's claim, the void refund and the class reliability flag do not read the
-stamp yet, so an early agreement stamp moves no money today, and the notices and the
-corrected "automatic full refund" copy are planned in
-`docs/decisions/2026-11-23-session-outcome-report-window.md` (steps 4 and 5).
+other clears the stamp). Never let a reader treat a null stamp as confirmed.
+
+The consultant no-show is the second reader. `detect-consultant-no-shows` only
+proposes (every judged session `UNVERIFIED` with its verdict, unconfirmed, which
+`AWAITING_HUMAN` holds); confirming a strong proposal, at the close or on the
+learner's agreement, runs `claimNoShowTx` (`lib/booking/consultant-no-show.ts`) from
+the pass, or from ops Confirm in the door's transaction. One transaction CASes the
+consultation to `CANCELLED` (its `WHERE` carries the payment, the strike session and
+`CLAIM_VETO` over every other live session), moves the proposed sessions to
+`CANCELLED` with the strike session's stamp, stamps the `consultant-no-show:<paymentId>`
+owed marker and writes the strike; the refund is driven after the commit. A declined
+claim (`noShowClaimOf` null) leaves the row for ops. The third is the void refund:
+`settle-cancelled-sessions` keeps an unconfirmed negative void out of its cohort
+(`SETTLEABLE_VOID_VERDICT`, explicit about a null outcome). The fourth is the class
+series ledger, which counts no unconfirmed negative void, so the exit right and the
+reliability flag wait for `onClassVoidConfirmed` in the stamp's transaction. The pass
+reads outages with `readOverlappingOutages` (no row cap). The notices and the corrected
+"automatic full refund" copy are planned in
+`docs/decisions/2026-11-23-session-outcome-report-window.md` (step 5).
 
 A parked session cannot wait silently. After 72 hours `alertStaleNeedsHuman`
 records a standing finding; after 7 days (`NEEDS_HUMAN_ESCALATE_DAYS`,

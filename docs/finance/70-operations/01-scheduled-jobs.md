@@ -43,14 +43,14 @@ The tables below were generated from `netlify/functions/cron-tick.mts`, `lib/cro
 
 #### Every 30 minutes
 
-| Job (slug)                    | Schedule (UTC)      | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                           |
-| ----------------------------- | ------------------- | -------------- | ------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `reconcile-orphaned-payments` | every 30 min at :10 | 10             | 20 s    | yes              | Heals the stranded cohort: links a late appointment or refunds the payment.                            |
-| `auto-complete-appointments`  | every 30 min at :15 | 25             | 24 s    | yes              | Marks finished sessions `COMPLETED`, which is what lets their earnings hold run out.                   |
-| `detect-consultant-no-shows`  | every 30 min at :20 | 10             | 24 s    | yes              | Cancels a confirmed consultant no-show and refunds 100 % through `refundBookingPayment`.               |
-| `settle-cancelled-sessions`   | every 30 min at :25 | 10             | 20 s    | yes              | Refunds each seat of a host-cancelled class session nobody made up in 14 days.                         |
-| `vest-referral-credits`       | every 30 min at :05 | 10             | 20 s    | yes              | Vests or voids `QUALIFYING` referrals once the session is delivered and its refund window has passed.  |
-| `support-sla-sweep`           | every 30 min at :10 | 20             | 15 s    | no               | Support SLA outbox alerts, 28-day `RESOLVED` auto-close and the 72 h and 24 h dispute-deadline alerts. |
+| Job (slug)                    | Schedule (UTC)      | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                            |
+| ----------------------------- | ------------------- | -------------- | ------- | ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `reconcile-orphaned-payments` | every 30 min at :10 | 10             | 20 s    | yes              | Heals the stranded cohort: links a late appointment or refunds the payment.                             |
+| `auto-complete-appointments`  | every 30 min at :15 | 25             | 24 s    | yes              | Marks finished sessions `COMPLETED`, which is what lets their earnings hold run out.                    |
+| `detect-consultant-no-shows`  | every 30 min at :20 | 10             | 24 s    | yes              | Proposes a consultant no-show; the window-close pass or ops Confirm refunds 100 % once it is confirmed. |
+| `settle-cancelled-sessions`   | every 30 min at :25 | 10             | 20 s    | yes              | Refunds each seat of a host-cancelled class session nobody made up in 14 days.                          |
+| `vest-referral-credits`       | every 30 min at :05 | 10             | 20 s    | yes              | Vests or voids `QUALIFYING` referrals once the session is delivered and its refund window has passed.   |
+| `support-sla-sweep`           | every 30 min at :10 | 20             | 15 s    | no               | Support SLA outbox alerts, 28-day `RESOLVED` auto-close and the 72 h and 24 h dispute-deadline alerts.  |
 
 #### Hourly
 

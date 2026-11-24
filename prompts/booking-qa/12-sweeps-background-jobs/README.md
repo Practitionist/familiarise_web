@@ -25,7 +25,7 @@ Journey cases elsewhere already assert the main outcome of several sweeps (CO-36
 | `reschedule-proposals` | `expire-reschedule-proposals` | 15 min | no | Lapse reschedule proposals nobody answered and restore the original time | SW-15 |
 | `expire-unpaid-trials` | same | 15 min | yes | Expire unpaid trials and refund paid trials nobody answered | SW-18, SW-19 |
 | `auto-complete-appointments` | same | 30 min | no | Move finished sessions to completed once Stream's record is read (six hours after the latest of the room end, the recorded end and the last join, and later if Stream lists a later session end; an occurrence with no `Meeting` row from end + 1 h, but a `Meeting` whose Stream call was never created still waits the six hours); stamps class-end refunds | SW-20, SW-22, SW-24 |
-| `detect-consultant-no-shows` | same | 30 min | yes | Cancel and refund sessions the consultant never joined (120-min grace) | SW-21 |
+| `detect-consultant-no-shows` | same | 30 min | yes | Propose a no-show on sessions the consultant never joined (120-min grace); the refund follows confirmation | SW-21 |
 | `appointment-reminders` | `send-appointment-reminders` | 15 min | no | Send the 24-hour, 1-hour and 15-minute session reminders | SW-23 |
 | `retry-auto-refunds` | same | 15 min | yes | Re-drive auto-refunds the capture webhook could not complete (and every booking door's refund-owed marker) | SW-25 (detail MO-55…MO-58) |
 | `reconcile-refunds` | `reconcile-pending-refunds` | 15 min | yes | Sync pending refund status with Razorpay | SW-25 (detail MO-59) |
