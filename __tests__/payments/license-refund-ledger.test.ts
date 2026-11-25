@@ -302,7 +302,7 @@ describe("a full refund of a LICENSE-funded booking", () => {
 });
 
 describe("a refund of a LICENSE-funded booking whose consultant was already paid", () => {
-  it("raises the consultant's receivable for the paid share, net of TDS", async () => {
+  it("raises the consultant's receivable for the paid share, net of TDS, and keeps the organisation's refund audit entry", async () => {
     // The ₹7,000 share left in a COMPLETED payout that withheld ₹700.
     payment = paymentRow({
       earnings: [
@@ -323,7 +323,8 @@ describe("a refund of a LICENSE-funded booking whose consultant was already paid
       ],
     });
 
-    const result = await applyRefundCascade(txStub() as never, {
+    const tx = txStub();
+    const result = await applyRefundCascade(tx as never, {
       paymentId: PAYMENT_ID,
       refundId: REFUND_ID,
       amountPaise: GROSS,
@@ -331,6 +332,16 @@ describe("a refund of a LICENSE-funded booking whose consultant was already paid
     });
 
     expect(result.clawbackInitiated).toBe(true);
+    // The organisation's own earning was unpaid, so no payout clawback row
+    // stands in for its refund entry in the organisation's audit feed.
+    expect(tx.orgAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.orgAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: ORG,
+        action: "INVOICE_REFUNDED",
+        details: expect.objectContaining({ refundId: REFUND_ID }),
+      }),
+    });
     const clawback = mockPostLedgerTxn.mock.calls
       .map((call) => call[1])
       .find((input) => input.idempotencyKey.startsWith("clawback:"));
