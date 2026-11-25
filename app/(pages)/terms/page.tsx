@@ -368,10 +368,15 @@ export default function TermsPage() {
                   is refunded at the moment of removal.
                 </li>
                 <li>
-                  If support overturns the removal, or does not decide within 72
-                  hours, whatever is still unrefunded on the seat is refunded to
-                  where it was paid from. An overturned removal also lifts the
-                  call block.
+                  If support overturns the removal, whatever is still unrefunded
+                  on the seat is refunded to where it was paid from, and the
+                  call block is lifted.
+                </li>
+                <li>
+                  If support does not decide within 72 hours, the sessions that
+                  had not been delivered when the attendee was removed are
+                  refunded to where they were paid from. A session that was
+                  under way at the removal counts as not delivered.
                 </li>
                 <li>
                   If support upholds the removal, nothing is refunded
