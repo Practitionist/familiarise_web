@@ -99,20 +99,23 @@ export const NO_MONEY_OWED_PAYMENT = {
   refundOwedKey: null,
 } satisfies Prisma.PaymentWhereInput;
 
-/**
- * A payment whose PENDING earnings may be released: no money owed back on it,
- * every live session delivered, and no session owing a make-up, parked for a
- * human or carrying an unconfirmed learner-absent verdict. A subscription's
- * misses do not hold it (`EARNINGS_HOLDING_MISS`). The claim's WHERE repeats
- * it, so a gate that appears mid-run keeps the row.
- */
-export const RELEASABLE_PAYMENT = {
-  ...NO_MONEY_OWED_PAYMENT,
+/** Every live session of the booking has been delivered. */
+const EVERY_SESSION_DELIVERED = {
   NOT: {
     appointment: {
       occurrences: { some: UNDELIVERED_OCCURRENCE },
     },
   },
+} satisfies Prisma.PaymentWhereInput;
+
+/**
+ * The release gates that do not depend on delivery: no money owed back, and no
+ * session owing a make-up, parked for a human or carrying an unconfirmed
+ * learner-absent verdict. A subscription's misses do not hold it
+ * (`EARNINGS_HOLDING_MISS`).
+ */
+const RELEASE_GATES_BESIDE_DELIVERY = {
+  ...NO_MONEY_OWED_PAYMENT,
   OR: [
     { appointmentId: null },
     {
@@ -128,23 +131,40 @@ export const RELEASABLE_PAYMENT = {
   ],
 } satisfies Prisma.PaymentWhereInput;
 
-const NO_OPEN_REFUND: Prisma.ConsultantEarningsWhereInput = {
+/**
+ * A payment whose PENDING earnings may be released: every gate above, and every
+ * live session delivered. The claim's WHERE repeats it, so a gate that appears
+ * mid-run keeps the row.
+ */
+export const RELEASABLE_PAYMENT = {
+  ...RELEASE_GATES_BESIDE_DELIVERY,
+  ...EVERY_SESSION_DELIVERED,
+} satisfies Prisma.PaymentWhereInput;
+
+/**
+ * The gate on one consultant earning. A plan tranche is dated only when its
+ * cycle is delivered and loses the date when a void un-delivers it, so a dated
+ * tranche does not wait for the plan's later sessions; every other gate holds
+ * it. Any other earning waits for every live session of its booking.
+ */
+const RELEASABLE_CONSULTANT_EARNING = {
+  payment: RELEASE_GATES_BESIDE_DELIVERY,
+  OR: [{ cycleOrdinal: { not: null } }, { payment: EVERY_SESSION_DELIVERED }],
+} satisfies Prisma.ConsultantEarningsWhereInput;
+
+/** The payment gate on the host-organisation arm: a plan's one earning waits for the whole plan. */
+const RELEASABLE_ORG_EARNING: Prisma.OrganizationEarningsWhereInput = {
   payment: RELEASABLE_PAYMENT,
 };
 
-/** The same guards on the host-organisation arm (#1775 P-2, #1569). */
-const NO_OPEN_REFUND_ORG: Prisma.OrganizationEarningsWhereInput = {
-  payment: RELEASABLE_PAYMENT,
-};
-
-/** Consultant earnings past their hold; shared with the ticker's idle probe. */
+/** Consultant earnings past their hold; shared by the read, the claim and the ticker's idle probe. */
 function releasableEarningsWhere(
   now: Date,
 ): Prisma.ConsultantEarningsWhereInput {
   return {
     status: EarningStatus.PENDING,
     holdUntil: { lte: now },
-    ...NO_OPEN_REFUND,
+    ...RELEASABLE_CONSULTANT_EARNING,
   };
 }
 
@@ -155,7 +175,7 @@ function releasableOrgEarningsWhere(
   return {
     status: EarningStatus.PENDING,
     holdUntil: { lte: now },
-    ...NO_OPEN_REFUND_ORG,
+    ...RELEASABLE_ORG_EARNING,
   };
 }
 
@@ -232,11 +252,11 @@ async function releaseEarningsFromHoldUnlocked(
           take: opts.limit,
         });
 
+        // The whole gate again, date included: a void that cleared a tranche's date since the read keeps the row.
         const updated = await tx.consultantEarnings.updateMany({
           where: {
             id: { in: rows.map((r) => r.id) },
-            status: EarningStatus.PENDING,
-            ...NO_OPEN_REFUND,
+            ...releasableEarningsWhere(now),
           },
           data: {
             status: EarningStatus.READY,
@@ -289,7 +309,7 @@ async function releaseEarningsFromHoldUnlocked(
             where: {
               id: { in: rows.map((r) => r.id) },
               status: EarningStatus.PENDING,
-              ...NO_OPEN_REFUND_ORG,
+              ...RELEASABLE_ORG_EARNING,
             },
             data: {
               status: EarningStatus.READY,
