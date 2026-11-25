@@ -139,10 +139,12 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(
         async ({
           where,
+          orderBy,
           skip = 0,
           take,
         }: {
           where: LineWhere;
+          orderBy?: { id: "asc" };
           skip?: number;
           take?: number;
         }) => {
@@ -152,10 +154,15 @@ jest.mock("../../lib/prisma", () => ({
               (!entityIds || entityIds.has(l.entityId)) &&
               mockMatches(l, { ...where, entityId: undefined }),
           );
-          if (take === undefined) return hits;
-          return [...hits]
-            .sort((x, y) => Number(x.id > y.id) - Number(x.id < y.id))
-            .slice(skip, skip + take);
+          // Rows come back in id order only when the query asks for it, as in Postgres.
+          const ordered = orderBy
+            ? [...hits].sort(
+                (x, y) => Number(x.id > y.id) - Number(x.id < y.id),
+              )
+            : hits;
+          return take === undefined
+            ? ordered
+            : ordered.slice(skip, skip + take);
         },
       ),
       createMany: jest.fn(async ({ data }: { data: Omit<Line, "id">[] }) => {
@@ -826,7 +833,8 @@ describe("bounded work resumes from the job's one continuation record", () => {
 
   it("the re-match reaches every unresolved line within a bounded number of runs", async () => {
     mockCheckpoint.value = readThrough("2026-10-19");
-    for (let i = 1; i <= 450; i++) {
+    // Stored newest first, so only a query ordered by id walks them in cursor order.
+    for (let i = 450; i >= 1; i--) {
       mockLines.push({
         id: lineId(i),
         entityId: `rfnd_open_${i}`,
