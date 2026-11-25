@@ -1019,9 +1019,12 @@ export async function getRazorpayRefund(
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
     const refundError = handleRazorpayRefundError(error);
-    // FAMILIARISE_WEB-3V — an id the gateway has no record of is a modelled
-    // outcome the reconciler reports once as a warning, not a fault per poll.
-    if (!isRazorpayUnknownRefundIdError(refundError)) {
+    // An id the gateway has no record of, by either answer, is a modelled
+    // outcome the reconciler reports once per run, not a fault per poll.
+    if (
+      !isRazorpayUnknownRefundIdError(refundError) &&
+      !isRazorpayUnknownOrderError(refundError)
+    ) {
       reportSentryError(error, {
         subsystem: "payments",
         tags: { provider: "razorpay" },
