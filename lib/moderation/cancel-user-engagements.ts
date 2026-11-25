@@ -1,7 +1,8 @@
 /**
- * Moderation bulk-cancel (#693): cancel every future engagement a suspended
- * or banned user is part of, with 100% refunds to the innocent counterparty —
- * moderation is platform-initiated, so booking-time policy tiers do not apply.
+ * Moderation bulk-cancel: cancel every live engagement a suspended or
+ * banned user is part of. Moderation is platform-initiated, so the buyer's
+ * notice tiers never apply: a 1:1 booking refunds every undelivered session in
+ * full and keeps the earnings of the delivered ones, whoever was banned.
  *
  * Mirrors the CAS doctrine of app/api/appointments/[appointmentId]/cancel:
  * status moves ride a guarded updateMany (double-cancel loses the CAS and is
@@ -38,8 +39,16 @@ import {
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
+import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
+import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
+import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import { reportSentryError } from "@/lib/observability/report";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import {
   classSeriesLedgers,
   refundWholeEventPayments,
@@ -182,6 +191,7 @@ export async function cancelFutureEngagementsForUser(
 
 // Engagements where the target is the buyer (consultee): exclusive
 // consultations/subscriptions they own, plus group events they merely attend.
+// A plan is collected while it is live, whether or not a session is placed ahead.
 async function collectConsulteeWork(
   consulteeProfileId: string,
   targetUserId: string,
@@ -200,7 +210,6 @@ async function collectConsulteeWork(
       where: {
         requestedById: consulteeProfileId,
         status: { in: [...CANCELLABLE_FROM] },
-        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -245,6 +254,7 @@ async function collectConsulteeWork(
 
 // Engagements the target hosts (consultant): exclusive engagements plus whole
 // group events they run — every attendee is refunded when these cancel.
+// A plan is collected while it is live, whether or not a session is placed ahead.
 async function collectConsultantWork(
   consultantProfileId: string,
   futureSlot: FutureSlotFilter,
@@ -262,7 +272,6 @@ async function collectConsultantWork(
       where: {
         subscriptionPlan: { consultantProfileId },
         status: { in: [...CANCELLABLE_FROM] },
-        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -351,13 +360,6 @@ interface NormalizedEngagement {
     id: string;
     appointmentType: string;
     organizationId: string | null;
-    // amount is number at runtime — the extended client converts BigInt on read
-    payment: Array<{
-      id: string;
-      amount: number;
-      paymentStatus: string;
-      deletedAt: Date | null;
-    }>;
   }>;
 }
 
@@ -383,16 +385,6 @@ async function loadExclusiveEngagement(
       // ADR 23 — attribute the cancellation notification to the dashboard that
       // owns the session rather than defaulting everyone to their personal one.
       organizationId: true,
-      payment: {
-        select: {
-          id: true,
-          amount: true,
-          paymentStatus: true,
-          // #781 §B — the refund front door refuses retired rows; carry the
-          // tombstone so the caller can skip them instead of failing on them.
-          deletedAt: true,
-        },
-      },
     },
   } as const;
 
@@ -432,16 +424,79 @@ async function loadExclusiveEngagement(
 }
 
 /**
- * Guarded status move plus the slot soft-cancel that rides with it. Returns 0
- * when the CAS found nothing to move — the engagement was already terminal.
+ * What a ban owes on a 1:1 booking, read on the cancel's transaction before it
+ * releases the sessions: the expert-side cancel quote, so every undelivered
+ * session refunds in full and a delivered one keeps its earnings.
+ */
+async function quoteModerationRefund(
+  tx: Tx,
+  kind: "consultation" | "subscription",
+  engagementId: string,
+  appointmentId: string,
+) {
+  const bookingCtx = await resolveBookingRefundContext(
+    kind === "consultation"
+      ? { appointmentId, consultationId: engagementId }
+      : { appointmentId, subscriptionId: engagementId },
+    undefined,
+    tx,
+  );
+  const paid = bookingCtx.paidPayment;
+  if (!paid) return { bookingCtx, owed: null, creditReturnNeedsReview: false };
+  const quote = quoteBookingRefund({
+    policy: bookingCtx.policy,
+    hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
+    slotsTotal: bookingCtx.slotsTotal,
+    sessionsRemaining: bookingCtx.sessionsRemaining,
+    sessionsTotal: bookingCtx.sessionsTotal,
+    sessionsRefunded: bookingCtx.sessionsRefunded,
+    sessionsCompleted: bookingCtx.sessionsCompleted,
+    scheduledStarts: bookingCtx.scheduledStarts,
+    nowMs: bookingCtx.quotedAtMs,
+    alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
+    isSubscription: kind === "subscription",
+    isConsultantInitiated: true,
+    isFreeCreditFunded:
+      paid.amountPaise === 0 && paid.paymentIntent.startsWith("free_"),
+    grossPaise: paid.amountPaise,
+    refundablePaise: paid.refundablePaise,
+  });
+  // A credit plan with delivered sessions restores whole or not at all, so its
+  // undelivered share goes to a human unless no credit is still consumed.
+  const creditReturnNeedsReview =
+    quote.creditReturnNeedsReview &&
+    (await creditStillUsedPaise(tx, paid.id)) > 0;
+  let owed: RefundOwedMarker | null = null;
+  if (!isPriceFreePayment(paid)) {
+    if (quote.creditRestoresInFull) {
+      owed = moderationRefundOwed(appointmentId, paid.id, null);
+    } else if (quote.refundPaise > 0) {
+      owed = moderationRefundOwed(appointmentId, paid.id, quote.refundPaise);
+    }
+  }
+  return { bookingCtx, owed, creditReturnNeedsReview };
+}
+
+/** What the cancel commit stamped, and what its caller settles after it. */
+type ExclusiveCancel = {
+  owed: RefundOwedMarker | null;
+  held: OwedRefundAlreadyHeld | null;
+  /** The plan payment whose kept tranches start their hold once the refund settles. */
+  planPaymentId: string | null;
+  cancelledAt: Date;
+};
+
+/**
+ * Guarded status move plus the slot soft-cancel that rides with it. Returns
+ * null when there was nothing to cancel: the CAS found the engagement already
+ * terminal, or every session was held and none is owed.
  */
 async function casCancelExclusiveEngagement(
   kind: "consultation" | "subscription",
   engagementId: string,
   appointmentId: string | null,
-  owed: RefundOwedMarker[],
   ctx: { initiatedByUserId: string; notes?: string },
-): Promise<{ owed: RefundOwedMarker[]; held: OwedRefundAlreadyHeld[] } | null> {
+): Promise<ExclusiveCancel | null> {
   const now = new Date();
   const cancellationData = {
     cancellationReason: "MODERATION" as const,
@@ -456,8 +511,12 @@ async function casCancelExclusiveEngagement(
 
   const cancel = () =>
     prisma.$transaction(async (tx) => {
-      // #1583 A-P0-05 — through the helpers so the history row rides along;
-      // the zero-row throw is the old `count === 0` (already terminal).
+      const refund = appointmentId
+        ? await quoteModerationRefund(tx, kind, engagementId, appointmentId)
+        : null;
+      // Sessions all held and none owed: the outcome sweep and the plan end settle it.
+      if (refund?.bookingCtx.windowState === "DELIVERED") return null;
+      const paymentId = refund?.bookingCtx.paidPayment?.id ?? null;
       try {
         if (kind === "consultation") {
           await transitionConsultationRequest(tx, {
@@ -470,24 +529,66 @@ async function casCancelExclusiveEngagement(
         } else {
           await transitionSubscriptionRequest(tx, {
             ...audit,
-            where: { id: engagementId },
+            // Pinned to the removed-session count the quote read, so a support
+            // refund committing meanwhile is never paid a second time.
+            where: {
+              id: engagementId,
+              ...(refund
+                ? { sessionsRefunded: refund.bookingCtx.sessionsRefunded }
+                : {}),
+            },
             to: "CANCELLED",
             fromIn: [...CANCELLABLE_FROM],
             data: cancellationData,
           });
         }
       } catch (err) {
-        if (err instanceof IllegalTransitionError) return null;
-        throw err;
+        if (!(err instanceof IllegalTransitionError)) throw err;
+        if (kind === "subscription" && refund) {
+          const plan = await tx.subscription.findUnique({
+            where: { id: engagementId },
+            select: { status: true, sessionsRefunded: true },
+          });
+          if (
+            plan &&
+            CANCELLABLE_FROM.includes(plan.status) &&
+            plan.sessionsRefunded !== refund.bookingCtx.sessionsRefunded
+          ) {
+            throw new Error(
+              `A refund changed plan ${engagementId} while the ban was cancelling it; re-run the action`,
+            );
+          }
+        }
+        return null;
       }
-      // Every refund the ban owes commits with the cancel; one another door
+      // The refund the ban owes commits with the cancel; one another door
       // already owes is reported instead (first writer wins).
-      const stamped: RefundOwedMarker[] = [];
-      const held: OwedRefundAlreadyHeld[] = [];
-      for (const marker of owed) {
-        const h = await stampOwedOrHeld(tx, marker);
-        if (h) held.push(h);
-        else stamped.push(marker);
+      const held = refund?.owed ? await stampOwedOrHeld(tx, refund.owed) : null;
+      if (refund?.creditReturnNeedsReview && paymentId) {
+        await recordSystemEvent({
+          db: tx,
+          strict: true,
+          category: "BOOKING",
+          severity: "WARN",
+          message: `Credit seat ${paymentId} needs a partial credit return`,
+          context: {
+            paymentId,
+            appointmentId,
+            sessionsTotal: refund.bookingCtx.sessionsTotal,
+            sessionsCompleted: refund.bookingCtx.sessionsCompleted,
+          },
+          correlationId: `partial-credit:${paymentId}`,
+        });
+      }
+      // With no refund to cascade, the plan's kept tranches start their hold in
+      // this commit; a credit return awaiting review keeps them unheld.
+      if (
+        kind === "subscription" &&
+        paymentId &&
+        !refund?.owed &&
+        !refund?.creditReturnNeedsReview
+      ) {
+        await stampTranchesOnCancel(tx, { paymentId, now });
       }
       await releaseEngagementOccurrences(
         tx,
@@ -502,7 +603,12 @@ async function casCancelExclusiveEngagement(
       if (appointmentId) {
         await declineOpenReschedules(tx, appointmentId, audit);
       }
-      return { owed: stamped, held };
+      return {
+        owed: held ? null : (refund?.owed ?? null),
+        held,
+        planPaymentId: kind === "subscription" ? paymentId : null,
+        cancelledAt: now,
+      };
     });
   // A request that never got a wrapper has no atom to lock; its CAS decides.
   return appointmentId ? withAppointmentLock(appointmentId, cancel) : cancel();
@@ -538,33 +644,15 @@ async function releaseEngagementOccurrences(
   });
 }
 
-/**
- * Payments this cancellation owes money back on.
- *
- * #1161 — free_ (credit-funded) payments are refundable now: their "refund" is
- * the credit restoration the front door performs, so a zero-amount row can no
- * longer shadow a refundable gateway payment.
- * #781 §B — retired (soft-deleted) rows are NOT: refundBookingPayment refuses
- * them, so queueing one only mints a false failure and a Sentry event.
- */
-function refundableEngagementPayments(
-  engagement: NormalizedEngagement,
-): RefundOwedMarker[] {
-  return engagement.appointments.flatMap((appt) =>
-    appt.payment
-      .filter((p) => p.paymentStatus === "SUCCEEDED" && p.deletedAt === null)
-      .map((p) => moderationRefundOwed(appt.id, p.id)),
-  );
-}
-
-/** A ban refunds the full remaining balance, under the door's own key. */
+/** A ban's owed refund under the door's own key; a null amount is the full remaining balance. */
 function moderationRefundOwed(
   appointmentId: string,
   paymentId: string,
+  amountPaise: number | null,
 ): RefundOwedMarker {
   return {
     paymentId,
-    amountPaise: null,
+    amountPaise,
     key: `moderation:${appointmentId}:${paymentId}`,
     reason: STAFF_CANCEL_REFUND_REASON.MODERATION,
   };
@@ -633,16 +721,28 @@ async function cancelExclusiveEngagement(
     kind,
     engagementId,
     engagement.appointments[0]?.id ?? null,
-    refundableEngagementPayments(engagement),
     ctx,
   );
-  if (!cancelled) return; // lost the CAS — already terminal, no refund
+  if (!cancelled) return; // nothing to cancel, so no refund
 
   ctx.summary.engagementsCancelled += 1;
-  ctx.summary.refundsAlreadyOwed.push(...cancelled.held);
+  if (cancelled.held) ctx.summary.refundsAlreadyOwed.push(cancelled.held);
 
-  for (const marker of cancelled.owed) {
-    await issueFullRefund(marker, ctx.initiatedByUserId, ctx.summary);
+  if (cancelled.owed) {
+    const settled = await issueOwedRefund(
+      cancelled.owed,
+      ctx.initiatedByUserId,
+      ctx.summary,
+    );
+    // The plan's kept tranches start their hold once the refund has settled,
+    // never under a pending or failed one.
+    if (settled && cancelled.planPaymentId) {
+      await stampKeptTranches(
+        cancelled.planPaymentId,
+        cancelled.cancelledAt,
+        ctx.summary,
+      );
+    }
   }
 
   await notifyExclusiveCancellation(kind, engagement);
@@ -958,7 +1058,9 @@ async function removeAttendee(
         },
         select: { id: true },
       });
-      const owed = paid ? moderationRefundOwed(eventWrapper.id, paid.id) : null;
+      const owed = paid
+        ? moderationRefundOwed(eventWrapper.id, paid.id, null)
+        : null;
       const held = owed ? await stampOwedOrHeld(tx, owed) : null;
       // First writer wins: the owed refund already on the payment is the one driven.
       return { owed: held ? null : owed, held };
@@ -968,24 +1070,49 @@ async function removeAttendee(
   ctx.summary.attendeeRemovals += 1;
   if (removal.held) ctx.summary.refundsAlreadyOwed.push(removal.held);
   if (removal.owed) {
-    await issueFullRefund(removal.owed, ctx.initiatedByUserId, ctx.summary);
+    await issueOwedRefund(removal.owed, ctx.initiatedByUserId, ctx.summary);
   }
 }
 
-async function issueFullRefund(
+/** A cancelled plan's kept tranches start their hold; a failure is recorded, never thrown. */
+async function stampKeptTranches(
+  paymentId: string,
+  now: Date,
+  summary: BulkCancelSummary,
+): Promise<void> {
+  try {
+    await stampTranchesOnCancel(prisma, { paymentId, now });
+  } catch (error) {
+    summary.failures.push({
+      kind: "tranche-hold",
+      id: paymentId,
+      error: errMsg(error),
+    });
+    await recordSystemErrorSafe({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `Failed to stamp subscription tranches after a moderation cancel for payment ${paymentId}`,
+      err: error,
+      context: { paymentId },
+    });
+  }
+}
+
+/** Drives the stamped marker; true once the money is back or nothing was left to return. */
+async function issueOwedRefund(
   owed: RefundOwedMarker,
   initiatedByUserId: string,
   summary: BulkCancelSummary,
-) {
+): Promise<boolean> {
   // The rail-aware front door, under the marker's key: a failure stays on the
   // marker for the retry sweep instead of being lost with this run.
   const outcome = await driveRefundOwed(owed, { initiatedByUserId });
   if (outcome.kind === "refunded" || outcome.kind === "replayed") {
     summary.refundsIssued += 1;
     summary.refundedPaise += outcome.refund.amountRefundedPaise;
-    return;
+    return outcome.refund.status !== "PENDING";
   }
-  if (outcome.kind === "settled") return;
+  if (outcome.kind === "settled") return true;
   const error =
     outcome.kind === "failed"
       ? outcome.error
@@ -1004,4 +1131,5 @@ async function issueFullRefund(
     expected: modelled,
     ...(modelled ? { level: "warning" as const } : {}),
   });
+  return false;
 }
