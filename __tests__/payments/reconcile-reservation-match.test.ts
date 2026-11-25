@@ -281,12 +281,12 @@ describe("reconcilePendingRefunds placeholder matching", () => {
     expect(mockList).toHaveBeenCalledWith("pay_cap1", "RAZORPAY", 100, 0);
     expect(mockFetchPayment).toHaveBeenCalledWith("pay_cap1");
     expect(result.failedCount).toBe(1);
-    // CAS on PENDING: a `refund.created` webhook binding the row to SUCCEEDED
-    // between the read and this write must win (count 0 → skip), never be
-    // clobbered back to FAILED.
+    // CAS on PENDING and on the placeholder id read at the start: a webhook or
+    // the binder that settled the row, or bound it to its gateway refund while
+    // the gateway was being asked, must win (count 0 → skip).
     expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "res_1", status: "PENDING" },
+        where: { id: "res_1", status: "PENDING", refundId: "pending_uuid-1" },
         data: expect.objectContaining({ status: "FAILED" }),
       }),
     );

@@ -429,11 +429,15 @@ async function reconcilePendingRefundsUnlocked(
       }
 
       if (isVeryOld) {
-        // CAS: a `refund.created` webhook may bind this row to SUCCEEDED
-        // between the read and this write — only FAIL a still-PENDING row.
+        // Only a row still PENDING under the placeholder id read above is
+        // failed: one a webhook or the binder settled or bound meanwhile is not.
         const claimed = await failRefund(refund.id, (tx) =>
           tx.refund.updateMany({
-            where: { id: refund.id, status: RefundStatus.PENDING },
+            where: {
+              id: refund.id,
+              status: RefundStatus.PENDING,
+              refundId: refund.refundId,
+            },
             data: {
               status: RefundStatus.FAILED,
               metadata: {
