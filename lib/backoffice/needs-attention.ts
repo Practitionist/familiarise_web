@@ -630,7 +630,7 @@ const SOURCES: readonly AttentionSource[] = [
     key: "webhookEvents",
     label: "Gateway webhooks not processed",
     money: false,
-    note: "Events the sweep gave up on after 7 days stay listed.",
+    note: "Events the sweep gave up on after 7 days, or marked permanent, stay listed until the audited requeue door puts them back in the queue.",
     read: async (now, limitMs) => {
       const where: Prisma.WebhookEventWhereInput = {
         processed: false,

@@ -3,7 +3,7 @@
  */
 import { Prisma } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   reportSentryError,
   reportSentryMessage,
@@ -41,6 +41,29 @@ export const TERMINAL_ERROR_PREFIXES = ["gave up:", "permanent:"] as const;
 /** Formats a permanent unprocessable error marker for `WebhookEvent.error`. */
 export function permanentFailure(reason: string): string {
   return `permanent: ${reason}`;
+}
+
+/** Formats the terminal marker for an event that kept failing until the retry cap. */
+export function gaveUpFailure(reason: string): string {
+  return `gave up: ${reason}`.slice(0, 500);
+}
+
+/**
+ * Puts a terminal row back in the sweeper's queue: unclaimed, with no error.
+ * A compare-and-set on the terminal error the caller read, so a row another
+ * actor already moved is left alone. Returns whether this call moved it.
+ */
+export async function requeueTerminalWebhookEvent(
+  tx: Tx,
+  id: string,
+  terminalError: string | null,
+): Promise<boolean> {
+  if (!isTerminalWebhookError(terminalError)) return false;
+  const moved = await tx.webhookEvent.updateMany({
+    where: { id, processed: false, error: terminalError },
+    data: { error: null, claimedAt: null, processedAt: null },
+  });
+  return moved.count === 1;
 }
 
 /** Returns true when `error` carries a terminal prefix that must never be retried. */
