@@ -25,7 +25,7 @@ import {
   Prisma,
   RefundStatus,
 } from "@prisma/client";
-import prisma, { type PrismaLike } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -157,10 +157,12 @@ const RELEASABLE_ORG_EARNING: Prisma.OrganizationEarningsWhereInput = {
   payment: RELEASABLE_PAYMENT,
 };
 
-type IncidentWindow = { startsAt: Date; endsAt: Date };
+export type IncidentWindow = { startsAt: Date; endsAt: Date };
 
 /** Declared incidents whose enumeration has not yet decided every overlapping session. */
-function undecidedIncidents(db: PrismaLike): Promise<IncidentWindow[]> {
+export function undecidedIncidents(
+  db: Pick<Tx, "platformIncident">,
+): Promise<IncidentWindow[]> {
   return db.platformIncident.findMany({
     where: { enumeratedAt: null },
     select: { startsAt: true, endsAt: true },
@@ -172,7 +174,7 @@ function undecidedIncidents(db: PrismaLike): Promise<IncidentWindow[]> {
  * windows (the enumerator's own overlap test), until the enumeration decides
  * the session. Empty when no incident is undecided.
  */
-function clearOfIncidents(incidents: IncidentWindow[]): {
+export function clearOfIncidents(incidents: IncidentWindow[]): {
   AND?: [{ payment: Prisma.PaymentWhereInput }];
 } {
   if (incidents.length === 0) return {};

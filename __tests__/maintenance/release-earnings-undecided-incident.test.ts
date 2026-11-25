@@ -23,6 +23,7 @@ import {
   seedEarnings,
   type EarningsTable as Table,
 } from "../fixtures/earnings-release-world";
+import { releaseSponsorTrustPark } from "@/lib/payments/payouts/trust-park";
 import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
 const at = (hour: number) => new Date(Date.UTC(2026, 4, 20, hour));
@@ -43,6 +44,7 @@ appointment.occurrences = [
 ];
 const payment: Row = {
   id: "pay_1",
+  organizationId: "org_sponsor",
   appointmentId: "appt_1",
   appointment,
   refunds: [],
@@ -108,4 +110,23 @@ it("the claim restates the incident gate on both arms", async () => {
   });
   expect(consultantEarnings.rows[0].status).toBe("PENDING");
   expect(organizationEarnings.rows[0].status).toBe("PENDING");
+});
+
+it("a sponsor's trust-park release leaves a session under an undecided incident PENDING, and makes it READY once enumerated", async () => {
+  const tables = { consultantEarnings, organizationEarnings };
+  declare(at(10), at(12), null);
+  seedEarnings(tables, "PENDING_TRUST", payment);
+
+  expect(
+    await releaseSponsorTrustPark(prisma as never, "org_sponsor"),
+  ).toMatchObject({ ready: 0, pending: 2 });
+  expect(consultantEarnings.rows[0].status).toBe("PENDING");
+  expect(organizationEarnings.rows[0].status).toBe("PENDING");
+
+  declare(at(10), at(12), new Date());
+  seedEarnings(tables, "PENDING_TRUST", payment);
+
+  expect(
+    await releaseSponsorTrustPark(prisma as never, "org_sponsor"),
+  ).toMatchObject({ ready: 2, pending: 0 });
 });

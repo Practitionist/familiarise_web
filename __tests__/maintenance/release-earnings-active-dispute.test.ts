@@ -86,6 +86,6 @@ it("the claim restates the dispute gate", async () => {
 
 it("a sponsor's trust-park release parks a disputed payment's matured rows as PENDING, not READY", async () => {
   seedEarnings(tables, "PENDING_TRUST", payment);
-  const out = await releaseSponsorTrustPark(tables as never, "org_sponsor");
+  const out = await releaseSponsorTrustPark(prisma as never, "org_sponsor");
   expect(out).toMatchObject({ ready: 0, pending: 2 });
 });
