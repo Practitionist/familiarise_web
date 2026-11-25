@@ -31,8 +31,21 @@ import {
   type SoldTermsShape,
 } from "./entitlement";
 
-type SettleTx = Pick<Tx, "appointment" | "consultantEarnings"> &
+type SettleTx = Pick<Tx, "$executeRaw" | "appointment" | "consultantEarnings"> &
   NonNullable<TriggerOptions["tx"]>;
+
+/**
+ * One transaction-scoped advisory lock per plan, taken before the sessions are
+ * read: the writers of a plan's tranche dates run one at a time, and each
+ * reads what the previous one committed. `$executeRaw` because the lock
+ * function returns void, which the driver adapter cannot deserialise as a row.
+ */
+async function lockPlanTranches(
+  tx: Pick<Tx, "$executeRaw">,
+  appointmentId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`plan-tranches:${appointmentId}`}, 42))`;
+}
 
 /** Tranches the accrual parked and nothing has stamped yet. */
 const UNSTAMPED_STATUSES = ["PENDING", "PENDING_TRUST"] as const;
@@ -86,9 +99,16 @@ function deliveredTranches(
  * READY, BATCHED or PAID row is left alone. Answers the rows cleared.
  */
 export async function unstampUndeliveredTranches(
-  tx: Pick<Tx, "appointment" | "consultantEarnings" | "organizationEarnings">,
+  tx: Pick<
+    Tx,
+    | "$executeRaw"
+    | "appointment"
+    | "consultantEarnings"
+    | "organizationEarnings"
+  >,
   args: { appointmentId: string; now: Date },
 ): Promise<number> {
+  await lockPlanTranches(tx, args.appointmentId);
   const wrapper = await tx.appointment.findUnique({
     where: { id: args.appointmentId },
     select: {
@@ -208,6 +228,7 @@ export async function settleSubscriptionCycleWithNotice(
   bells: StagedTrigger[];
   emailArgs: SubscriptionLifecycleEmailArgs | null;
 }> {
+  await lockPlanTranches(tx, args.appointmentId);
   // One read, sequential by construction (PG_POOL_MAX=1): the wrapper, its
   // subscription with plan and both parties, and every occurrence row.
   const wrapper = await tx.appointment.findUnique({
