@@ -1,0 +1,525 @@
+/**
+ * A booking past its programme cap whose member pays the over-cap amount keeps
+ * the expert's earnings on it held until that side payment settles: checkout
+ * writes the earnings after the overage is recorded, so they must start held,
+ * at the same amounts as an under-cap booking's, and be released by the same
+ * paths that release the recorder's hold.
+ */
+import "./harness-cancel-route";
+import { randomUUID } from "node:crypto";
+import prisma from "../../../lib/prisma";
+import {
+  futureAt,
+  HOUR_MS,
+  seedConsultee,
+  seedHost,
+  seedOneToOne,
+  seedPaidSubscription,
+} from "./harness";
+import {
+  consultationCheckout,
+  publishEveryHour,
+  seedBuyer,
+  seedConsultationPlan,
+} from "./harness-host";
+import {
+  earningsOf,
+  overageHeld,
+  released,
+  seedLicensedMember,
+  seedUnpaidMemberOverage,
+} from "./harness-overage";
+
+jest.mock("../../../lib/payments/index", () =>
+  jest.requireActual("./harness-edges").orderGatewayMock(),
+);
+jest.mock("../../../lib/compliance/dpdp", () =>
+  jest.requireActual("./harness-edges").consentGrantedMock(),
+);
+jest.mock("../../../lib/novu/org-workflows", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/payments/billing/consumer-invoice", () => ({
+  __esModule: true,
+  mintConsumerInvoiceBestEffort: jest.fn(async () => undefined),
+}));
+jest.mock("../../../lib/payments/webhooks/ensure-channels", () => ({
+  __esModule: true,
+  ensureChannelsForAppointment: jest.fn(async () => ({ ensured: true })),
+}));
+jest.mock("../../../lib/cron/with-cron-lock", () => ({
+  ...jest.requireActual("../../../lib/cron/with-cron-lock"),
+  withCronLock: (_job: string, _opts: unknown, run: () => Promise<unknown>) =>
+    run(),
+}));
+
+import { handleCheckout } from "../../../lib/payments/checkout";
+import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
+import { handleOverageMemberSuccess } from "../../../lib/payments/webhooks/overage-handlers";
+import { settleFailedMemberOverageAsOrg } from "../../../lib/payments/billing/overage-settlement";
+import { runTimeoutMemberOverages } from "../../../jobs/billing/timeout-member-overages";
+import { replaceOccurrence } from "../../../lib/appointments/occurrences";
+import { enumerateIncident } from "../../../lib/booking/platform-incidents";
+import { settleSubscriptionCycle } from "../../../lib/booking/subscription-cycle";
+import {
+  computeHoldUntil,
+  holdHoursFor,
+  recomputeEarningsHold,
+} from "../../../lib/payments/payouts/earnings-hold";
+import {
+  createEarningsFromPayment,
+  resolvePaymentForEarnings,
+} from "../../../lib/payments/payouts";
+
+const DAY_MS = 24 * HOUR_MS;
+const OLD_GSTIN = process.env.PLATFORM_GSTIN;
+// Organisation rails need a GST-registered platform.
+beforeAll(() => {
+  process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+});
+afterAll(() => {
+  if (OLD_GSTIN === undefined) delete process.env.PLATFORM_GSTIN;
+  else process.env.PLATFORM_GSTIN = OLD_GSTIN;
+});
+
+/** A member of a licensed org books a ₹1,000 consultation on the org's account. */
+async function bookOnLicence(cap: number) {
+  const host = await seedHost();
+  await publishEveryHour(host);
+  const plan = await seedConsultationPlan(host, "Licensed consultation");
+  const buyer = await seedBuyer();
+  const { orgId } = await seedLicensedMember(buyer.userId, cap);
+  await handleCheckout(
+    {
+      ...consultationCheckout(plan.id, futureAt(6, 10), `lic-${randomUUID()}`),
+      organizationId: orgId,
+    },
+    buyer.userId,
+  );
+  const parent = await prisma.payment.findFirstOrThrow({
+    where: { userId: buyer.userId, parentPaymentId: null },
+  });
+  const side = await prisma.payment.findFirst({
+    where: { parentPaymentId: parent.id },
+  });
+  return { orgId, parent, side };
+}
+
+/** Every column an earning's amounts are made of. */
+const amountsOf = (rows: Awaited<ReturnType<typeof earningsOf>>) =>
+  rows.map((r) => ({
+    grossAmount: r.grossAmount,
+    platformFeePaise: r.platformFeePaise,
+    consultantSharePaise: r.consultantSharePaise,
+    refundedShareAmount: r.refundedShareAmount,
+    role: r.role,
+    shareBps: r.shareBps,
+    cycleOrdinal: r.cycleOrdinal,
+    currency: r.currency,
+  }));
+
+describe("a licence-funded booking past its cap whose member pays the overage", () => {
+  it("writes the parent's earnings held for the member's unpaid overage", async () => {
+    const { parent, side } = await bookOnLicence(0);
+
+    expect(side).toMatchObject({ paymentStatus: "PENDING" });
+    const earnings = await earningsOf(parent.id);
+    expect(earnings).toHaveLength(1);
+    expect(earnings[0]).toMatchObject(overageHeld(parent.id));
+  });
+
+  it("holds earnings of the same amounts as an under-cap booking's", async () => {
+    const overCap = await bookOnLicence(0);
+    const underCap = await bookOnLicence(5);
+
+    expect(underCap.side).toBeNull();
+    const held = await earningsOf(overCap.parent.id);
+    const plain = await earningsOf(underCap.parent.id);
+    expect(plain[0]).toMatchObject(released);
+    expect(amountsOf(held)).toEqual(amountsOf(plain));
+    expect(Number(held[0].grossAmount)).toBe(100_000);
+  });
+
+  it("releases the hold when the member pays", async () => {
+    const { parent, side } = await bookOnLicence(0);
+    expect((await earningsOf(parent.id))[0]).toMatchObject(
+      overageHeld(parent.id),
+    );
+
+    await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
+
+    expect((await earningsOf(parent.id))[0]).toMatchObject(released);
+  });
+
+  it("moves a held earning's release with its session, so paying waits for the new end", async () => {
+    const { parent, side } = await bookOnLicence(0);
+    const [earning] = await earningsOf(parent.id);
+    const session = await prisma.appointmentOccurrence.findFirstOrThrow({
+      where: { appointmentId: parent.appointmentId! },
+    });
+    // Further out than the new-expert days, so only a re-anchor can match.
+    const startsAt = new Date(session.startsAt.getTime() + 10 * DAY_MS);
+
+    await prisma.$transaction((tx) =>
+      replaceOccurrence(tx, {
+        appointmentId: parent.appointmentId!,
+        startsAt,
+        durationInHours: 1,
+        consultantProfileId: session.consultantProfileId!,
+      }),
+    );
+
+    // A freshly seeded expert is new, so the re-anchored date carries the three new-expert days.
+    const holdUntil = new Date(
+      computeHoldUntil({
+        capturedAt: earning.createdAt,
+        lastOccurrenceEndsAt: new Date(startsAt.getTime() + HOUR_MS),
+        holdHours: holdHoursFor("CONSULTATION"),
+      }).getTime() +
+        3 * DAY_MS,
+    );
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...overageHeld(parent.id),
+      holdUntil,
+    });
+    await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...released,
+      holdUntil,
+    });
+  });
+
+  it("keeps the hold when the overage times out, until it is settled to the org", async () => {
+    const { orgId, parent } = await bookOnLicence(0);
+    const event = await prisma.overageEvent.findFirstOrThrow({
+      where: { payment: { parentPaymentId: parent.id } },
+    });
+
+    await runTimeoutMemberOverages({
+      windowStart: new Date(Date.now() + 15 * DAY_MS),
+    });
+
+    expect(
+      (await prisma.overageEvent.findUniqueOrThrow({ where: { id: event.id } }))
+        .chargeStatus,
+    ).toBe("FAILED");
+    expect((await earningsOf(parent.id))[0]).toMatchObject(
+      overageHeld(parent.id),
+    );
+
+    await prisma.$transaction((tx) =>
+      settleFailedMemberOverageAsOrg(tx, {
+        organizationId: orgId,
+        overageEventId: event.id,
+      }),
+    );
+
+    expect((await earningsOf(parent.id))[0]).toMatchObject(released);
+  });
+});
+
+it("a gateway capture writes its earnings held while a member overage on the payment is unpaid", async () => {
+  const host = await seedHost();
+  const buyer = await seedConsultee();
+  const startsAt = futureAt(4, 9);
+  const booking = await seedOneToOne(
+    "consultation",
+    host,
+    buyer,
+    { startsAt, endsAt: new Date(startsAt.getTime() + HOUR_MS) },
+    {
+      status: "APPROVED_PENDING_PAYMENT",
+      bookingSource: "REQUEST_SUBMITTED",
+      isTentative: true,
+      payment: { status: "PENDING" },
+    },
+  );
+  const parent = booking.payment!;
+  await seedUnpaidMemberOverage(parent, buyer.userId);
+
+  await handlePaymentSuccess(
+    parent.paymentIntent,
+    booking.captureMetadata,
+    Number(parent.amount),
+  );
+
+  const earnings = await earningsOf(parent.id);
+  expect(earnings).toHaveLength(1);
+  expect(earnings[0]).toMatchObject(overageHeld(parent.id));
+});
+
+/**
+ * A paid two-session subscription whose tranches the deferred writer (the
+ * capture's post-commit retry, the heal sweep) mints; `held` leaves a member
+ * overage unpaid on it first.
+ */
+async function mintSubscription(held: boolean) {
+  const host = await seedHost();
+  const buyer = await seedConsultee();
+  const periodStart = new Date(Date.now() - 20 * DAY_MS);
+  const { subscriptionId, appointmentId } = await seedPaidSubscription(
+    host,
+    buyer,
+    periodStart,
+    { sessionsPerWeek: 1, totalSessions: 2 },
+  );
+  await prisma.subscription.update({
+    where: { id: subscriptionId },
+    data: { status: "APPROVED" },
+  });
+  const parent = await prisma.payment.findFirstOrThrow({
+    where: { appointmentId },
+  });
+  const side = held
+    ? await seedUnpaidMemberOverage(parent, buyer.userId)
+    : null;
+  const resolved = await resolvePaymentForEarnings(
+    { id: parent.id },
+    "SUBSCRIPTION",
+  );
+  await createEarningsFromPayment({
+    payment: resolved!.paymentForEarnings,
+    appointmentType: resolved!.earningsAppointmentType,
+    teamAt: parent.createdAt,
+  });
+  return { host, appointmentId, periodStart, parent, side };
+}
+
+/** One confirmed hour-long session on the subscription. */
+const addSession = (
+  appointmentId: string,
+  consultantProfileId: string,
+  at: {
+    ordinal: number;
+    startsAt: Date;
+    completionStatus: "COMPLETED" | "SCHEDULED";
+  },
+) =>
+  prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId,
+      ...at,
+      endsAt: new Date(at.startsAt.getTime() + HOUR_MS),
+      isTentative: false,
+      consultantProfileId,
+    },
+  });
+
+it("stamps a delivered subscription tranche while it is held, so paying the overage lets it release", async () => {
+  const { host, appointmentId, periodStart, parent, side } =
+    await mintSubscription(true);
+  const minted = await earningsOf(parent.id);
+  expect(minted.length).toBeGreaterThan(0);
+  for (const tranche of minted) {
+    expect(tranche).toMatchObject({
+      ...overageHeld(parent.id),
+      holdUntil: null,
+    });
+  }
+
+  // Both sessions are delivered while the overage is unpaid.
+  for (const ordinal of [1, 2]) {
+    await addSession(appointmentId, host.consultantProfileId, {
+      ordinal,
+      startsAt: new Date(periodStart.getTime() + ordinal * 7 * DAY_MS),
+      completionStatus: "COMPLETED",
+    });
+  }
+  await prisma.$transaction((tx) =>
+    settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+  );
+  await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
+
+  for (const tranche of await earningsOf(parent.id)) {
+    expect(tranche).toMatchObject(released);
+    expect(tranche.holdUntil).not.toBeNull();
+  }
+});
+
+describe("a delivered subscription tranche keeps its stamped date when a later cycle is scheduled", () => {
+  /** A two-cycle subscription whose first cycle is delivered and settled; `held` leaves a member overage unpaid on it. */
+  async function deliverFirstCycle(held: boolean) {
+    const { host, appointmentId, periodStart, parent, side } =
+      await mintSubscription(held);
+    await addSession(appointmentId, host.consultantProfileId, {
+      ordinal: 1,
+      startsAt: new Date(periodStart.getTime() + 7 * DAY_MS),
+      completionStatus: "COMPLETED",
+    });
+    await prisma.$transaction((tx) =>
+      settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+    );
+    const [tranche] = await earningsOf(parent.id);
+    expect(tranche).toMatchObject({ cycleOrdinal: 0 });
+    expect(tranche.holdUntil).not.toBeNull();
+    return { host, appointmentId, parent, side, stamped: tranche.holdUntil };
+  }
+
+  /** The expert places cycle 2 ten days out; allocation re-anchors the appointment's holds. */
+  async function scheduleSecondCycle(
+    appointmentId: string,
+    consultantProfileId: string,
+  ) {
+    await addSession(appointmentId, consultantProfileId, {
+      ordinal: 2,
+      startsAt: new Date(Date.now() + 10 * DAY_MS),
+      completionStatus: "SCHEDULED",
+    });
+    await recomputeEarningsHold(prisma, appointmentId);
+  }
+
+  it("held for an unpaid overage: the tranche keeps its stamp through the payment", async () => {
+    const { host, appointmentId, parent, side, stamped } =
+      await deliverFirstCycle(true);
+    expect((await earningsOf(parent.id))[0]).toMatchObject(
+      overageHeld(parent.id),
+    );
+
+    await scheduleSecondCycle(appointmentId, host.consultantProfileId);
+    await handleOverageMemberSuccess(side!.paymentIntent, Number(side!.amount));
+
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...released,
+      cycleOrdinal: 0,
+      holdUntil: stamped,
+    });
+  });
+
+  it("unheld: the tranche keeps its stamp", async () => {
+    const { host, appointmentId, parent, stamped } =
+      await deliverFirstCycle(false);
+
+    await scheduleSecondCycle(appointmentId, host.consultantProfileId);
+
+    expect((await earningsOf(parent.id))[0]).toMatchObject({
+      ...released,
+      cycleOrdinal: 0,
+      holdUntil: stamped,
+    });
+  });
+});
+
+it("a voided cycle's tranche and the plan's organisation earning lose their stamps and are stamped afresh when the make-up is delivered; a released tranche keeps its date", async () => {
+  const { host, appointmentId, periodStart, parent } =
+    await mintSubscription(false);
+  // The buyer kept one of the two sessions, so one delivered session delivers the plan in full
+  // and settlement dates the host organisation's earning along with the tranches.
+  await prisma.appointment.update({
+    where: { id: appointmentId },
+    data: { subscription: { update: { sessionsRefunded: 1 } } },
+  });
+  const org = await prisma.organization.create({
+    data: { name: "Host org", slug: `db-tier-${randomUUID()}` },
+  });
+  const orgEarning = await prisma.organizationEarnings.create({
+    data: {
+      organizationId: org.id,
+      paymentId: parent.id,
+      grossAmountPaise: BigInt(400_000),
+      platformFeePaise: BigInt(80_000),
+      orgSharePaise: BigInt(40_000),
+      consultantSharePaise: BigInt(280_000),
+      status: "PENDING",
+      holdUntil: null,
+    },
+  });
+  const orgHold = () =>
+    prisma.organizationEarnings.findUniqueOrThrow({
+      where: { id: orgEarning.id },
+      select: { status: true, holdUntil: true },
+    });
+  const first = await addSession(appointmentId, host.consultantProfileId, {
+    ordinal: 1,
+    startsAt: new Date(periodStart.getTime() + 7 * DAY_MS),
+    completionStatus: "COMPLETED",
+  });
+  await prisma.$transaction((tx) =>
+    settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+  );
+  const stamped = (await earningsOf(parent.id))[0].holdUntil;
+  expect(stamped).not.toBeNull();
+  expect((await orgHold()).holdUntil).not.toBeNull();
+  // The second tranche stands in for one already released to the expert.
+  await prisma.consultantEarnings.updateMany({
+    where: { paymentId: parent.id, cycleOrdinal: 1 },
+    data: { status: "READY", holdUntil: stamped },
+  });
+  const holds = async () =>
+    (await earningsOf(parent.id)).map((t) => ({
+      cycleOrdinal: t.cycleOrdinal,
+      status: t.status,
+      holdUntil: t.holdUntil,
+    }));
+  const releasedTranche = {
+    cycleOrdinal: 1,
+    status: "READY",
+    holdUntil: stamped,
+  };
+
+  // An incident over the delivered session voids it: its cycle is undelivered again.
+  const incident = await prisma.platformIncident.create({
+    data: {
+      startsAt: new Date(first.startsAt.getTime() + 60_000),
+      endsAt: new Date(first.startsAt.getTime() + 2 * 60_000),
+      reason: `db tier ${randomUUID()}`,
+      declaredByUserId: host.userId,
+    },
+  });
+  const failures: unknown[] = [];
+  await enumerateIncident(
+    incident,
+    { limit: 10, pastDeadline: () => false, now: new Date() },
+    {
+      voided: 0,
+      remediesCreated: 0,
+      failed: (_id, error) => failures.push(error),
+    },
+  );
+  expect(failures).toEqual([]);
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: first.id },
+      select: { completionStatus: true },
+    }),
+  ).toEqual({ completionStatus: "VOIDED" });
+  expect(await holds()).toEqual([
+    { cycleOrdinal: 0, status: "PENDING", holdUntil: null },
+    releasedTranche,
+  ]);
+  expect(await orgHold()).toEqual({ status: "PENDING", holdUntil: null });
+
+  // The make-up is placed three days out; allocation re-anchors the appointment's holds and stamps neither row.
+  const makeUp = await addSession(appointmentId, host.consultantProfileId, {
+    ordinal: 2,
+    startsAt: new Date(Date.now() + 3 * DAY_MS),
+    completionStatus: "SCHEDULED",
+  });
+  await recomputeEarningsHold(prisma, appointmentId);
+  expect((await holds())[0].holdUntil).toBeNull();
+  expect((await orgHold()).holdUntil).toBeNull();
+
+  // The make-up is delivered: completion stamps both rows from that session's end.
+  await prisma.appointmentOccurrence.update({
+    where: { id: makeUp.id },
+    data: { completionStatus: "COMPLETED", completedAt: makeUp.endsAt },
+  });
+  await prisma.$transaction((tx) =>
+    settleSubscriptionCycle(tx, { appointmentId, now: makeUp.endsAt }),
+  );
+  const fresh = computeHoldUntil({
+    capturedAt: makeUp.endsAt,
+    lastOccurrenceEndsAt: makeUp.endsAt,
+    holdHours: holdHoursFor("SUBSCRIPTION"),
+  });
+  // A freshly seeded expert is new, so the stamp carries the three new-expert days.
+  expect(await holds()).toEqual([
+    {
+      cycleOrdinal: 0,
+      status: "PENDING",
+      holdUntil: new Date(fresh.getTime() + 3 * DAY_MS),
+    },
+    releasedTranche,
+  ]);
+  // An organisation earning carries no new-expert days.
+  expect(await orgHold()).toEqual({ status: "PENDING", holdUntil: fresh });
+});

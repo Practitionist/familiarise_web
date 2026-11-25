@@ -27,6 +27,7 @@ jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 import {
   settleSubscriptionCycle,
   stampTranchesOnCancel,
+  unstampUndeliveredTranches,
 } from "../../lib/booking/subscription-cycle";
 import { allocateCycleClawback } from "../../lib/payments/payouts/earnings-reversal";
 
@@ -199,6 +200,65 @@ it("the final completion stamps the last tranche even though no bell is due", as
   expect(staged).toEqual([]);
 });
 
+describe("a void on a plan", () => {
+  const unreleased = {
+    paymentId: { in: ["pay-1"] },
+    holdUntil: { not: null },
+    OR: [
+      { status: { in: ["PENDING", "PENDING_TRUST"] } },
+      { status: "HELD", preHoldStatus: { in: ["PENDING", "PENDING_TRUST"] } },
+    ],
+  };
+  const cleared = (where: object) => [[{ where, data: { holdUntil: null } }]];
+
+  async function unstampOn(statuses: string[], planStatus = "APPROVED") {
+    const { tx, updateMany } = makeTx(statuses);
+    const wrapper = wrapperWith(statuses);
+    tx.appointment.findUnique.mockResolvedValue({
+      ...wrapper,
+      subscription: { ...wrapper.subscription, status: planStatus },
+    });
+    const orgUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    await unstampUndeliveredTranches(
+      { ...tx, organizationEarnings: { updateMany: orgUpdateMany } } as never,
+      { appointmentId: "apt-1", now: NOW },
+    );
+    return { updateMany, orgUpdateMany };
+  }
+
+  it("that leaves 7 of 8 delivered un-stamps every unreleased tranche above 0 and the organisation earning", async () => {
+    const { updateMany, orgUpdateMany } = await unstampOn([
+      ...completed(7),
+      "VOIDED",
+    ]);
+    // READY, BATCHED and PAID are outside the status filter, so a released row keeps its date.
+    expect(updateMany.mock.calls).toEqual(
+      cleared({ ...unreleased, cycleOrdinal: { gt: 0 } }),
+    );
+    expect(orgUpdateMany.mock.calls).toEqual(cleared(unreleased));
+  });
+
+  it("that leaves every session delivered keeps the organisation earning's date", async () => {
+    const { updateMany, orgUpdateMany } = await unstampOn([
+      ...completed(12),
+      "VOIDED",
+    ]);
+    expect(updateMany.mock.calls).toEqual(
+      cleared({ ...unreleased, cycleOrdinal: { gt: 2 } }),
+    );
+    expect(orgUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("that has ended un-stamps nothing", async () => {
+    const { updateMany, orgUpdateMany } = await unstampOn(
+      [...completed(7), "VOIDED"],
+      "CANCELLED",
+    );
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(orgUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
 it("cancel after 6: tranche 0 matured and untouched, tranche 1 keeps a stamped remainder, tranche 2 is consumed whole", async () => {
   // Delivered: 6 of 12. The completion path stamped tranche 0 at the 4th;
   // tranches 1 and 2 are still NULL when the buyer cancels.
@@ -213,7 +273,10 @@ it("cancel after 6: tranche 0 matured and untouched, tranche 1 keeps a stamped r
     consultantProfileId: "cp-1",
     cycleOrdinal: { not: null },
     holdUntil: null,
-    status: { in: ["PENDING", "PENDING_TRUST"] },
+    OR: [
+      { status: { in: ["PENDING", "PENDING_TRUST"] } },
+      { status: "HELD", preHoldStatus: { in: ["PENDING", "PENDING_TRUST"] } },
+    ],
   });
   expect(cancel.data.holdUntil).toEqual(
     new Date(NOW.getTime() + HOLD_HOURS * HOUR),

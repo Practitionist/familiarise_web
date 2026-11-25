@@ -187,6 +187,7 @@ export {
 import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { applyCaseHoldsToNewEarnings } from "@/lib/support/case-holds";
+import { holdNewEarningsForUnpaidMemberOverage } from "@/lib/payments/billing/overage-base-carve";
 import {
   soldTermsOf,
   subscriptionTranches,
@@ -2127,6 +2128,7 @@ async function executeEarningsCreationInTx(
       splitPlan,
     });
     await applyCaseHoldsToNewEarnings(tx, payment);
+    await holdNewEarningsForUnpaidMemberOverage(tx, payment.id);
     return ownerEarningsId;
   }
 
@@ -2177,6 +2179,7 @@ async function executeEarningsCreationInTx(
     preplanned,
   });
   await applyCaseHoldsToNewEarnings(tx, payment);
+  await holdNewEarningsForUnpaidMemberOverage(tx, payment.id);
 
   return ownerId;
 }
