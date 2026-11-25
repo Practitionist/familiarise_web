@@ -140,7 +140,7 @@ describe("the predicates", () => {
     );
   });
 
-  it("an unconfirmed learner absence holds a consultation's earning, not a subscription's", () => {
+  it("an unconfirmed learner absence holds its booking's earnings, a subscription's included", () => {
     const open = verdict("a");
     expect(matchesWhere(open, UNCONFIRMED_LEARNER_ABSENT)).toBe(true);
     expect(
@@ -154,7 +154,7 @@ describe("the predicates", () => {
         { ...open, appointment: { subscriptionId: "sub-1" } },
         UNCONFIRMED_LEARNER_ABSENT,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("lists an applied negative verdict for ops once its window closes unconfirmed", () => {

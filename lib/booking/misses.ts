@@ -130,12 +130,11 @@ export function voidWindowStartedBefore(
 /** Hours from a negative verdict (`outcomeAt`) to its window's close; must stay <= HOLD_PERIOD_HOURS.CONSULTATION. */
 export const OUTCOME_REPORT_WINDOW_HOURS = 48;
 
-/** A learner-absent verdict nobody confirmed holds its booking's earnings; a subscription's release per tranche. */
+/** A learner-absent verdict nobody confirmed holds its booking's earnings; on a subscription, every tranche of the plan. */
 export const UNCONFIRMED_LEARNER_ABSENT = {
   outcome: "LEARNER_ABSENT",
   outcomeConfirmedAt: null,
   deletedAt: null,
-  appointment: { subscriptionId: null },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /** A verdict the sweep applied (COMPLETED or VOIDED) that nobody has confirmed. */
