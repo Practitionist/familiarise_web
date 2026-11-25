@@ -77,10 +77,19 @@ const txStub = {
     findFirst: occurrenceFindFirst,
   },
 };
-// #990 — the Phase-2 clear-marker write runs on the base client (outside the
-// tx). Give it its own update mock so the auto-refund success path completes.
+// The Phase-2 marker write runs on the base client (outside the tx): it reads
+// the marker by id, then replaces it by compare-and-set on what it read.
+const PENDING_MARKER =
+  "Auto-refund pending: capture funded no booking. Booking NOT confirmed.";
+const markerRead = jest.fn(
+  async (): Promise<{ description: string | null } | null> => ({
+    description: PENDING_MARKER,
+  }),
+);
 const prismaPaymentUpdate = jest.fn(
-  async (_args: { where: unknown; data: { description?: string } }) => ({}),
+  async (_args: { where: unknown; data: { description?: string } }) => ({
+    count: 1,
+  }),
 );
 const postUnappliedReceipt = jest.fn();
 jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
@@ -96,7 +105,10 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: async (fn: (tx: unknown) => unknown) => fn(txStub),
     payment: {
-      update: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
+      // By id it is the marker read; by order id, the same row the tx reads.
+      findUnique: (args: { where: { id?: string } }) =>
+        args.where.id ? markerRead() : paymentFindUnique(args),
+      updateMany: (...a: unknown[]) => prismaPaymentUpdate(...(a as [never])),
     },
     meeting: { findUnique: (...a: unknown[]) => meetingFindUnique(...a) },
     user: { findUnique: (...a: unknown[]) => userFindUnique(...a) },
@@ -488,9 +500,13 @@ describe("a capture rejected for its amount opens no group room", () => {
       Object.assign(payment, data);
       return { count: 1 };
     });
+    markerRead.mockImplementation(async () => ({
+      description:
+        typeof payment.description === "string" ? payment.description : null,
+    }));
     prismaPaymentUpdate.mockImplementation(async ({ data }) => {
       Object.assign(payment, data);
-      return {};
+      return { count: 1 };
     });
     if (refunded) refundPayment.mockResolvedValue({ status: "SUCCEEDED" });
     else refundPayment.mockRejectedValue(new Error("gateway unavailable"));

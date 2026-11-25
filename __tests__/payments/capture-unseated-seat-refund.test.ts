@@ -217,13 +217,16 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 
 import {
   confirmExistingAppointment,
+  handlePaymentFailure,
   handlePaymentSuccess,
+  refundLateCapture,
 } from "../../lib/payments/webhooks/handlers";
 import prisma from "../../lib/prisma";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
 const markerRow = prisma.payment.findUnique as unknown as jest.Mock;
 const markerSettle = prisma.payment.updateMany as unknown as jest.Mock;
+const markerOverwrite = prisma.payment.update as unknown as jest.Mock;
 
 const BUYER = "user-1";
 const WEBINAR = "web-1";
@@ -696,6 +699,78 @@ describe("the auto-refund marker on a released seat", () => {
     await deliver();
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     expect(markerSettle).not.toHaveBeenCalled();
+  });
+});
+
+// The post-commit marker writers replace only the pending marker they read.
+describe("a post-commit marker writer", () => {
+  const STUCK =
+    "Auto-refund stuck: capture amount 9000p ≠ expected 10000p. Booking NOT confirmed.";
+  const PENDING =
+    "Auto-refund pending: capture landed on a EXPIRED payment whose hold was already released. Booking NOT confirmed.";
+  afterEach(() => markerRow.mockResolvedValue(null));
+
+  it("the late-capture refund leaves a stuck marker as the retry sweep wrote it", async () => {
+    markerRow.mockResolvedValue({ description: STUCK });
+
+    await refundLateCapture({
+      paymentId: "pay-1",
+      releasedBy: "payment EXPIRED",
+    });
+
+    expect(markerOverwrite).not.toHaveBeenCalled();
+    expect(markerSettle).not.toHaveBeenCalled();
+  });
+
+  it("the late-capture refund replaces a pending marker by compare-and-set on it", async () => {
+    markerRow.mockResolvedValue({ description: PENDING });
+
+    await refundLateCapture({
+      paymentId: "pay-1",
+      releasedBy: "payment EXPIRED",
+    });
+
+    expect(markerOverwrite).not.toHaveBeenCalled();
+    expect(markerSettle).toHaveBeenCalledWith({
+      where: { id: "pay-1", description: PENDING },
+      data: {
+        description: expect.stringMatching(
+          /^Auto-refunded: capture landed after the hold was released \(payment EXPIRED\)/,
+        ),
+      },
+    });
+  });
+
+  it("the amount-mismatch refund leaves a stuck marker as the retry sweep wrote it", async () => {
+    markerRow.mockResolvedValue({ description: STUCK });
+
+    const outcome = await handlePaymentSuccess(
+      "order-1",
+      WEBINAR_METADATA as unknown as Record<string, string>,
+      9000,
+    );
+
+    expect(outcome).toBe("amount_mismatch");
+    expect(refundPayment).toHaveBeenCalledTimes(1);
+    expect(markerOverwrite).not.toHaveBeenCalled();
+    expect(markerSettle).not.toHaveBeenCalled();
+  });
+});
+
+// A failed attempt inside the hold window changes nothing on the row.
+describe("a failed attempt while the hold is still open", () => {
+  it("does not store the failed attempt's gateway payment id on the PENDING row", async () => {
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({
+        gatewayPaymentId: null,
+        expiresAt: new Date(Date.now() + 10 * 60_000),
+        appointment: null,
+      }),
+    );
+
+    await handlePaymentFailure("order-1", "card declined", "pay_failed_1");
+
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
   });
 });
 

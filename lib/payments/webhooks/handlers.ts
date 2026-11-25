@@ -368,12 +368,11 @@ export async function refundLateCapture(input: {
       : {}),
   });
   if (outcome?.status !== "PENDING") {
-    await prisma.payment.update({
-      where: { id: input.paymentId },
-      data: {
-        description: `Auto-refunded: capture landed after the hold was released (${input.releasedBy}). Booking NOT confirmed.`,
-      },
-    });
+    await replacePendingAutoRefundMarker(
+      input.paymentId,
+      () =>
+        `Auto-refunded: capture landed after the hold was released (${input.releasedBy}). Booking NOT confirmed.`,
+    );
   }
 }
 
@@ -1295,13 +1294,11 @@ export async function handlePaymentSuccess(
         initiatedByUserId: null,
       });
       if (outcome?.status !== "PENDING") {
-        await prisma.payment.update({
-          where: { id: loser.id },
-          data: {
-            description:
-              "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
-          },
-        });
+        await replacePendingAutoRefundMarker(
+          loser.id,
+          () =>
+            "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
+        );
       }
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
@@ -1344,15 +1341,12 @@ export async function handlePaymentSuccess(
         initiatedByUserId: null,
       });
       if (outcome?.status !== "PENDING") {
-        await prisma.payment.update({
-          where: { id: txResult.paymentId },
-          data: {
-            description:
-              surplusPaise > 0
-                ? `REQUIRES_MANUAL_RECOVERY: Over-capture surplus of ${surplusPaise}p on ${paymentIntentId} (refunded ${refundablePaise}p of ${txResult.gatewayAmountPaise}p captured). Booking NOT confirmed.`
-                : `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
-          },
-        });
+        const { gatewayAmountPaise: capturedPaise, expectedAmount } = txResult;
+        await replacePendingAutoRefundMarker(txResult.paymentId, () =>
+          surplusPaise > 0
+            ? `REQUIRES_MANUAL_RECOVERY: Over-capture surplus of ${surplusPaise}p on ${paymentIntentId} (refunded ${refundablePaise}p of ${capturedPaise}p captured). Booking NOT confirmed.`
+            : `Auto-refunded: capture amount ${capturedPaise}p ≠ expected ${expectedAmount}p. Booking NOT confirmed.`,
+        );
       }
     } catch (refundError) {
       reportSentryError(refundError, {
@@ -1753,7 +1747,6 @@ export async function handlePaymentFailure(
       select: {
         id: true,
         paymentStatus: true,
-        gatewayPaymentId: true,
         userId: true,
         appointmentId: true,
         amount: true,
@@ -1832,20 +1825,11 @@ export async function handlePaymentFailure(
 
     // Keep tentative slot hold and consumed credits intact while the order hold window is still active.
     if (payment.expiresAt && payment.expiresAt > new Date()) {
+      // The row's gateway payment id is reserved for the attempt that captures; a failed one is only logged.
       console.warn(
         `[webhook] Payment attempt failed during active hold window for ${paymentIntentId}`,
         { gatewayPaymentId, failureReason },
       );
-      if (gatewayPaymentId && !payment.gatewayPaymentId) {
-        await tx.payment.updateMany({
-          where: {
-            id: payment.id,
-            paymentStatus: PaymentStatus.PENDING,
-            gatewayPaymentId: null,
-          },
-          data: { gatewayPaymentId },
-        });
-      }
       return;
     }
 
@@ -2677,7 +2661,15 @@ export async function confirmExistingAppointment(
   return { capturedAfterTerminal };
 }
 
-export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
+/**
+ * Replaces a pending auto-refund marker by compare-and-set on the marker it
+ * read. A marker another writer already settled or retired to an operator
+ * (stuck) is left as it stands.
+ */
+async function replacePendingAutoRefundMarker(
+  paymentId: string,
+  next: (pending: string) => string,
+): Promise<void> {
   const row = await prisma.payment.findUnique({
     where: { id: paymentId },
     select: { description: true },
@@ -2686,8 +2678,12 @@ export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
   if (!pending?.startsWith(AUTO_REFUND_PENDING_PREFIX)) return;
   await prisma.payment.updateMany({
     where: { id: paymentId, description: pending },
-    data: { description: settledAutoRefundDescription(pending) },
+    data: { description: next(pending) },
   });
+}
+
+export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
+  await replacePendingAutoRefundMarker(paymentId, settledAutoRefundDescription);
 }
 
 export async function releaseBlockedBookingHold(

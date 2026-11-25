@@ -298,16 +298,8 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
         "pay_attempt_1",
       );
 
-      expect(paymentMock.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: "pay_row_1",
-          paymentStatus: "PENDING",
-          gatewayPaymentId: null,
-        },
-        data: {
-          gatewayPaymentId: "pay_attempt_1",
-        },
-      });
+      // The hold stays PENDING and the failed attempt's id is not stored on it.
+      expect(paymentMock.updateMany).not.toHaveBeenCalled();
     });
 
     it("backfills missing gatewayPaymentId on already SUCCEEDED payment via CAS without opening $transaction", async () => {

@@ -142,7 +142,9 @@ Every row below is decided inside Phase 1 and leaves a durable marker, so a cras
 
 "Parked" means the cash is booked to `UNAPPLIED_RECEIPTS` (`Dr GATEWAY_CLEARING / Cr UNAPPLIED_RECEIPTS`, key `unapplied:<paymentId>`) so revenue, GST and earnings are never recognised for money that funds no booking. The refund returns it with `Dr UNAPPLIED_RECEIPTS / Cr GATEWAY_CLEARING`. See [postings](../20-ledger/04-postings.md).
 
-The `Auto-refund pending:` prefix on `Payment.description` (`lib/payments/webhooks/auto-refund-marker.ts`) is the work queue. The `retry-auto-refunds` sweep drains it: it skips a payment that already has a `PENDING` refund (that belongs to `reconcile-refunds`) or a live dispute, and after three failed gateway attempts it rewrites the prefix to `Auto-refund stuck:` and pages once. The marker becomes `Auto-refunded:` when the refund settles.
+The `Auto-refund pending:` prefix on `Payment.description` (`lib/payments/webhooks/auto-refund-marker.ts`) is the work queue. The `retry-auto-refunds` sweep drains it: it skips a payment that already has a `PENDING` refund (that belongs to `reconcile-refunds`) or a live dispute, and after three failed gateway attempts it rewrites the prefix to `Auto-refund stuck:` and pages once. The marker becomes `Auto-refunded:` when the refund settles. Every writer that settles a marker, the capture path's three post-commit writers and the sweep alike, replaces only the pending marker it read (a compare-and-set on the description), so a marker the sweep has retired to `Auto-refund stuck:` is never overwritten. A stuck marker is listed on Stuck work as "Automatic refunds that gave up" (`STUCK_AUTO_REFUND_WHERE` in `lib/backoffice/queue-predicates.ts`) until a refund is pending or paid.
+
+`Payment.gatewayPaymentId` holds only the `pay_` id of the attempt that captured. A `payment.failed` that arrives while the hold is still open is logged and leaves the row untouched, so a row that later expires carries no gateway payment id for a refund event to match.
 
 ### Worked example
 
