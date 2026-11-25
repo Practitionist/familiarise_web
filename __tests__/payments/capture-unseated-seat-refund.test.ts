@@ -69,6 +69,9 @@ const historyCreate = jest.fn().mockResolvedValue({});
 const participantCreateMany = jest.fn().mockResolvedValue({ count: 1 });
 const occurrenceFindMany = jest.fn().mockResolvedValue([]);
 const buyerConflictFindFirst = jest.fn().mockResolvedValue(null);
+const bookingUtilizationFindUnique = jest.fn().mockResolvedValue(null);
+const reverseCreditsForPayment = jest.fn();
+const notifyPaymentFailed = jest.fn();
 
 const txStub = {
   $executeRaw: jest.fn(async () => 0),
@@ -110,6 +113,7 @@ const txStub = {
   class: { findUnique: classFindUnique, updateMany: classUpdateMany },
   bookingStatusHistory: { createMany: jest.fn(), create: historyCreate },
   paymentLeg: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  bookingUtilization: { findUnique: bookingUtilizationFindUnique },
 };
 
 const fetchRazorpayOrder = jest.fn();
@@ -199,11 +203,12 @@ jest.mock("../../lib/novu", () => ({
   __esModule: true,
   attemptTrigger: jest.fn(),
   notifyPaymentSuccess: jest.fn(),
-  notifyPaymentFailed: jest.fn(),
+  notifyPaymentFailed: (...a: unknown[]) => notifyPaymentFailed(...a),
   notifyAppointmentBooked: jest.fn(),
 }));
 jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
+  reverseCreditsForPayment: (...a: unknown[]) => reverseCreditsForPayment(...a),
 }));
 jest.mock("../../lib/stream-logger", () => ({
   __esModule: true,
@@ -869,6 +874,40 @@ describe("a failed attempt while the hold is still open", () => {
     await handlePaymentFailure("order-1", "card declined", "pay_failed_1");
 
     expect(paymentUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// A lapsed hold whose row a new checkout re-minted since the read is left alone.
+describe("a failed attempt on a lapsed hold that loses its compare-and-set", () => {
+  it("gives nothing back and leaves the booking as it was", async () => {
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({
+        expiresAt: new Date(Date.now() - 60_000),
+        appointment: {
+          id: APPOINTMENT,
+          appointmentType: "WEBINAR",
+          consultation: null,
+          subscription: null,
+        },
+      }),
+    );
+    paymentUpdateMany.mockResolvedValue({ count: 0 });
+
+    await handlePaymentFailure("order-1", "card declined", "pay_failed_1");
+
+    expect(paymentUpdateMany).toHaveBeenCalledTimes(1);
+    expect(paymentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { paymentStatus: "FAILED" } }),
+    );
+    // Credits, the discount use (it starts by reading the payment by id), the
+    // organisation's use and the booking cleanup all sit behind the lost write.
+    expect(reverseCreditsForPayment).not.toHaveBeenCalled();
+    expect(paymentFindUnique).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "pay-1" } }),
+    );
+    expect(bookingUtilizationFindUnique).not.toHaveBeenCalled();
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
+    expect(notifyPaymentFailed).not.toHaveBeenCalled();
   });
 });
 
