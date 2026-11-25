@@ -134,6 +134,22 @@ it("sends whitelisted sorts and pages, names the people and the door, and opens 
   expect(onOpenBooking).toHaveBeenCalledWith("apt-1");
 });
 
+it("the Set outcome dialog says expert absent on a 1:1 consultation cancels and refunds the booking, not that it is a void", async () => {
+  renderCard();
+  fireEvent.click(
+    (
+      await screen.findAllByRole("button", {
+        name: /^Set outcome for Career chat/,
+      })
+    )[0],
+  );
+  expect(
+    await screen.findByText(
+      /On a 1:1 consultation, "Host never joined" is not a void: it cancels the booking, refunds it in full now and records a strike/,
+    ),
+  ).toBeTruthy();
+});
+
 it("takes the error path on a 200 whose body is not a queue page", async () => {
   global.fetch = jest.fn(async () => ({
     ok: true,
