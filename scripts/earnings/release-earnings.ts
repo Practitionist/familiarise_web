@@ -157,25 +157,67 @@ const RELEASABLE_ORG_EARNING: Prisma.OrganizationEarningsWhereInput = {
   payment: RELEASABLE_PAYMENT,
 };
 
-/** Consultant earnings past their hold; shared by the read, the claim and the ticker's idle probe. */
+type IncidentWindow = { startsAt: Date; endsAt: Date };
+
+/** Declared incidents whose enumeration has not yet decided every overlapping session. */
+function undecidedIncidents(db: PrismaLike): Promise<IncidentWindow[]> {
+  return db.platformIncident.findMany({
+    where: { enumeratedAt: null },
+    select: { startsAt: true, endsAt: true },
+  });
+}
+
+/**
+ * Holds a payment whose booking has a session inside one of these incident
+ * windows (the enumerator's own overlap test), until the enumeration decides
+ * the session. Empty when no incident is undecided.
+ */
+function clearOfIncidents(incidents: IncidentWindow[]): {
+  AND?: [{ payment: Prisma.PaymentWhereInput }];
+} {
+  if (incidents.length === 0) return {};
+  const overlapping = {
+    isTentative: false,
+    deletedAt: null,
+    OR: incidents.map((incident) => ({
+      startsAt: { lt: incident.endsAt },
+      endsAt: { gt: incident.startsAt },
+    })),
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+  return {
+    AND: [
+      {
+        payment: {
+          NOT: { appointment: { occurrences: { some: overlapping } } },
+        },
+      },
+    ],
+  };
+}
+
+/** Consultant earnings past their hold; shared by the read, the claim and, without incidents, the ticker's idle probe. */
 function releasableEarningsWhere(
   now: Date,
+  incidents: IncidentWindow[],
 ): Prisma.ConsultantEarningsWhereInput {
   return {
     status: EarningStatus.PENDING,
     holdUntil: { lte: now },
     ...RELEASABLE_CONSULTANT_EARNING,
+    ...clearOfIncidents(incidents),
   };
 }
 
-/** Host-organisation earnings past their hold; shared with the ticker's idle probe. */
+/** Host-organisation earnings past their hold; shared by the read, the claim and, without incidents, the ticker's idle probe. */
 function releasableOrgEarningsWhere(
   now: Date,
+  incidents: IncidentWindow[],
 ): Prisma.OrganizationEarningsWhereInput {
   return {
     status: EarningStatus.PENDING,
     holdUntil: { lte: now },
     ...RELEASABLE_ORG_EARNING,
+    ...clearOfIncidents(incidents),
   };
 }
 
@@ -186,14 +228,15 @@ export async function hasReleasableEarningsWork(
   outOfTime: () => boolean,
 ): Promise<boolean> {
   if (outOfTime()) return true;
+  // The probe skips the incident read: at worst it dispatches a run that an undecided incident then holds.
   const consultant = await db.consultantEarnings.findFirst({
-    where: releasableEarningsWhere(now),
+    where: releasableEarningsWhere(now, []),
     select: { id: true },
   });
   if (consultant) return true;
   if (outOfTime()) return true;
   const org = await db.organizationEarnings.findFirst({
-    where: releasableOrgEarningsWhere(now),
+    where: releasableOrgEarningsWhere(now, []),
     select: { id: true },
   });
   return org !== null;
@@ -239,8 +282,9 @@ async function releaseEarningsFromHoldUnlocked(
     // matching row.
     const { earningsToRelease, releasedCount } = await prisma.$transaction(
       async (tx) => {
+        const incidents = await undecidedIncidents(tx);
         const rows = await tx.consultantEarnings.findMany({
-          where: releasableEarningsWhere(now),
+          where: releasableEarningsWhere(now, incidents),
           include: {
             consultantProfile: {
               include: {
@@ -256,7 +300,7 @@ async function releaseEarningsFromHoldUnlocked(
         const updated = await tx.consultantEarnings.updateMany({
           where: {
             id: { in: rows.map((r) => r.id) },
-            ...releasableEarningsWhere(now),
+            ...releasableEarningsWhere(now, incidents),
           },
           data: {
             status: EarningStatus.READY,
@@ -291,8 +335,9 @@ async function releaseEarningsFromHoldUnlocked(
     const { orgEarningsToRelease, orgReleasedCount } =
       await prisma.$transaction(
         async (tx) => {
+          const incidents = await undecidedIncidents(tx);
           const rows = await tx.organizationEarnings.findMany({
-            where: releasableOrgEarningsWhere(now),
+            where: releasableOrgEarningsWhere(now, incidents),
             select: {
               id: true,
               orgSharePaise: true,
@@ -310,6 +355,7 @@ async function releaseEarningsFromHoldUnlocked(
               id: { in: rows.map((r) => r.id) },
               status: EarningStatus.PENDING,
               ...RELEASABLE_ORG_EARNING,
+              ...clearOfIncidents(incidents),
             },
             data: {
               status: EarningStatus.READY,

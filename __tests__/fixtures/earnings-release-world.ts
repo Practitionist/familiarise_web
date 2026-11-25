@@ -1,7 +1,8 @@
 /**
  * Shared double for the earnings-release suites: a lock that just runs, a
- * Prisma client of two in-memory earnings tables, and the seed of one
- * consultant row and one organisation row over a payment.
+ * Prisma client of two in-memory earnings tables and the declared incidents
+ * the release reads, and the seed of one consultant row and one organisation
+ * row over a payment.
  */
 
 import { memTable, type Row } from "./mem-db";
@@ -23,6 +24,7 @@ export function earningsPrismaModule() {
   const client = {
     consultantEarnings: memTable([], "ce"),
     organizationEarnings: memTable([], "oe"),
+    platformIncident: memTable([], "inc"),
   };
   return {
     __esModule: true,
