@@ -39,16 +39,17 @@ Each rule lists what happens today, the rule, a worked example, and the abuse th
 
 ### 3. A moderation ban refunds what was not delivered, whoever was banned **(planned)**
 
-- **Today**: a ban cancels the banned person's live bookings. A plan or a consultation is refunded its full remaining balance (`lib/moderation/cancel-user-engagements.ts`), delivered sessions included, and a plan with no session placed ahead is not collected at all. A class is already refunded per seat from its series ledger, keeping delivered sessions.
-- **Rule**: a plan or a multi-session consultation refunds its undelivered sessions in full and nothing for delivered ones, the same as a class. Every live plan is collected, placed ahead or not. An operator can add a goodwill refund by hand in a serious case.
-- **Example**: 8 of 24 sessions delivered, then a ban. The refund is ₹24,000, not ₹36,000, and the expert keeps ₹9,600 for the eight sessions taught. This holds whether the expert or the learner was banned.
+- **Today**: a ban cancels the banned person's live bookings. A plan or a consultation is refunded its full remaining balance (`lib/moderation/cancel-user-engagements.ts`), delivered sessions included, and a plan with no session placed ahead is not collected at all. When the banned person is an expert, their class is cancelled and each seat is already refunded from its series ledger, keeping delivered sessions. When the banned person is a learner, their own class or webinar seat is refunded in full.
+- **Rule**: a plan refunds its undelivered sessions in full and nothing for delivered ones, whoever was banned. A banned learner's class seat follows the same rule, and a webinar seat is refunded only if the webinar has not ended. Every live plan is collected, placed ahead or not. A consultation is a single session and keeps its full refund while that session has not been held. An operator can add a goodwill refund by hand in a serious case.
+- **Example**: 8 of 24 sessions delivered, then a ban. The refund is ₹24,000, not ₹36,000, and the expert keeps ₹9,600 for the eight sessions taught. This holds whether the expert or the learner was banned. A learner banned after 3 of 8 class sessions is refunded ₹5,000, not ₹8,000.
 - **Abuse resisted**: a learner who behaves badly enough to be banned no longer gets eight delivered sessions for free.
 
 ### 4. A conduct-removal case that support does not decide in time refunds what was not delivered **(planned)**
 
 - **Today**: a host removes a learner from a class for conduct. The seat is released with no refund and support has 72 hours to decide. If the deadline passes, the learner is refunded the full remaining balance of the seat (`lib/support/conduct-removal-case.ts`).
-- **Rule**: on lapse, refund the undelivered sessions only.
-- **Example**: removed after session 3 of 8. The refund is ₹5,000, not ₹8,000, and the host keeps ₹2,400 for three sessions taught. The host no longer pays for the platform's missed deadline.
+- **Rule**: on lapse, refund the undelivered sessions only, measured at the moment of removal. A session that was under way when the learner was removed counts as not delivered: the learner was put out of the room and support did not rule against them in time, so the doubt goes to the learner.
+- **Example**: removed after session 3 of 8, or ten minutes into session 4. The refund is ₹5,000, not ₹8,000, and the host keeps ₹2,400 for three sessions taught. The host no longer pays for the platform's missed deadline. A webinar seat removed while the webinar is running is refunded in full; one removed after it ended is refunded nothing.
+- **Abuse resisted**: a host cannot remove a learner five minutes into a session and keep that session's pay by default.
 
 ### 5. One seat's dispute does not stop a class being cancelled **(planned)**
 
