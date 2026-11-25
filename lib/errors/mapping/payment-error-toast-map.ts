@@ -270,6 +270,19 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
   },
+  // A replayed paid checkout with no live booking: the server's sentence says what happened to the money.
+  [ErrorTypes.CHECKOUT_REFUNDED]: {
+    title: "This payment was refunded",
+    description: null,
+  },
+  [ErrorTypes.CHECKOUT_REFUND_IN_PROGRESS]: {
+    title: "Your refund is on its way",
+    description: null,
+  },
+  [ErrorTypes.CHECKOUT_NEEDS_SUPPORT]: {
+    title: "We need to look at this payment",
+    description: null,
+  },
   [ErrorTypes.DISCOUNT_NOT_APPLICABLE]: {
     title: "This discount code isn't valid here",
     description: null,
