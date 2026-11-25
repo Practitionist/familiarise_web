@@ -74,10 +74,10 @@ const refundsOf = (paymentId: string) =>
     select: { id: true, refundId: true, status: true, cascadedAt: true },
   });
 
-it("a late refund.processed claims the FAILED placeholder its notes name and clears the marker that placeholder drove", async () => {
+/** A paid consultation whose owed-refund marker drove a ₹200 refund that the reconciler then failed. */
+async function failedOwedPlaceholder() {
   const payment = await paidConsultation();
   const key = `owed:${randomUUID()}`;
-  // The owed marker's own drive: reserved, then failed by the reconciler.
   const placeholder = await prisma.refund.create({
     data: {
       paymentId: payment.id,
@@ -100,19 +100,30 @@ it("a late refund.processed claims the FAILED placeholder its notes name and cle
     },
   });
   const gatewayRefundId = `rfnd_dbtier_${randomUUID()}`;
-
-  const deliver = () =>
+  const deliver = (status: string) =>
     handleRefundCreated(
       gatewayRefundId,
       payment.paymentIntent,
       20_000,
       "INR",
-      "processed",
+      status,
       undefined,
       { reservationId: placeholder.id },
     );
-  await deliver();
-  await deliver();
+  const marker = () =>
+    prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      select: { refundOwedKey: true, refundOwedPaise: true },
+    });
+  return { payment, key, placeholder, gatewayRefundId, deliver, marker };
+}
+
+it("a late refund.processed claims the FAILED placeholder its notes name and clears the marker that placeholder drove", async () => {
+  const { payment, placeholder, gatewayRefundId, deliver, marker } =
+    await failedOwedPlaceholder();
+
+  await deliver("processed");
+  await deliver("processed");
 
   const rows = await refundsOf(payment.id);
   expect(rows).toHaveLength(1);
@@ -122,11 +133,39 @@ it("a late refund.processed claims the FAILED placeholder its notes name and cle
     status: "SUCCEEDED",
   });
   expect(rows[0].cascadedAt).not.toBeNull();
-  const after = await prisma.payment.findUniqueOrThrow({
-    where: { id: payment.id },
-    select: { refundOwedKey: true, refundOwedPaise: true },
+  expect(await marker()).toMatchObject({
+    refundOwedKey: null,
+    refundOwedPaise: null,
   });
-  expect(after).toMatchObject({
+});
+
+it("a pending event first returns the FAILED placeholder to PENDING, and the later success settles that one row", async () => {
+  const { payment, key, placeholder, gatewayRefundId, deliver, marker } =
+    await failedOwedPlaceholder();
+
+  await deliver("pending");
+
+  const pending = await refundsOf(payment.id);
+  expect(pending).toHaveLength(1);
+  expect(pending[0]).toMatchObject({
+    id: placeholder.id,
+    refundId: gatewayRefundId,
+    status: "PENDING",
+    cascadedAt: null,
+  });
+  expect((await marker()).refundOwedKey).toBe(key);
+
+  await deliver("processed");
+
+  const settled = await refundsOf(payment.id);
+  expect(settled).toHaveLength(1);
+  expect(settled[0]).toMatchObject({
+    id: placeholder.id,
+    refundId: gatewayRefundId,
+    status: "SUCCEEDED",
+  });
+  expect(settled[0].cascadedAt).not.toBeNull();
+  expect(await marker()).toMatchObject({
     refundOwedKey: null,
     refundOwedPaise: null,
   });

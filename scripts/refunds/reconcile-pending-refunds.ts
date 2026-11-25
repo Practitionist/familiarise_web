@@ -14,7 +14,10 @@ import {
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma, { type PrismaLike } from "../../lib/prisma";
-import { failRefund } from "@/lib/payments/operations/refund-owed";
+import {
+  failRefund,
+  resettleOwedOnLateSuccess,
+} from "@/lib/payments/operations/refund-owed";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { z } from "zod";
@@ -529,6 +532,8 @@ async function reconcilePendingRefundsUnlocked(
                 data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
               });
               if (claim.count !== 1) return false;
+              // A row that was once failed gave its owed refund back; no-op otherwise.
+              await resettleOwedOnLateSuccess(tx, refund.id);
               await applyRefundCascade(tx, {
                 paymentId: refund.payment.id,
                 refundId: refund.id,

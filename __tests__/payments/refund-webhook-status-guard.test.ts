@@ -252,13 +252,14 @@ function txStub() {
           where,
           data,
         }: {
-          where: { id: string; status?: RefundStatus };
+          where: { id: string; status?: RefundStatus; refundId?: string };
           data: Partial<RefundRow>;
         }) => {
           const row = store.refunds.find(
             (r) =>
               r.id === where.id &&
-              (where.status === undefined || r.status === where.status),
+              (where.status === undefined || r.status === where.status) &&
+              (where.refundId === undefined || r.refundId === where.refundId),
           );
           if (!row) return { count: 0 };
           Object.assign(row, data);
@@ -493,6 +494,84 @@ describe("handleRefundCreated status transition guard", () => {
       expect.anything(),
       expect.objectContaining({ paymentId: "pay_1", refundId: "row_1" }),
     );
+  });
+
+  test("a pending event for a FAILED placeholder returns that row to PENDING under the gateway id, and the later success settles it", async () => {
+    store.refunds.push({
+      id: "row_1",
+      refundId: "pending_row_1",
+      status: "FAILED",
+      paymentId: "pay_1",
+      amountPaise: 10_000,
+      metadata: { settledOwed: SETTLED_OWED, settledOwedRestored: true },
+    });
+    const deliver = (status: string) =>
+      handleRefundCreated(
+        "rfnd_late",
+        "order_1",
+        10_000,
+        "INR",
+        status,
+        "pay_gateway_1",
+        { reservationId: "row_1" },
+      );
+
+    await deliver("pending");
+
+    expect(store.refunds).toEqual([
+      expect.objectContaining({
+        id: "row_1",
+        refundId: "rfnd_late",
+        status: "PENDING",
+      }),
+    ]);
+    expect(applyRefundCascade).not.toHaveBeenCalled();
+
+    await deliver("processed");
+    await deliver("processed");
+
+    expect(store.refunds).toEqual([
+      expect.objectContaining({
+        id: "row_1",
+        refundId: "rfnd_late",
+        status: "SUCCEEDED",
+        metadata: expect.objectContaining({ settledOwedResettled: true }),
+      }),
+    ]);
+    expect(applyRefundCascade).toHaveBeenCalledTimes(1);
+    expect(applyRefundCascade).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ paymentId: "pay_1", refundId: "row_1" }),
+    );
+  });
+
+  test("a pending event never rebinds a FAILED reservation that already holds another gateway refund id", async () => {
+    store.refunds.push({
+      id: "row_1",
+      refundId: "rfnd_first",
+      status: "FAILED",
+      paymentId: "pay_1",
+      amountPaise: 10_000,
+    });
+
+    await handleRefundCreated(
+      "rfnd_other",
+      "order_1",
+      10_000,
+      "INR",
+      "pending",
+      "pay_gateway_1",
+      { reservationId: "row_1" },
+    );
+
+    expect(store.refunds[0]).toEqual({
+      id: "row_1",
+      refundId: "rfnd_first",
+      status: "FAILED",
+      paymentId: "pay_1",
+      amountPaise: 10_000,
+    });
+    expect(applyRefundCascade).not.toHaveBeenCalled();
   });
 
   test("a stale refund.created cannot reopen a FAILED refund", async () => {

@@ -574,6 +574,56 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
     );
   });
 
+  test("a polled success takes off again the owed refund the row gave back when it was failed", async () => {
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "row_revived",
+        refundId: "rfnd_revived",
+        status: "PENDING",
+        amountPaise: 10_000,
+        currency: "INR",
+        createdAt: new Date(Date.now() - 3 * HOUR),
+        payment: {
+          id: "pay-9",
+          paymentGateway: "RAZORPAY",
+          userId: "user-9",
+          organizationId: null,
+        },
+      },
+    ]);
+    mockGet.mockResolvedValueOnce({
+      refundId: "rfnd_revived",
+      amount: 10_000,
+      currency: "INR",
+      status: "SUCCEEDED",
+      metadata: undefined,
+    });
+    const givenBack = {
+      settledOwed: {
+        key: "owed:pay-9",
+        reason: "booking cancelled",
+        owedPaise: 10_000,
+        settledPaise: 10_000,
+        stillOwedPaise: 0,
+        note: "settled by hand",
+      },
+      settledOwedRestored: true,
+    };
+    refundTable.findUnique.mockResolvedValue({
+      paymentId: "pay-9",
+      metadata: givenBack,
+      updatedAt: new Date(0),
+    });
+
+    const result = await reconcilePendingRefunds();
+
+    expect(result.reconciledCount).toBe(1);
+    expect(refundTable.updateMany).toHaveBeenCalledWith({
+      where: { id: "row_revived", updatedAt: new Date(0) },
+      data: { metadata: { ...givenBack, settledOwedResettled: true } },
+    });
+  });
+
   test("a row another writer already settled is neither re-marked nor re-notified", async () => {
     refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
       {

@@ -1033,12 +1033,11 @@ export async function handleRefundCreated(
               await restoreOwedOnFailedRefund(tx, existingRefund.id);
               await countOwedDriveFailure(tx, existingRefund.id);
             }
-            if (lateSuccess) {
-              await resettleOwedOnLateSuccess(tx, existingRefund.id);
-            }
 
             // Run side effects when transitioning TO SUCCEEDED
             if (newStatus === "SUCCEEDED") {
+              // A row that was once failed gave its owed refund back; no-op otherwise.
+              await resettleOwedOnLateSuccess(tx, existingRefund.id);
               await runRefundSideEffects(
                 payment.id,
                 status,
@@ -1096,15 +1095,17 @@ export async function handleRefundCreated(
             select: { id: true, refundId: true, reason: true, status: true },
           });
           if (reservation) {
-            // A success for a placeholder already marked FAILED moved the money
-            // after all: it claims that row rather than booking a second one.
-            const lateSuccess =
+            // A placeholder already marked FAILED whose refund the gateway now
+            // reports in flight or processed stays the one row for it: a pending
+            // event returns it to PENDING, a success settles it.
+            const revivesFailed =
               reservation.status === "FAILED" &&
-              mappedNewStatus === "SUCCEEDED";
+              (mappedNewStatus === "PENDING" ||
+                mappedNewStatus === "SUCCEEDED");
             const claimed = await tx.refund.updateMany({
               where: {
                 id: reservation.id,
-                status: lateSuccess ? "FAILED" : "PENDING",
+                status: revivesFailed ? "FAILED" : "PENDING",
                 refundId: reservation.refundId,
               },
               data: {
@@ -1118,10 +1119,8 @@ export async function handleRefundCreated(
                 await restoreOwedOnFailedRefund(tx, reservation.id);
                 await countOwedDriveFailure(tx, reservation.id);
               }
-              if (lateSuccess) {
-                await resettleOwedOnLateSuccess(tx, reservation.id);
-              }
               if (mappedNewStatus === "SUCCEEDED") {
+                await resettleOwedOnLateSuccess(tx, reservation.id);
                 await runRefundSideEffects(
                   payment.id,
                   status,
