@@ -29,7 +29,8 @@ jest.mock("../../lib/prisma", () => ({
       groupBy: jest.fn(),
       count: jest.fn(),
     },
-    payment: { findUnique: jest.fn() },
+    payment: { findUnique: jest.fn(), findMany: jest.fn() },
+    appointmentParticipant: { findMany: jest.fn() },
     platformIncident: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
@@ -38,7 +39,7 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(),
     },
     refund: { findFirst: jest.fn(), findMany: jest.fn() },
-    systemEvent: { findMany: jest.fn() },
+    systemEvent: { findMany: jest.fn(), create: jest.fn() },
     trial: { findUnique: jest.fn(), updateMany: jest.fn() },
   },
 }));
@@ -133,7 +134,8 @@ const db = prisma as unknown as {
     "createMany" | "updateMany" | "findMany" | "groupBy" | "count",
     Fn
   >;
-  payment: Record<"findUnique", Fn>;
+  payment: Record<"findUnique" | "findMany", Fn>;
+  appointmentParticipant: Record<"findMany", Fn>;
   platformIncident: Record<
     | "findUnique"
     | "findUniqueOrThrow"
@@ -478,6 +480,81 @@ describe("the retroactive void", () => {
 
     expect(out.outcome).toBe("lost");
     expect(db.incidentRemedy.createMany).not.toHaveBeenCalled();
+  });
+
+  /** A settled plan (no longer APPROVED): a cash seat, read before a credit-funded one when asked. */
+  function settledPlan(opts: { creditSeat: boolean }) {
+    const seat = (userId: string, paymentId: string) => ({
+      userId,
+      paymentId,
+      status: "CONFIRMED",
+      createdAt: at(-120),
+      updatedAt: at(-120),
+      sessionsPurchased: 4,
+    });
+    const payment = (id: string, userId: string, paymentIntent: string) => ({
+      id,
+      userId,
+      amount: 400_000,
+      createdAt: at(-120),
+      paymentIntent,
+      refunds: [],
+      disputes: [],
+    });
+    db.payment.findMany.mockResolvedValue([
+      payment("pay-cash", "u-cash", "pay_abc"),
+      ...(opts.creditSeat
+        ? [payment("pay-credit", "u-credit", "free_abc")]
+        : []),
+    ]);
+    db.appointmentParticipant.findMany.mockResolvedValue([
+      seat("u-cash", "pay-cash"),
+      seat("u-credit", "pay-credit"),
+    ]);
+    return occ({
+      subscriptionId: "s",
+      subscription: {
+        status: "COMPLETED",
+        sessionsTotal: 4,
+        subscriptionPlan: { totalSessions: 4 },
+      },
+    });
+  }
+
+  it("stamps no cash refund when a credit-funded seat keeps the session for a human", async () => {
+    stampRefundOwed.mockResolvedValue(true);
+
+    const out = await voidForIncident(
+      settledPlan({ creditSeat: true }),
+      "inc-1",
+      NOW,
+    );
+
+    expect(out).toEqual({ outcome: "kept", created: 0 });
+    expect(stampRefundOwed).not.toHaveBeenCalled();
+    expect(db.appointmentOccurrence.updateManyAndReturn).not.toHaveBeenCalled();
+  });
+
+  it("rolls its transaction back when the void loses its compare-and-set, so no refund marker survives", async () => {
+    let rolledBack = false;
+    db.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      try {
+        return await fn(db);
+      } catch (error) {
+        rolledBack = true;
+        throw error;
+      }
+    });
+    stampRefundOwed.mockResolvedValue(true);
+    const settled = settledPlan({ creditSeat: false });
+    db.appointmentOccurrence.findMany.mockResolvedValue([]);
+    db.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([]);
+
+    const out = await voidForIncident(settled, "inc-1", NOW);
+
+    expect(stampRefundOwed).toHaveBeenCalledTimes(1);
+    expect(out).toEqual({ outcome: "lost", created: 0 });
+    expect(rolledBack).toBe(true);
   });
 
   it("skips a void that already carries a refund", async () => {

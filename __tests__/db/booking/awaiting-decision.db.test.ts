@@ -55,19 +55,21 @@ jest.mock("../../../lib/email/senders/booking", () => {
 
 /** Pauses the next ops session write inside its transaction, once. */
 const mockOpsPause: { pause: (() => Promise<void>) | null } = { pause: null };
-/** Called with each appointment a writer asks the appointment lock for. */
-const mockLockAsked: { seen: ((appointmentId: string) => void) | null } = {
+/** Called with each appointment a writer asks the appointment lock for; the lock waits for it. */
+const mockLockAsked: {
+  seen: ((appointmentId: string) => void | Promise<void>) | null;
+} = {
   seen: null,
 };
 jest.mock("../../../utils/appointmentlock", () => {
   const actual = jest.requireActual("../../../utils/appointmentlock");
   return {
     ...actual,
-    withAppointmentLock: (
+    withAppointmentLock: async (
       appointmentId: string,
       ...rest: [unknown, unknown]
     ) => {
-      mockLockAsked.seen?.(appointmentId);
+      await mockLockAsked.seen?.(appointmentId);
       return actual.withAppointmentLock(appointmentId, ...rest);
     },
   };
@@ -402,6 +404,50 @@ describe("a stalled Redis call on one booking's lock", () => {
       }).toEqual({
         stalled: "APPROVED",
         ready: "COMPLETED",
+        withinBudget: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("a stalled Redis health PING before one booking's lock", () => {
+  it("leaves that booking open and lets a later booking complete in the same run", async () => {
+    const stalled = await SEEDS.consultation();
+    const ready = await SEEDS.consultation();
+    const stalledAppointment = (
+      await prisma.appointmentOccurrence.findUniqueOrThrow({
+        where: { id: stalled.occurrenceId },
+        select: { appointmentId: true },
+      })
+    ).appointmentId;
+    let armed = false;
+    let stalledPings = 0;
+    // Outlive the health cache so the stalled booking's probe really sends a PING.
+    mockLockAsked.seen = async (id) => {
+      armed = id === stalledAppointment;
+      if (armed) await new Promise((resolve) => setTimeout(resolve, 2_100));
+    };
+    const ping = redis.ping.bind(redis);
+    const spy = jest.spyOn(redis, "ping").mockImplementation(() => {
+      if (!armed) return ping();
+      armed = false;
+      stalledPings += 1;
+      return new Promise<never>(() => undefined);
+    });
+    try {
+      const startedAt = Date.now();
+      await autoCompleteAppointments({ startedAt });
+      expect({
+        stalled: await stalled.status(),
+        ready: await ready.status(),
+        stalledPings,
+        withinBudget: Date.now() - startedAt < 16_000,
+      }).toEqual({
+        stalled: "APPROVED",
+        ready: "COMPLETED",
+        stalledPings: 1,
         withinBudget: true,
       });
     } finally {
