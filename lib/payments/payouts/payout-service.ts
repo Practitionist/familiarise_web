@@ -64,6 +64,7 @@ import {
   CronLockUnavailableError,
 } from "@/lib/cron/with-cron-lock";
 import { assertPayoutBalance } from "./balance-preflight";
+import { findRazorpayPayoutByReference } from "./payout-gateway-lookup";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
 import {
@@ -93,6 +94,10 @@ import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
 import { sumPaise } from "@/lib/payments/utils/money";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import {
   buildPayoutCompletionPostings,
   buildPayoutReversalPostings,
@@ -992,6 +997,7 @@ export async function processApprovedPayouts(
     return [];
   }
 
+  const failures = createRunFailureReporter("payments");
   try {
     const approvedPayouts = await prisma.consultantPayout.findMany({
       where: APPROVED_PAYOUT_WHERE,
@@ -1042,12 +1048,13 @@ export async function processApprovedPayouts(
       ) {
         break;
       }
-      const result = await processSinglePayout(payout);
+      const result = await processSinglePayout(payout, failures);
       results.push(result);
     }
 
     return results;
   } finally {
+    failures.flush();
     await releaseLock(PAYOUT_PROCESS_LOCK_KEY, lockToken);
   }
 }
@@ -1202,6 +1209,7 @@ export async function processPayoutById(
   );
   if (!lockToken) return null;
 
+  const failures = createRunFailureReporter("payments");
   try {
     const payout = await prisma.consultantPayout.findFirst({
       where: { id: payoutId, status: PayoutStatus.APPROVED },
@@ -1220,8 +1228,9 @@ export async function processPayoutById(
         error: preflight.reason,
       };
     }
-    return await processSinglePayout(payout);
+    return await processSinglePayout(payout, failures);
   } finally {
+    failures.flush();
     await releaseLock(PAYOUT_PROCESS_LOCK_KEY, lockToken);
   }
 }
@@ -1307,12 +1316,60 @@ type ClaimGateOutcome =
   | { kind: "refund_blocked" }
   | { kind: "shortfall"; owedPaise: number; shortfallReason: string }
   | { kind: "already_claimed" }
+  | { kind: "fy_crossed"; stagedFy: string }
   | { kind: "claimed" };
+
+/** The claim's view of the row: its amount, and the net and TDS year it staged for a first send. */
+type ClaimTarget = {
+  id: string;
+  amount: number;
+  netAmount: number | null;
+  tdsFinancialYear: string | null;
+};
+
+/**
+ * Fails an APPROVED payout before any send, clearing its staged TDS, and releases its
+ * earnings. A row carrying a gateway id is never failed here: a payout may exist for it.
+ */
+async function failUnsentConsultantPayout(
+  db: PrismaLike,
+  payoutId: string,
+  reason: string,
+): Promise<boolean> {
+  const failed = await db.consultantPayout.updateMany({
+    where: {
+      id: payoutId,
+      status: PayoutStatus.APPROVED,
+      providerPayoutId: null,
+    },
+    data: {
+      status: PayoutStatus.FAILED,
+      failureReason: reason.slice(0, 500),
+      tdsDeducted: 0,
+      netAmount: null,
+      tdsRateAppliedBps: null,
+      tdsFinancialYear: null,
+      tdsCatchUpFy: null,
+      tdsCarryPaise: 0,
+      tdsCreditPaise: 0,
+    },
+  });
+  if (failed.count === 0) return false;
+  await db.consultantEarnings.updateMany({
+    where: { payoutId, status: EarningStatus.BATCHED },
+    data: {
+      payoutId: null,
+      status: EarningStatus.READY,
+      releasedFromPayoutId: payoutId,
+    },
+  });
+  await releaseClawbackRecovery(db, payoutId);
+  return true;
+}
 
 async function runConsultantPayoutClaimGate(
   db: PrismaLike,
-  payoutId: string,
-  amount: number,
+  { id: payoutId, amount, netAmount, tdsFinancialYear }: ClaimTarget,
 ): Promise<ClaimGateOutcome> {
   const disputedEarning = await db.consultantEarnings.findFirst({
     where: {
@@ -1342,38 +1399,21 @@ async function runConsultantPayoutClaimGate(
     sumPaise(owedAgg._sum.refundedShareAmount);
   if (owedPaise < amount) {
     const shortfallReason = `SHORTFALL_BEFORE_DISBURSEMENT: earnings owe ${owedPaise}p < batched ${amount}p`;
-    const failed = await db.consultantPayout.updateMany({
-      where: { id: payoutId, status: PayoutStatus.APPROVED },
-      data: {
-        status: PayoutStatus.FAILED,
-        failureReason: shortfallReason.slice(0, 500),
-        tdsDeducted: 0,
-        netAmount: null,
-        tdsRateAppliedBps: null,
-        tdsFinancialYear: null,
-        tdsCatchUpFy: null,
-        tdsCarryPaise: 0,
-        tdsCreditPaise: 0,
-      },
-    });
-    if (failed.count > 0) {
-      await db.consultantEarnings.updateMany({
-        where: { payoutId, status: EarningStatus.BATCHED },
-        data: {
-          payoutId: null,
-          status: EarningStatus.READY,
-          releasedFromPayoutId: payoutId,
-        },
-      });
-      await releaseClawbackRecovery(db, payoutId);
-    }
+    await failUnsentConsultantPayout(db, payoutId, shortfallReason);
     return { kind: "shortfall", owedPaise, shortfallReason };
   }
 
-  // A retried payout re-enters the live catch-up index unstamped; staging restamps it.
+  // A body staged in an earlier financial year is not resent: the new year plans it afresh.
+  const stagedFy = (netAmount ?? null) === null ? null : tdsFinancialYear;
+  if (stagedFy && stagedFy !== getIndianFinancialYear()) {
+    return { kind: "fy_crossed", stagedFy };
+  }
+
+  // The staged TDS fields, catch-up included, ride through the claim unchanged;
+  // matching the read netAmount keeps a row staged since the read from being re-planned.
   const claimed = await db.consultantPayout.updateMany({
-    where: { id: payoutId, status: PayoutStatus.APPROVED },
-    data: { status: PayoutStatus.PROCESSING, tdsCatchUpFy: null },
+    where: { id: payoutId, status: PayoutStatus.APPROVED, netAmount },
+    data: { status: PayoutStatus.PROCESSING },
   });
   if (claimed.count === 0) {
     casMiss();
@@ -1382,24 +1422,147 @@ async function runConsultantPayoutClaimGate(
   return { kind: "claimed" };
 }
 
-async function claimConsultantPayoutForDisbursement(
-  payoutId: string,
-  amount: number,
-): Promise<PayoutResult | null> {
-  const claimOutcome =
-    typeof prisma.$transaction === "function"
-      ? await withSerializableRetry(
-          () =>
-            prisma.$transaction(
-              (tx) => runConsultantPayoutClaimGate(tx, payoutId, amount),
-              {
-                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-              },
-            ),
-          1,
-        )
-      : await runConsultantPayoutClaimGate(prisma, payoutId, amount);
+/** Why a staged retry cannot resend its body as staged. */
+type UnsendableCause = {
+  code: string;
+  text: string;
+  /** The run failure reporter's op, so each cause is reported once per run. */
+  op: string;
+};
 
+const CATCH_UP_TAKEN: UnsendableCause = {
+  code: "TDS_CATCH_UP_TAKEN",
+  text: "the 194-O catch-up this payout staged is held by another payout of the expert",
+  op: "payout-tds-catch-up-taken",
+};
+
+/**
+ * Settles a staged retry that cannot be resent from a fresh reference lookup, made outside
+ * any transaction: none fails it unsent, found records the payout for its webhook, else hold.
+ */
+async function settleUnsendableStagedPayout(
+  target: ClaimTarget,
+  cause: UnsendableCause,
+  failures: RunFailureReporter,
+): Promise<PayoutResult> {
+  const payoutId = target.id;
+  const lookup = await findRazorpayPayoutByReference(payoutId);
+  let outcome: "released" | "found" | "held" = "held";
+  let foundId: string | undefined;
+  let error: string;
+  if (lookup.kind === "none") {
+    const reason = `${cause.code}: ${cause.text}; RazorpayX holds no payout for it, so it failed unsent and its earnings go to the next batch`;
+    const released = await withSerializableRetry(
+      () =>
+        prisma.$transaction(
+          (tx) => failUnsentConsultantPayout(tx, payoutId, reason),
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+      1,
+    );
+    if (released) outcome = "released";
+    error = released
+      ? reason
+      : `${cause.code}: ${cause.text}; left APPROVED with its earnings linked because it carries a gateway id or moved`;
+  } else if (lookup.kind === "found") {
+    if (await recordFoundStagedPayout(target, lookup.providerPayoutId)) {
+      outcome = "found";
+      foundId = lookup.providerPayoutId;
+    }
+    error =
+      outcome === "found"
+        ? `${cause.code}: ${cause.text}; RazorpayX holds ${lookup.providerPayoutId} for it, recorded PROCESSING for its webhook and nothing sent`
+        : `${cause.code}: ${cause.text}; RazorpayX holds ${lookup.providerPayoutId} but the row moved, so nothing was recorded`;
+  } else {
+    error = `${cause.code}: ${cause.text}; reference lookup ${lookup.kind} (${lookup.detail}), so nothing changed and the next run asks again`;
+  }
+  console.warn(`[Payouts] Payout ${payoutId}: ${error}`);
+  failures.add(
+    cause.op,
+    new Error(error),
+    { payoutId, outcome },
+    {
+      level: "warning",
+    },
+  );
+  // Only a release is a failure; a row left for its webhook or the next run is a hold.
+  return {
+    payoutId,
+    success: false,
+    error,
+    ...(outcome === "released" ? {} : { skipped: true }),
+    ...(outcome === "found" ? { providerPayoutId: foundId } : {}),
+  };
+}
+
+/**
+ * Binds a payout RazorpayX already holds to its staged row and moves it PROCESSING, where the
+ * webhook and both reconcilers read it; a catch-up flag another payout holds is dropped.
+ */
+async function recordFoundStagedPayout(
+  target: ClaimTarget,
+  providerPayoutId: string,
+): Promise<boolean> {
+  const record = (dropCatchUp: boolean) =>
+    prisma.consultantPayout.updateMany({
+      where: {
+        id: target.id,
+        status: PayoutStatus.APPROVED,
+        providerPayoutId: null,
+        netAmount: target.netAmount,
+      },
+      data: {
+        status: PayoutStatus.PROCESSING,
+        providerPayoutId,
+        ...(dropCatchUp ? { tdsCatchUpFy: null } : {}),
+      },
+    });
+  try {
+    return (await record(false)).count > 0;
+  } catch (err) {
+    if (!isTdsCatchUpRace(err)) throw err;
+    return (await record(true)).count > 0;
+  }
+}
+
+async function claimConsultantPayoutForDisbursement(
+  target: ClaimTarget,
+  failures: RunFailureReporter,
+): Promise<PayoutResult | null> {
+  const { id: payoutId, amount } = target;
+  let claimOutcome: ClaimGateOutcome;
+  try {
+    claimOutcome =
+      typeof prisma.$transaction === "function"
+        ? await withSerializableRetry(
+            () =>
+              prisma.$transaction(
+                (tx) => runConsultantPayoutClaimGate(tx, target),
+                {
+                  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+                },
+              ),
+            1,
+          )
+        : await runConsultantPayoutClaimGate(prisma, target);
+  } catch (err) {
+    // Another payout took this FY's catch-up while this one waited APPROVED, so its staged
+    // body cannot be honoured; a fresh lookup decides whether it fails unsent.
+    if (!isTdsCatchUpRace(err)) throw err;
+    return settleUnsendableStagedPayout(target, CATCH_UP_TAKEN, failures);
+  }
+
+  if (claimOutcome.kind === "fy_crossed") {
+    return settleUnsendableStagedPayout(
+      target,
+      {
+        code: "TDS_FY_CROSSED",
+        text: `this payout staged its TDS in FY ${claimOutcome.stagedFy}, which has ended`,
+        op: "payout-retry-crossed-financial-year",
+      },
+      failures,
+    );
+  }
   if (claimOutcome.kind === "dispute_blocked") {
     console.warn(
       `[Payouts] Payout ${payoutId} blocked — an earning's payment has a live dispute`,
@@ -1599,36 +1762,130 @@ async function handleProcessSinglePayoutError(
   };
 }
 
-async function processSinglePayout(payout: {
-  id: string;
-  consultantProfileId: string;
-  provider: PaymentGateway;
-  amount: number;
-  currency: string;
-  method: PayoutMethod;
-  idempotencyKey: string | null;
-  payoutAccount: PayoutDestination | null;
-  consultantProfile: {
-    payoutAccounts?: PayoutDestination[];
-    user: {
-      name: string | null;
-      email: string | null;
+/** Plans the payout's TDS and stages it on the PROCESSING row; null when the row left PROCESSING first. */
+async function planAndStageConsultantTds(
+  payout: { id: string; consultantProfileId: string; amount: number },
+  consultantTaxInfo: ConsultantTdsInput["taxInfo"],
+): Promise<number | null> {
+  const financialYear = getIndianFinancialYear();
+  const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
+    payout.consultantProfileId,
+    financialYear,
+  );
+  const recoveredPaise = await clawbackRecoveredPaise(prisma, payout.id);
+  if (payout.amount - recoveredPaise <= 0) {
+    throw new Error(
+      `Payout ${payout.id} nets to ${payout.amount - recoveredPaise} paise after clawback recovery`,
+    );
+  }
+  const tdsInput: ConsultantTdsInput = {
+    consultantProfileId: payout.consultantProfileId,
+    payoutId: payout.id,
+    netSharePaise: payout.amount,
+    grossThisPayoutPaise: await earningsGrossPaise(
+      prisma,
+      { payoutId: payout.id },
+      payout.amount,
+    ),
+    capacityPaise: payout.amount - recoveredPaise,
+    financialYear,
+    cumulativeBeforePayout,
+    taxInfo: consultantTaxInfo,
+    resolvedRate: await resolveEffectiveTdsRate(prisma, "194O", new Date()),
+    allowCatchUp: true,
+  };
+  let plan = await planConsultantPayoutTds(prisma, tdsInput);
+  const netAfter = (p: ConsultantTdsPlan) =>
+    payout.amount - recoveredPaise - p.withholdPaise + p.creditPaise;
+
+  // Stage TDS fields before gateway submission so an immediate completion webhook posts the net cash leg.
+  const stage = (p: ConsultantTdsPlan) =>
+    prisma.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.PROCESSING },
+      data: {
+        tdsDeducted: p.withholdPaise,
+        netAmount: netAfter(p),
+        tdsRateAppliedBps: p.rateAppliedBps,
+        tdsFinancialYear: financialYear,
+        tdsCatchUpFy: p.catchUpFy,
+        tdsCarryPaise: p.carryPaise,
+        tdsCreditPaise: p.creditPaise,
+      },
+    });
+  let staged: Prisma.BatchPayload;
+  try {
+    staged = await stage(plan);
+  } catch (err) {
+    // The database allows one catch-up per expert per FY; the loser pays on its own gross.
+    if (!plan.catchUpFy || !isTdsCatchUpRace(err)) throw err;
+    plan = await planConsultantPayoutTds(prisma, {
+      ...tdsInput,
+      allowCatchUp: false,
+    });
+    staged = await stage(plan);
+  }
+  const payoutAmountAfterTDS = netAfter(plan);
+
+  if (plan.withholdPaise > 0 || plan.creditPaise > 0 || plan.carryPaise !== 0) {
+    console.log(
+      JSON.stringify({
+        event: "tds_deduction",
+        payoutId: payout.id,
+        consultantProfileId: payout.consultantProfileId,
+        grossAmount: tdsInput.grossThisPayoutPaise,
+        taxableAmount: plan.taxablePaise,
+        cumulativeBeforePayout,
+        tdsAmount: plan.withholdPaise,
+        tdsCreditPaise: plan.creditPaise,
+        tdsCarryPaise: plan.carryPaise,
+        tdsCatchUpFy: plan.catchUpFy,
+        tdsRateAppliedBps: plan.rateAppliedBps,
+        tdsSection: plan.tdsSection,
+        netAmount: payoutAmountAfterTDS,
+        financialYear,
+        reason: plan.reason,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+
+  return staged.count === 0 ? null : payoutAmountAfterTDS;
+}
+
+async function processSinglePayout(
+  payout: {
+    id: string;
+    consultantProfileId: string;
+    provider: PaymentGateway;
+    amount: number;
+    currency: string;
+    method: PayoutMethod;
+    idempotencyKey: string | null;
+    netAmount: number | null;
+    tdsFinancialYear: string | null;
+    payoutAccount: PayoutDestination | null;
+    consultantProfile: {
+      payoutAccounts?: PayoutDestination[];
+      user: {
+        name: string | null;
+        email: string | null;
+        [key: string]: unknown;
+      };
       [key: string]: unknown;
     };
     [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}): Promise<PayoutResult> {
+  },
+  failures: RunFailureReporter,
+): Promise<PayoutResult> {
   let providerPayoutId: string | undefined;
   let submittedToGateway = false;
   const markSubmitted = () => {
     submittedToGateway = true;
   };
-  const financialYear = getIndianFinancialYear();
   try {
     const blockedResult = await claimConsultantPayoutForDisbursement(
-      payout.id,
-      payout.amount,
+      payout,
+      failures,
     );
     if (blockedResult) {
       return blockedResult;
@@ -1651,92 +1908,23 @@ async function processSinglePayout(payout: {
       );
     }
 
-    const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
-      payout.consultantProfileId,
-      financialYear,
-    );
-    const recoveredPaise = await clawbackRecoveredPaise(prisma, payout.id);
-    if (payout.amount - recoveredPaise <= 0) {
-      throw new Error(
-        `Payout ${payout.id} nets to ${payout.amount - recoveredPaise} paise after clawback recovery`,
-      );
-    }
-    const tdsInput: ConsultantTdsInput = {
-      consultantProfileId: payout.consultantProfileId,
-      payoutId: payout.id,
-      netSharePaise: payout.amount,
-      grossThisPayoutPaise: await earningsGrossPaise(
-        prisma,
-        { payoutId: payout.id },
-        payout.amount,
-      ),
-      capacityPaise: payout.amount - recoveredPaise,
-      financialYear,
-      cumulativeBeforePayout,
-      taxInfo: consultantTaxInfo,
-      resolvedRate: await resolveEffectiveTdsRate(prisma, "194O", new Date()),
-      allowCatchUp: true,
-    };
-    let plan = await planConsultantPayoutTds(prisma, tdsInput);
-    const netAfter = (p: ConsultantTdsPlan) =>
-      payout.amount - recoveredPaise - p.withholdPaise + p.creditPaise;
+    // A row staged by an earlier attempt resends that attempt's amount under the same key,
+    // but only once a read shows it still PROCESSING with no gateway id.
+    const staged = payout.netAmount ?? null;
+    const payoutAmountAfterTDS =
+      staged === null
+        ? await planAndStageConsultantTds(payout, consultantTaxInfo)
+        : (await prisma.consultantPayout.count({
+              where: {
+                id: payout.id,
+                status: PayoutStatus.PROCESSING,
+                providerPayoutId: null,
+              },
+            })) > 0
+          ? staged
+          : null;
 
-    // Stage TDS fields before gateway submission so an immediate completion webhook posts the net cash leg.
-    const stage = (p: ConsultantTdsPlan) =>
-      prisma.consultantPayout.updateMany({
-        where: { id: payout.id, status: PayoutStatus.PROCESSING },
-        data: {
-          tdsDeducted: p.withholdPaise,
-          netAmount: netAfter(p),
-          tdsRateAppliedBps: p.rateAppliedBps,
-          tdsFinancialYear: financialYear,
-          tdsCatchUpFy: p.catchUpFy,
-          tdsCarryPaise: p.carryPaise,
-          tdsCreditPaise: p.creditPaise,
-        },
-      });
-    let staged: Prisma.BatchPayload;
-    try {
-      staged = await stage(plan);
-    } catch (err) {
-      // The database allows one catch-up per expert per FY; the loser pays on its own gross.
-      if (!plan.catchUpFy || !isTdsCatchUpRace(err)) throw err;
-      plan = await planConsultantPayoutTds(prisma, {
-        ...tdsInput,
-        allowCatchUp: false,
-      });
-      staged = await stage(plan);
-    }
-    const payoutAmountAfterTDS = netAfter(plan);
-
-    if (
-      plan.withholdPaise > 0 ||
-      plan.creditPaise > 0 ||
-      plan.carryPaise !== 0
-    ) {
-      console.log(
-        JSON.stringify({
-          event: "tds_deduction",
-          payoutId: payout.id,
-          consultantProfileId: payout.consultantProfileId,
-          grossAmount: tdsInput.grossThisPayoutPaise,
-          taxableAmount: plan.taxablePaise,
-          cumulativeBeforePayout,
-          tdsAmount: plan.withholdPaise,
-          tdsCreditPaise: plan.creditPaise,
-          tdsCarryPaise: plan.carryPaise,
-          tdsCatchUpFy: plan.catchUpFy,
-          tdsRateAppliedBps: plan.rateAppliedBps,
-          tdsSection: plan.tdsSection,
-          netAmount: payoutAmountAfterTDS,
-          financialYear,
-          reason: plan.reason,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-
-    if (staged.count === 0) {
+    if (payoutAmountAfterTDS === null) {
       console.warn(
         `[Payouts] Payout ${payout.id} left PROCESSING before submission — skipping`,
       );

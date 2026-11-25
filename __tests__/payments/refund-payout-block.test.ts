@@ -340,7 +340,7 @@ describe("consultant rail — payout.amount vs what its earnings still owe", () 
 
     expect(gatewayFetch).not.toHaveBeenCalled();
     expect(mocks.consultantPayout.updateMany).toHaveBeenCalledWith({
-      where: { id: "po_1", status: "APPROVED" },
+      where: { id: "po_1", status: "APPROVED", providerPayoutId: null },
       data: expect.objectContaining({
         status: "FAILED",
         failureReason: expect.stringContaining(
