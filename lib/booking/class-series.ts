@@ -143,6 +143,33 @@ export function seriesCancelRefundPaise(
   return left > BigInt(0) ? left : BigInt(0);
 }
 
+/**
+ * What a seat released at `releasedAt` is owed for what it was not delivered:
+ * its amount less one unit per held session that had ended by then. A session
+ * under way at the release, and any the class held afterwards, is not
+ * delivered. The unit is read at `now`, when every placed session is on record.
+ */
+export function releasedSeatRefundPaise(args: {
+  N: number;
+  amountPaise: bigint | number;
+  joinedAt: Date;
+  occurrences: LedgerOccurrence[];
+  sessionsPurchased?: number | null;
+  releasedAt: Date;
+  now: Date;
+}): { refundPaise: bigint; deliveredHeld: number } {
+  const { unitPaise, heldCount } = seatLedgerFrom(args);
+  const deliveredHeld = Math.min(
+    seatLedgerFrom({ ...args, now: args.releasedAt }).deliveredHeld,
+    heldCount,
+  );
+  const left = BigInt(args.amountPaise) - unitPaise * BigInt(deliveredHeld);
+  return {
+    refundPaise: left > BigInt(0) ? left : BigInt(0),
+    deliveredHeld,
+  };
+}
+
 /** The key prefix of the refund a completed class owes a seat for sessions it sold but never placed. */
 export const CLASS_END_REFUND_KEY_PREFIX = "class-end:";
 
