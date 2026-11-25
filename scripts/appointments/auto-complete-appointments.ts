@@ -368,6 +368,7 @@ async function completeUnderLock(
     await withAppointmentLock(appointmentId, run, {
       ...SWEEP_LOCK_RETRY_CONFIG,
       callTimeoutMs,
+      deadlineAt: deadline.until,
     });
     return true;
   } catch (error) {
