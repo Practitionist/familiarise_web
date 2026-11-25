@@ -240,7 +240,7 @@ function session(startsInHours: number, ordinal = 1) {
     ordinal,
     startsAt,
     endsAt: new Date(startsAt.getTime() + HOUR_MS),
-    completionStatus: "PENDING",
+    completionStatus: "SCHEDULED",
   };
 }
 
