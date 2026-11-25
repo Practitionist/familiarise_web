@@ -985,6 +985,46 @@ describe("bounded work resumes from the job's one continuation record", () => {
     });
   });
 
+  it("a first walk cut partway through a day resumes that day, even after a manual run stored a newer line", async () => {
+    mockPagesByDay.set("2026-10-18", [
+      Array.from({ length: 1000 }, (_, i) =>
+        transfer(`trf_first_${i}`, "2026-10-18", "setl_first"),
+      ),
+      [transfer("trf_tail", "2026-10-18", "setl_first")],
+    ]);
+    mockDeadline.afterReports = 1;
+
+    const first = await run();
+
+    expect(continuation(first)).toMatchObject({
+      read: null,
+      day: { key: "2026-10-18", skip: 1000 },
+    });
+
+    carryOn(first);
+    mockDeadline.afterReports = Infinity;
+    const nextMorning = new Date("2026-10-21T02:30:00Z");
+    mockPagesByDay.set("2026-10-20", [
+      [transfer("trf_newer", "2026-10-20", "setl_newer")],
+    ]);
+    await runReconcileGatewaySettlements(Date.now(), nextMorning, {
+      date: "2026-10-20",
+    });
+    mockReportCalls.length = 0;
+
+    const second = await runReconcileGatewaySettlements(
+      Date.now(),
+      nextMorning,
+    );
+
+    expect(mockReportCalls[0]).toEqual({ day: "2026-10-18", skip: 1000 });
+    expect(mockLines.some((l) => l.entityId === "trf_tail")).toBe(true);
+    expect(continuation(second)).toMatchObject({
+      read: "2026-10-20",
+      day: null,
+    });
+  });
+
   it("the re-match reaches every unresolved line within a bounded number of runs", async () => {
     mockCheckpoint.value = readThrough("2026-10-19");
     // Stored newest first, so only a query ordered by id walks them in cursor order.

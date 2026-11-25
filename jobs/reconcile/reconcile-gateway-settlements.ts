@@ -717,15 +717,17 @@ async function readDay(
 }
 
 /**
- * The first day not yet read: the day after the last day read in full, or with
- * no record the day of the last stored line, never later than the day before
- * yesterday.
+ * The first day not yet read: the day after the last day read in full; with
+ * none read in full, the day a read was cut partway, else the day of the last
+ * stored line. Never later than the day before yesterday.
  */
 async function firstUnreadDay(
   read: IstDay | null,
+  partial: IstDay | null,
   dayBefore: IstDay,
 ): Promise<IstDay> {
   if (read) return istDayFrom(read.end);
+  if (partial && partial.start <= dayBefore.start) return partial;
   const last = await prisma.gatewaySettlementLine.findFirst({
     where: { provider: "RAZORPAY", settledAt: { not: null } },
     orderBy: { settledAt: "desc" },
@@ -1051,7 +1053,11 @@ async function reconcileFromContinuation(
   const yesterday = istDayOf(new Date(now.getTime() - DAY_MS));
   const dayBefore = istDayFrom(new Date(yesterday.start.getTime() - DAY_MS));
   const readBefore = state.read ? dayFromKey(state.read) : null;
-  const firstUnread = await firstUnreadDay(readBefore, dayBefore);
+  const firstUnread = await firstUnreadDay(
+    readBefore,
+    state.day ? dayFromKey(state.day.key) : null,
+    dayBefore,
+  );
 
   // A date whose report throws is noted and never ends the run.
   const readSafely = async (day: IstDay, skip: number) => {
