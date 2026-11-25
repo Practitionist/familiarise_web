@@ -3,7 +3,8 @@
  * Postgres: a batch leaves a READY earning whose payment carries an owed-refund
  * marker and pays the expert's other earning; a marker that lands on an earning
  * already batched blocks the claim before anything is sent; once the markers
- * clear, a later batch picks the earning up. An earning the heal sweep writes
+ * clear, a later batch picks the earning up. Stamping a marker cancels the
+ * open payout that batched the earning. An earning the heal sweep writes
  * after its payment's dispute opened stays PENDING past its hold and out of
  * the batch until the dispute is decided.
  */
@@ -155,6 +156,53 @@ it("a stamped marker keeps a READY earning out of the batch and blocks the claim
   const second = await createPayoutBatch([cp]);
   expect(second).toMatchObject({ minted: 1, failed: 0 });
   expect((await earningOf(owed.earningId)).status).toBe("BATCHED");
+});
+
+it("a marker stamped on an earning already in an open payout cancels the payout, and the next batch pays the rest", async () => {
+  const { host, owed, clean } = await seedTwoReadyEarnings();
+  const cp = host.consultantProfileId;
+  const first = await createPayoutBatch([cp]);
+  expect(first).toMatchObject({ minted: 1, failed: 0 });
+  const open = await prisma.consultantPayout.findFirstOrThrow({
+    where: { consultantProfileId: cp, batchId: first.batchId },
+    select: { id: true, amount: true },
+  });
+  expect(open.amount).toBe(2 * SHARE);
+
+  await prisma.$transaction((tx) =>
+    stampRefundOwed(tx, {
+      paymentId: owed.paymentId,
+      amountPaise: 15_000,
+      key: `dbtier-owed:${owed.paymentId}`,
+      reason: "database tier",
+    }),
+  );
+
+  expect(
+    await prisma.consultantPayout.findUniqueOrThrow({
+      where: { id: open.id },
+      select: { status: true },
+    }),
+  ).toEqual({ status: "CANCELLED" });
+  for (const id of [owed.earningId, clean.earningId]) {
+    expect(await earningOf(id)).toEqual({ status: "READY", payoutId: null });
+  }
+
+  const second = await createPayoutBatch([cp]);
+  expect(second).toMatchObject({ minted: 1, failed: 0 });
+  const next = await prisma.consultantPayout.findFirstOrThrow({
+    where: { consultantProfileId: cp, batchId: second.batchId },
+    select: { id: true, amount: true },
+  });
+  expect(next.amount).toBe(SHARE);
+  expect(await earningOf(owed.earningId)).toEqual({
+    status: "READY",
+    payoutId: null,
+  });
+  expect(await earningOf(clean.earningId)).toEqual({
+    status: "BATCHED",
+    payoutId: next.id,
+  });
 });
 
 it("an earning written after its payment's dispute opened is neither released nor batched until the dispute is decided", async () => {
