@@ -944,3 +944,87 @@ describe("bounded work resumes from the job's one continuation record", () => {
     });
   });
 });
+
+describe("a bound that stops a run is never silent", () => {
+  // 2026-10-20 08:00 IST.
+  const now = new Date("2026-10-20T02:30:00Z");
+  const manual = (date: string) =>
+    runReconcileGatewaySettlements(Date.now(), now, { date });
+
+  it("a manual run of a day past the page bound answers incomplete with the date and the rows reached", async () => {
+    mockPagesByDay.set(
+      "2026-10-5",
+      Array.from({ length: 20 }, (_, page) =>
+        Array.from({ length: 1000 }, (_, i) => ({
+          entity_id: `trf_m_${page}_${i}`,
+          type: "transfer",
+          amount: 1,
+          credit: 1,
+          settlement_id: "setl_big",
+          settled_at: settledOn("2026-10-05"),
+        })),
+      ),
+    );
+    mockSettlements.set("setl_big", 20_000);
+
+    const result = await manual("2026-10-05");
+
+    expect(result).toMatchObject({
+      inserted: 20_000,
+      settlementsPosted: 0,
+      done: false,
+      stoppedShort: [
+        {
+          bound: "report-pages",
+          stage: "report",
+          date: "2026-10-05",
+          reached: 20_000,
+        },
+      ],
+    });
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-gateway-settlements:stopped-short",
+        ids: ["report-pages:2026-10-05"],
+        message: expect.stringContaining(
+          "report-pages on 2026-10-05 after 20000 report rows",
+        ),
+      }),
+    );
+  });
+
+  it("a manual run that spends its settlement reads answers incomplete with the last settlement examined", async () => {
+    mockPagesByDay.set("2026-10-5", [
+      Array.from({ length: 60 }, (_, i) => ({
+        entity_id: `trf_s_${i}`,
+        type: "transfer",
+        amount: 1_000,
+        credit: 1_000,
+        settlement_id: `setl_m${String(i).padStart(2, "0")}`,
+        settled_at: settledOn("2026-10-05"),
+      })),
+    ]);
+
+    const result = await manual("2026-10-05");
+
+    expect(result).toMatchObject({
+      settlementsHeld: 50,
+      done: false,
+      stoppedShort: [
+        {
+          bound: "settlement-reads",
+          stage: "settlements",
+          date: "2026-10-05",
+          reached: 50,
+          after: "setl_m49",
+        },
+      ],
+    });
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-gateway-settlements:stopped-short",
+        ids: ["settlement-reads:2026-10-05"],
+      }),
+    );
+  });
+});

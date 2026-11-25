@@ -128,6 +128,20 @@ async function readContinuation(): Promise<Continuation> {
   }
 }
 
+/**
+ * A bound that stopped a report read or the settlement examination before its
+ * end. `reached` is the report rows read for the day, or the settlement
+ * entities examined in this run, with `after` the last one examined.
+ */
+interface StoppedShort {
+  bound: "report-pages" | "settlement-reads" | "deadline";
+  stage: "report" | "settlements";
+  /** The IST day being read or examined; absent for the scheduled settlement cohort. */
+  date?: string;
+  reached: number;
+  after?: string | null;
+}
+
 interface SettlementReconResult {
   success: true;
   skipped?: ConfigSkip;
@@ -145,6 +159,8 @@ interface SettlementReconResult {
   postedMismatches: number;
   /** IST days up to yesterday still unread after this run. */
   daysBehind: number;
+  /** Every bound that cut this run short; empty when each read and the examination reached its end. */
+  stoppedShort: StoppedShort[];
   /** True when every day up to yesterday is read and no settlement was left unexamined. */
   done: boolean;
   /** The continuation record as JSON; absent on a manual run of one date. */
@@ -577,7 +593,8 @@ async function storePage(
 
 /**
  * Reads a day's pages from `skip` until a short page. A read cut by the
- * deadline or the page bound says where the next run resumes.
+ * deadline or the page bound is noted on the result and says where the next
+ * run resumes.
  */
 async function readDay(
   client: RazorpayClient,
@@ -587,8 +604,17 @@ async function readDay(
   result: SettlementReconResult,
 ): Promise<{ complete: boolean; nextSkip: number }> {
   let offset = skip;
+  const cutBy = (bound: "report-pages" | "deadline") => {
+    result.stoppedShort.push({
+      bound,
+      stage: "report",
+      date: dayKey(day),
+      reached: offset,
+    });
+    return { complete: false, nextSkip: offset };
+  };
   for (let page = 0; page < MAX_PAGES_PER_DAY; page++) {
-    if (isPastDeadline()) return { complete: false, nextSkip: offset };
+    if (isPastDeadline()) return cutBy("deadline");
     const { rows, fetched, rejected } = await fetchReconPage(
       client,
       day,
@@ -599,12 +625,12 @@ async function readDay(
     if (rows.length > 0) {
       const stored = await storePage(rows, isPastDeadline, result);
       result.inserted += stored.inserted;
-      if (!stored.complete) return { complete: false, nextSkip: offset };
+      if (!stored.complete) return cutBy("deadline");
     }
     if (fetched < PAGE_SIZE) return { complete: true, nextSkip: 0 };
     offset += PAGE_SIZE;
   }
-  return { complete: false, nextSkip: offset };
+  return cutBy("report-pages");
 }
 
 /**
@@ -733,7 +759,8 @@ async function fetchSettlementAmount(
  * is held. Unposted settlements are examined in id order after `after`, a
  * bounded number a run. A journal already posted is only compared with its
  * lines. Returns whether the end of the order was reached, and otherwise the
- * settlement to go on after.
+ * settlement to go on after; a pass cut short is noted on the result under
+ * `date`.
  */
 async function postSettlementJournals(
   client: RazorpayClient,
@@ -742,6 +769,7 @@ async function postSettlementJournals(
   isPastDeadline: () => boolean,
   result: SettlementReconResult,
   findings: SettlementFindings,
+  date?: string,
 ): Promise<{ finished: boolean; after: string | null }> {
   const groups = await prisma.gatewaySettlementLine.groupBy({
     by: ["settlementId"],
@@ -790,7 +818,15 @@ async function postSettlementJournals(
     }
     if (net === 0) continue;
     if (after !== null && settlementId <= after) continue;
-    if (fetched >= MAX_SETTLEMENTS_PER_RUN || isPastDeadline()) {
+    const capped = fetched >= MAX_SETTLEMENTS_PER_RUN;
+    if (capped || isPastDeadline()) {
+      result.stoppedShort.push({
+        bound: capped ? "settlement-reads" : "deadline",
+        stage: "settlements",
+        ...(date === undefined ? {} : { date }),
+        reached: fetched,
+        after: last,
+      });
       return { finished: false, after: last };
     }
     fetched += 1;
@@ -842,6 +878,7 @@ function emptyResult(): SettlementReconResult {
     settlementsHeld: 0,
     postedMismatches: 0,
     daysBehind: 0,
+    stoppedShort: [],
     done: false,
     byStatus: { MATCHED: 0, AMOUNT_MISMATCH: 0, FEE_MISMATCH: 0, UNMATCHED: 0 },
   };
@@ -852,7 +889,12 @@ interface RunOutput {
   findings: SettlementFindings;
 }
 
-/** A manual run of one IST day: reads it from its first page and examines its settlements. */
+/**
+ * A manual run of one IST day: reads it from its first page and examines its
+ * settlements from the first. It keeps no position, so a day past the page
+ * bound or the settlement-read bound answers `done: false` with the bound and
+ * how far it got, and repeating the run does not get further.
+ */
 async function reconcileOneDay(
   client: RazorpayClient,
   day: IstDay,
@@ -861,6 +903,14 @@ async function reconcileOneDay(
   const result = emptyResult();
   const findings: SettlementFindings = { held: [], postedMismatches: [] };
   const read = await readDay(client, day, 0, isPastDeadline, result);
+  if (read.complete && isPastDeadline()) {
+    result.stoppedShort.push({
+      bound: "deadline",
+      stage: "settlements",
+      date: dayKey(day),
+      reached: 0,
+    });
+  }
   if (isPastDeadline()) return { result, findings };
   await rematchUnresolved(null, result);
   if (read.complete) {
@@ -871,6 +921,7 @@ async function reconcileOneDay(
       isPastDeadline,
       result,
       findings,
+      dayKey(day),
     );
     result.done = examined.finished;
   }
@@ -1011,11 +1062,25 @@ function reportMismatches(result: SettlementReconResult): void {
   });
 }
 
-/** Once per run: rejected rows, settlements held back, and posted journals that differ from their lines. */
+/** Once per run: rejected rows, bounds that cut the run, settlements held back, and posted journals that differ from their lines. */
 async function reportSettlementFindings(
   result: SettlementReconResult,
   findings: SettlementFindings,
 ): Promise<void> {
+  // The deadline is the run's time budget and resumes by itself; a count bound is recorded.
+  const bounded = result.stoppedShort.filter((s) => s.bound !== "deadline");
+  if (bounded.length > 0) {
+    await reportStandingFinding({
+      key: `${RECONCILE_GATEWAY_SETTLEMENTS_JOB}:stopped-short`,
+      ids: bounded.map((s) => `${s.bound}:${s.date ?? "cohort"}`),
+      message: `Razorpay settlement reconciliation stopped at a bound: ${bounded
+        .map(
+          (s) =>
+            `${s.bound}${s.date ? ` on ${s.date}` : ""} after ${s.reached} ${s.stage === "report" ? "report rows" : "settlements"}`,
+        )
+        .join("; ")}`,
+    });
+  }
   if (result.rejectedRows > 0) {
     reportSentryMessage(
       `Razorpay settlement report: ${result.rejectedRows} row(s) failed validation and were not stored`,
