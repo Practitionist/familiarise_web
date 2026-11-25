@@ -11,6 +11,15 @@ import {
 
 export type WebhookClaim = { claimedAt: Date | null };
 
+/** What storing a delivery answered: whether the caller may run it, and under which claim. */
+export type WebhookReceipt = {
+  isNew: boolean;
+  eventRecordId?: string;
+  claim?: WebhookClaim;
+  /** When a reclaimed row was first stored; absent on the delivery that stores it. */
+  receivedAt?: Date;
+};
+
 export function toInputJson(value: unknown): Prisma.InputJsonValue {
   if (
     typeof value === "string" ||
@@ -99,7 +108,7 @@ async function resolveExistingWebhookEvent(
   },
   eventId: string,
   payload: unknown,
-): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
+): Promise<WebhookReceipt> {
   if (existing.processed && existing.error === null) {
     console.log(
       `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
@@ -144,6 +153,7 @@ async function resolveExistingWebhookEvent(
       isNew: true,
       eventRecordId: existing.id,
       claim: { claimedAt },
+      receivedAt: existing.receivedAt,
     };
   }
 
@@ -179,6 +189,7 @@ async function resolveExistingWebhookEvent(
       isNew: true,
       eventRecordId: existing.id,
       claim: { claimedAt },
+      receivedAt: existing.receivedAt,
     };
   }
 
@@ -198,7 +209,7 @@ export async function logWebhookEvent(
   eventType: string,
   payload: unknown,
   signature?: string,
-): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
+): Promise<WebhookReceipt> {
   try {
     const existing = await prisma.webhookEvent.findUnique({
       where: { eventId },

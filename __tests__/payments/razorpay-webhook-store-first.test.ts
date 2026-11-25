@@ -218,6 +218,45 @@ describe("the route stores a signed event before it reads its shape", () => {
   });
 });
 
+describe("a redelivery that reclaims a stored event", () => {
+  const unreadable = { event: "payment.captured", payload: { payment: 7 } };
+
+  it("counts the money event's retry window from when the row was first stored", async () => {
+    logWebhookEvent.mockResolvedValue({
+      isNew: true,
+      claim: CLAIM,
+      receivedAt: new Date(Date.now() - 25 * 3_600_000),
+    });
+
+    await POST(signed(JSON.stringify(unreadable)));
+    await afterCallbacks[0]();
+
+    expect(markWebhookEventProcessed).toHaveBeenCalledWith(
+      expect.stringMatching(/^payment\.captured:/),
+      expect.stringMatching(/^permanent: schema mismatch: payment\.captured/),
+      CLAIM,
+    );
+  });
+
+  it("stays quiet about a shape it already reported while the window is open", async () => {
+    logWebhookEvent.mockResolvedValue({
+      isNew: true,
+      claim: CLAIM,
+      receivedAt: new Date(Date.now() - 3_600_000),
+    });
+
+    await POST(signed(JSON.stringify(unreadable)));
+    await afterCallbacks[0]();
+
+    expect(markWebhookEventProcessed).toHaveBeenCalledWith(
+      expect.stringMatching(/^payment\.captured:/),
+      expect.stringMatching(/^schema mismatch: payment\.captured/),
+      CLAIM,
+    );
+    expect(reportSentryError).not.toHaveBeenCalled();
+  });
+});
+
 describe("dispatch parses each event's entity itself", () => {
   it("imports a refund whose speed is a value the app has never seen", async () => {
     await processRazorpayWebhookEvent(

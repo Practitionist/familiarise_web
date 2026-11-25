@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
   const eventId = `${eventType}:${entityId}:${razorpayEventId}`;
 
   // Idempotency check (synchronous — must complete before returning 200)
-  const { isNew, claim } = await logWebhookEvent(
+  const { isNew, claim, receivedAt } = await logWebhookEvent(
     "razorpay",
     eventId,
     eventType,
@@ -181,7 +181,13 @@ export async function POST(req: NextRequest) {
 
   // Return 200 immediately — process the event asynchronously
   after(async () => {
-    await processRazorpayWebhookEvent(rawEvent, eventType, eventId, claim);
+    await processRazorpayWebhookEvent(
+      rawEvent,
+      eventType,
+      eventId,
+      claim,
+      receivedAt,
+    );
   });
 
   return NextResponse.json({ status: "ok" });
