@@ -25,6 +25,7 @@ jest.mock("../../lib/prisma", () => ({
         classId: null,
         subscriptionId: null,
         occurrences: [],
+        _count: { occurrences: 0 },
         payment: [],
         webinar: { webinarPlan: { price: mockConduct.price } },
         class: null,

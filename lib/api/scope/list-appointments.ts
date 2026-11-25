@@ -28,6 +28,8 @@ import { readOrgOwnerUserIds } from "@/lib/enterprise/related-party";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
+import { parkedSessionCounts } from "@/lib/booking/awaiting-decision";
+import { planEndedOf } from "@/lib/appointments/list-status-facts";
 
 /** Live sessions a list row carries; the rest are counted, not loaded. */
 const LIST_UPCOMING_OCCURRENCES = 3;
@@ -315,9 +317,14 @@ export async function listAppointmentsScoped(
           select: {
             status: true,
             bookingSource: true,
+            // The plan end, read as every other surface reads it.
+            planEndsAt: true,
+            schedulingPeriodStartsAt: true,
+            schedulingTimezone: true,
             subscriptionPlan: {
               select: {
                 title: true,
+                durationInMonths: true,
                 consultantProfile: {
                   select: {
                     user: { select: { id: true, name: true, email: true } },
@@ -386,10 +393,15 @@ export async function listAppointmentsScoped(
     }),
   ]);
 
-  const owners =
+  const [owners, parked] = await Promise.all([
     params.scope.kind === "org"
-      ? await readOrgOwnerUserIds(prisma, params.scope.orgId)
-      : null;
+      ? readOrgOwnerUserIds(prisma, params.scope.orgId)
+      : null,
+    parkedSessionCounts(
+      prisma,
+      items.map((a) => a.id),
+    ),
+  ]);
   const pastIds = items
     .filter((a) => a.occurrences.length === 0 && a._count.occurrences > 0)
     .map((a) => a.id);
@@ -421,6 +433,8 @@ export async function listAppointmentsScoped(
       return {
         ...a,
         occurrences: latestById.get(a.id) ?? a.occurrences,
+        parkedSessions: parked.get(a.id) ?? 0,
+        planEnded: planEndedOf(a.subscription, now),
         // Org lists flag sessions an OWNER of this org delivered on its money
         // (the `payment` include is already this org's funded rails only).
         relatedParty:

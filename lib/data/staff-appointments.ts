@@ -28,6 +28,9 @@ import type {
   StaffAppointmentType,
   STAFF_ISSUE_TYPES,
 } from "@/lib/data/staff-appointments-schema";
+import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
+import { planEndedOf } from "@/lib/appointments/list-status-facts";
+import { AWAITING_HUMAN } from "@/lib/booking/misses";
 
 type StaffIssueType = (typeof STAFF_ISSUE_TYPES)[number];
 
@@ -103,13 +106,24 @@ export function buildStatusWhere(
     };
   }
   if (status === "completed") {
+    // A stored COMPLETED booking with a parked session reads "Waiting on a decision"; a converted trial is done.
     return {
       OR: [
-        { consultation: { status: "COMPLETED" } },
-        { subscription: { status: "COMPLETED" } },
-        { webinar: { status: "COMPLETED" } },
-        { class: { status: "COMPLETED" } },
-        { trial: { status: { in: ["COMPLETED", "CONVERTED"] } } },
+        { trial: { status: "CONVERTED" } },
+        {
+          AND: [
+            { occurrences: { none: AWAITING_HUMAN } },
+            {
+              OR: [
+                { consultation: { status: "COMPLETED" } },
+                { subscription: { status: "COMPLETED" } },
+                { webinar: { status: "COMPLETED" } },
+                { class: { status: "COMPLETED" } },
+                { trial: { status: "COMPLETED" } },
+              ],
+            },
+          ],
+        },
       ],
     };
   }
@@ -309,6 +323,13 @@ export async function getStaffAppointments(
         id: true,
         createdAt: true,
         ...APPOINTMENT_HEADLINE_SELECT,
+        // A session parked for ops: the row reads "Waiting on a decision".
+        _count: {
+          select: {
+            ...APPOINTMENT_HEADLINE_SELECT._count.select,
+            ...PARKED_SESSIONS_COUNT,
+          },
+        },
         // #1486 / #1527 — read-only: a reschedule still waiting on a party.
         rescheduleRequests: {
           where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
@@ -458,6 +479,8 @@ export async function getStaffAppointments(
       bookingSource: headline.bookingSource,
       free,
       removed,
+      parkedSessions: row._count.occurrences,
+      planEnded: planEndedOf(apt.subscription, now) ?? false,
       hasIssue,
       issueType,
       payment: payment

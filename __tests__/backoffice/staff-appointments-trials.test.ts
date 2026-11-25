@@ -54,7 +54,7 @@ import {
 const base = {
   createdAt: new Date("2026-11-11T17:19:08Z"),
   rescheduleRequests: [],
-  _count: { participants: 0 },
+  _count: { participants: 0, occurrences: 0 },
   consultation: null,
   subscription: null,
   webinar: null,
@@ -117,9 +117,11 @@ it("gives every tab a trial arm", () => {
   expect(buildStatusWhere("scheduled")?.OR).toContainEqual({
     trial: { status: "SCHEDULED" },
   });
-  expect(buildStatusWhere("completed")?.OR).toContainEqual({
-    trial: { status: { in: ["COMPLETED", "CONVERTED"] } },
-  });
+  const completed = buildStatusWhere("completed")?.OR ?? [];
+  expect(completed).toContainEqual({ trial: { status: "CONVERTED" } });
+  expect(JSON.stringify(completed)).toContain(
+    JSON.stringify({ trial: { status: "COMPLETED" } }),
+  );
   const issue = buildStatusWhere("issue")?.OR ?? [];
   expect(issue).toContainEqual({ trial: { status: "CANCELLED" } });
   expect(issue).toContainEqual({

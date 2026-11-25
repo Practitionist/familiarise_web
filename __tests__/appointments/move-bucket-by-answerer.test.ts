@@ -142,6 +142,7 @@ describe("a per-session move on a subscription", () => {
       completionStatus,
       meetingEndedAt: null,
       meetingEndedReason: null,
+      parked: false,
     }) satisfies OccurrenceVM;
   // A 24-session plan: one session released for a move, the other 23 confirmed.
   const occurrences = [

@@ -75,6 +75,7 @@ const row = (
   occurrences: [],
   statusHistory: [],
   participants: [],
+  _count: { occurrences: 0 },
   ...over.appointment,
 });
 
