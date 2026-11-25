@@ -19,12 +19,13 @@ type CheckoutInput = z.infer<typeof checkoutSchema>;
 
 /** What became of a paid checkout, read from its own rows. */
 export type PaidReplayOutcome =
-  "booked" | "refunded" | "being_refunded" | "needs_support";
+  "booked" | "refunded" | "being_refunded" | "needs_support" | "ended";
 
 /**
  * The outcome of a SUCCEEDED payment. A capture-race marker speaks first (it
  * means the money funded no booking), then a full refund, then the buyer's
  * live seat; a refund on its way or already paid explains a booking that ended.
+ * A zero-amount payment took no money, so its ended booking owes nothing back.
  */
 function paidReplayOutcome(row: {
   amount: number;
@@ -51,6 +52,7 @@ function paidReplayOutcome(row: {
     row.appointment.deletedAt === null &&
     row.appointment.participants.length > 0;
   if (live) return "booked";
+  if (row.amount <= 0) return "ended";
   if (
     row.refundOwedKey !== null ||
     row.refunds.some((r) => r.status === "PENDING")
@@ -74,6 +76,11 @@ const UNBOOKED_REPLAY: Record<
     errorType: ErrorTypes.CHECKOUT_REFUND_IN_PROGRESS,
     error:
       "A refund for this payment is on its way, so this checkout is closed. You do not need to pay again; refresh the page to start a new booking.",
+  },
+  ended: {
+    errorType: ErrorTypes.CHECKOUT_BOOKING_ENDED,
+    error:
+      "This booking has ended and nothing was charged. Refresh the page to book again.",
   },
   needs_support: {
     errorType: ErrorTypes.CHECKOUT_NEEDS_SUPPORT,

@@ -283,6 +283,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "We need to look at this payment",
     description: null,
   },
+  [ErrorTypes.CHECKOUT_BOOKING_ENDED]: {
+    title: "This booking has ended",
+    description: null,
+  },
   [ErrorTypes.DISCOUNT_NOT_APPLICABLE]: {
     title: "This discount code isn't valid here",
     description: null,

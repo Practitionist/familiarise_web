@@ -142,6 +142,18 @@ it.each([
     "needs_support",
     "CHECKOUT_NEEDS_SUPPORT",
   ],
+  [
+    "a free seat its holder has left",
+    { amount: 0, ...endedBooking },
+    "ended",
+    "CHECKOUT_BOOKING_ENDED",
+  ],
+  [
+    "a free booking that was removed",
+    { amount: 0, ...noBooking },
+    "ended",
+    "CHECKOUT_BOOKING_ENDED",
+  ],
 ])(
   "%s is answered 409 with its outcome",
   async (_label, over, outcome, errorType) => {
@@ -165,4 +177,21 @@ it("a live booking with a partial refund is still booked", async () => {
 
   expect(status).toBe(200);
   expect(body.outcome).toBe("booked");
+});
+
+it("says a charge was taken only when one was", async () => {
+  const charged = await replay(succeeded(noBooking));
+  const free = await replay(succeeded({ amount: 0, ...endedBooking }));
+
+  expect(charged.body.error).toMatch(/You were charged/);
+  expect(free.body.error).toBe(
+    "This booking has ended and nothing was charged. Refresh the page to book again.",
+  );
+});
+
+it("a free seat that is still live is booked", async () => {
+  const { status, body } = await replay(succeeded({ amount: 0 }));
+
+  expect(status).toBe(200);
+  expect(body).toMatchObject({ outcome: "booked", skipPayment: true });
 });

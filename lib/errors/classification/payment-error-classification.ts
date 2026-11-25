@@ -138,6 +138,7 @@ export const ErrorTypes = {
   CHECKOUT_REFUNDED: "CHECKOUT_REFUNDED",
   CHECKOUT_REFUND_IN_PROGRESS: "CHECKOUT_REFUND_IN_PROGRESS",
   CHECKOUT_NEEDS_SUPPORT: "CHECKOUT_NEEDS_SUPPORT",
+  CHECKOUT_BOOKING_ENDED: "CHECKOUT_BOOKING_ENDED",
   // A platform code on an order whose take cannot fund promo (fee waiver, host org).
   DISCOUNT_NOT_APPLICABLE: "DISCOUNT_NOT_APPLICABLE_ERROR",
   // Organisation-funded rails while the platform is not GST-registered.
