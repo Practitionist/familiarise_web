@@ -46,6 +46,10 @@ const DAY_MS = 24 * 60 * 60_000;
 const MAX_DAYS_PER_RUN = 10;
 /** Pages of one day a run reads; a larger day resumes at the next page on the next run. */
 const MAX_PAGES_PER_DAY = 20;
+/** Held settlements about to leave the lookback, or beyond it, that are kept eligible by id. */
+const MAX_HELD_RETRIES = 100;
+/** A held settlement this close to the lookback's far edge is kept by id before it ages out. */
+const HELD_RETRY_MARGIN_DAYS = 2;
 /** Dates whose report failed and which the walk passed over; one is retried each run. */
 const MAX_FAILED_DAYS = 5;
 /** One report page gets this long, so a date that times out cannot spend the run's whole time budget. */
@@ -99,6 +103,8 @@ const dayKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * `settle.from` is the earliest day read outside the lookback that no full pass
  * has covered yet; `stale` says such a day was read while a pass was under way.
  * `failedDays` are days at or before `read` whose report could not be read.
+ * `settle.held` are held settlements kept in the cohort by id once their lines
+ * are at or beyond the lookback's far edge, until they are posted.
  */
 const continuationSchema = z.object({
   read: dayKeySchema.nullable(),
@@ -110,6 +116,7 @@ const continuationSchema = z.object({
     from: dayKeySchema.nullable(),
     after: z.string().nullable(),
     stale: z.boolean(),
+    held: z.array(z.string()).max(MAX_HELD_RETRIES).default([]),
   }),
   failedDays: z.array(dayKeySchema).max(MAX_FAILED_DAYS).default([]),
 });
@@ -119,7 +126,7 @@ const freshContinuation = (): Continuation => ({
   read: null,
   day: null,
   rematchAfter: null,
-  settle: { from: null, after: null, stale: false },
+  settle: { from: null, after: null, stale: false, held: [] },
   failedDays: [],
 });
 
@@ -141,7 +148,12 @@ async function readContinuation(): Promise<Continuation> {
  * entities examined in this run, with `after` the last one examined.
  */
 interface StoppedShort {
-  bound: "report-pages" | "settlement-reads" | "failed-days" | "deadline";
+  bound:
+    | "report-pages"
+    | "settlement-reads"
+    | "failed-days"
+    | "held-retries"
+    | "deadline";
   stage: "report" | "settlements";
   /** The IST day being read or examined; absent for the scheduled settlement cohort. */
   date?: string;
@@ -182,6 +194,8 @@ interface HeldSettlement {
   linesNetPaise: number;
   /** Null when the settlement entity could not be read. */
   settlementAmountPaise: number | null;
+  /** When its oldest stored line settled. */
+  oldestLineAt: Date | null;
 }
 
 interface PostedMismatch {
@@ -778,13 +792,14 @@ async function fetchSettlementAmount(
 }
 
 /**
- * Posts one `settlement:<id>` journal for each settlement in the window whose
+ * Posts one `settlement:<id>` journal for each settlement in the cohort whose
  * stored lines add up to the settlement entity's amount; any other settlement
- * is held. Unposted settlements are examined in id order after `after`, a
- * bounded number a run. A journal already posted is only compared with its
- * lines. Returns whether the end of the order was reached, and otherwise the
- * settlement to go on after; a pass cut short is noted on the result under
- * `date`.
+ * is held. The cohort is the settlements with a line in the window, plus the
+ * `retryIds` with all their lines. Unposted settlements are examined in id
+ * order after `after`, a bounded number a run. A journal already posted is only
+ * compared with its lines. Returns whether the end of the order was reached,
+ * otherwise the settlement to go on after, and the cohort's settlements still
+ * unposted; a pass cut short is noted on the result under `date`.
  */
 async function postSettlementJournals(
   client: RazorpayClient,
@@ -793,16 +808,23 @@ async function postSettlementJournals(
   isPastDeadline: () => boolean,
   result: SettlementReconResult,
   findings: SettlementFindings,
-  date?: string,
-): Promise<{ finished: boolean; after: string | null }> {
+  options: { date?: string; retryIds?: readonly string[] } = {},
+): Promise<{ finished: boolean; after: string | null; open: Set<string> }> {
+  const { date, retryIds = [] } = options;
   const groups = await prisma.gatewaySettlementLine.groupBy({
     by: ["settlementId"],
     where: {
       provider: "RAZORPAY",
-      settledAt: window,
       settlementId: { not: null },
+      OR: [
+        { settledAt: window },
+        ...(retryIds.length > 0
+          ? [{ settlementId: { in: [...retryIds] } }]
+          : []),
+      ],
     },
     _sum: { creditPaise: true, debitPaise: true },
+    _min: { settledAt: true },
   });
   const nets = groups
     .flatMap((g) =>
@@ -811,6 +833,7 @@ async function postSettlementJournals(
             {
               settlementId: g.settlementId,
               net: sumPaise(g._sum.creditPaise) - sumPaise(g._sum.debitPaise),
+              oldestLineAt: g._min.settledAt,
             },
           ]
         : [],
@@ -821,13 +844,19 @@ async function postSettlementJournals(
         Number(a.settlementId > b.settlementId) -
         Number(a.settlementId < b.settlementId),
     );
-  if (nets.length === 0) return { finished: true, after: null };
+  const open = new Set<string>();
+  if (nets.length === 0) return { finished: true, after: null, open };
   const posted = await debitTotalsByKey(
     nets.map((n) => `settlement:${n.settlementId}`),
   );
+  for (const { settlementId, net } of nets) {
+    if (net !== 0 && !posted.has(`settlement:${settlementId}`)) {
+      open.add(settlementId);
+    }
+  }
   let fetched = 0;
   let last = after;
-  for (const { settlementId, net } of nets) {
+  for (const { settlementId, net, oldestLineAt } of nets) {
     const key = `settlement:${settlementId}`;
     const postedPaise = posted.get(key);
     if (postedPaise !== undefined) {
@@ -851,7 +880,7 @@ async function postSettlementJournals(
         reached: fetched,
         after: last,
       });
-      return { finished: false, after: last };
+      return { finished: false, after: last, open };
     }
     fetched += 1;
     last = settlementId;
@@ -864,6 +893,7 @@ async function postSettlementJournals(
         settlementId,
         linesNetPaise: net,
         settlementAmountPaise,
+        oldestLineAt,
       });
       continue;
     }
@@ -886,8 +916,9 @@ async function postSettlementJournals(
       ],
     });
     result.settlementsPosted += 1;
+    open.delete(settlementId);
   }
-  return { finished: true, after: null };
+  return { finished: true, after: null, open };
 }
 
 function emptyResult(): SettlementReconResult {
@@ -946,7 +977,7 @@ async function reconcileOneDay(
       isPastDeadline,
       result,
       findings,
-      dayKey(day),
+      { date: dayKey(day) },
     );
     result.done = examined.finished;
   }
@@ -1086,8 +1117,32 @@ async function reconcileFromContinuation(
         isPastDeadline,
         result,
         findings,
+        { retryIds: state.settle.held },
       );
       state.settle.after = pass.after;
+      // A held settlement at or beyond the lookback's far edge stays in the
+      // cohort by id until it is posted; one that resolved, or lost its lines, leaves.
+      const kept = new Set(state.settle.held.filter((id) => pass.open.has(id)));
+      const leavingBefore = lookbackStart + HELD_RETRY_MARGIN_DAYS * DAY_MS;
+      for (const held of findings.held) {
+        if (kept.has(held.settlementId)) continue;
+        if (held.oldestLineAt && held.oldestLineAt.getTime() >= leavingBefore) {
+          continue;
+        }
+        if (kept.size >= MAX_HELD_RETRIES) {
+          result.stoppedShort.push({
+            bound: "held-retries",
+            stage: "settlements",
+            reached: kept.size,
+            after: held.settlementId,
+          });
+          continue;
+        }
+        kept.add(held.settlementId);
+      }
+      state.settle.held = [...kept].sort(
+        (a, b) => Number(a > b) - Number(a < b),
+      );
       if (pass.finished) {
         // Days read while this pass was under way wait for the next one.
         if (state.settle.stale) state.settle.stale = false;

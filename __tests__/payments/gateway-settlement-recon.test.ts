@@ -102,10 +102,24 @@ function mockByPayId<T extends { providerPaymentId: string }>(
 type LineWhere = {
   settledAt?: { gte: Date; lt: Date } | { not: null };
   entityId?: { in: string[] };
+  settlementId?: { in: string[] } | { not: null };
   status?: string | { in: string[] };
   id?: string | { gt: string };
+  OR?: LineWhere[];
 };
 const mockMatches = (l: Line, where: LineWhere): boolean => {
+  if (where.OR && !where.OR.some((either) => mockMatches(l, either))) {
+    return false;
+  }
+  if (where.settlementId) {
+    if (l.settlementId === null) return false;
+    if (
+      "in" in where.settlementId &&
+      !where.settlementId.in.includes(l.settlementId)
+    ) {
+      return false;
+    }
+  }
   if (typeof where.id === "string" && l.id !== where.id) return false;
   if (typeof where.id === "object" && !(l.id > where.id.gt)) return false;
   if (typeof where.status === "string" && l.status !== where.status)
@@ -181,22 +195,31 @@ jest.mock("../../lib/prisma", () => ({
         },
       ),
       groupBy: jest.fn(async ({ where }: { where: LineWhere }) => {
-        const sums = new Map<string, { c: bigint; d: bigint }>();
+        const sums = new Map<
+          string,
+          { c: bigint; d: bigint; oldest: Date | null }
+        >();
         for (const l of mockLines.filter(
           (x) => mockMatches(x, where) && x.settlementId,
         )) {
           const s = sums.get(l.settlementId as string) ?? {
             c: BigInt(0),
             d: BigInt(0),
+            oldest: null,
           };
           sums.set(l.settlementId as string, {
             c: s.c + l.creditPaise,
             d: s.d + l.debitPaise,
+            oldest:
+              l.settledAt && (!s.oldest || l.settledAt < s.oldest)
+                ? l.settledAt
+                : s.oldest,
           });
         }
         return [...sums].map(([settlementId, s]) => ({
           settlementId,
           _sum: { creditPaise: s.c, debitPaise: s.d },
+          _min: { settledAt: s.oldest },
         }));
       }),
     },
@@ -291,7 +314,12 @@ const continuation = (result: RunResult) =>
     read: string | null;
     day: { key: string; skip: number } | null;
     rematchAfter: string | null;
-    settle: { from: string | null; after: string | null; stale: boolean };
+    settle: {
+      from: string | null;
+      after: string | null;
+      stale: boolean;
+      held: string[];
+    };
     failedDays: string[];
   };
 /** A checkpoint that says every day up to `read` was read in full. */
@@ -947,6 +975,34 @@ describe("bounded work resumes from the job's one continuation record", () => {
       read: daysAgo(81),
       settle: { from: null, after: null },
     });
+  });
+  it("a settlement held beyond the lookback stays eligible by id until it resolves", async () => {
+    mockCheckpoint.value = readThrough(daysAgo(81));
+    const settled = daysAgo(80);
+    mockPagesByDay.set(reportKey(settled), [
+      [transfer("trf_80", settled, "setl_80")],
+    ]);
+
+    // The settlement entity cannot be read: held, and the pass still finishes.
+    const held = await run();
+
+    expect(held).toMatchObject({ settlementsPosted: 0, settlementsHeld: 1 });
+    expect(continuation(held).settle).toMatchObject({
+      from: null,
+      after: null,
+      held: ["setl_80"],
+    });
+
+    carryOn(held);
+    mockSettlements.set("setl_80", 1_000);
+    const resolved = await run();
+
+    expect(resolved).toMatchObject({
+      settlementsPosted: 1,
+      settlementsHeld: 0,
+    });
+    expect(mockJournals.get("settlement:setl_80")).toBe(1_000);
+    expect(continuation(resolved).settle.held).toEqual([]);
   });
 });
 
