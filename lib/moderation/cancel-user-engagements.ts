@@ -1,8 +1,9 @@
 /**
  * Moderation bulk-cancel: cancel every live engagement a suspended or
  * banned user is part of. Moderation is platform-initiated, so the buyer's
- * notice tiers never apply: a 1:1 booking refunds every undelivered session in
- * full and keeps the earnings of the delivered ones, whoever was banned.
+ * notice tiers never apply: a 1:1 booking, and a banned learner's class or
+ * webinar seat, refunds every undelivered session in full and keeps the
+ * earnings of the delivered ones, whoever was banned.
  *
  * Mirrors the CAS doctrine of app/api/appointments/[appointmentId]/cancel:
  * status moves ride a guarded updateMany (double-cancel loses the CAS and is
@@ -52,9 +53,11 @@ import {
 import {
   classSeriesLedgers,
   refundWholeEventPayments,
+  releasedSeatOwedTx,
   stampWholeEventRefundsOwed,
   type EventSeatPlan,
 } from "@/lib/payments/operations/event-refunds";
+import { REFUNDABLE_BALANCE_SELECT } from "@/lib/payments/refundable-balance";
 import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
@@ -118,6 +121,13 @@ type FutureSlotFilter = {
   completionStatus: "SCHEDULED";
   startsAt: { gt: Date };
 };
+
+/** A seat is live while its event has a session that has not ended; one under way counts. */
+const unendedSlot = (now: Date) =>
+  ({
+    completionStatus: "SCHEDULED",
+    endsAt: { gt: now },
+  }) satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -215,7 +225,7 @@ async function collectConsulteeWork(
     }),
     prisma.appointmentOccurrence.findMany({
       where: {
-        ...futureSlot,
+        ...unendedSlot(futureSlot.startsAt.gt),
         appointment: {
           OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
           participants: {
@@ -644,7 +654,7 @@ async function releaseEngagementOccurrences(
   });
 }
 
-/** A ban's owed refund under the door's own key; a null amount is the full remaining balance. */
+/** A ban's owed refund under the door's own key; a null amount is a whole credit restoration. */
 function moderationRefundOwed(
   appointmentId: string,
   paymentId: string,
@@ -1022,17 +1032,14 @@ async function removeAttendee(
 ) {
   const isWebinar = kind === "webinar-attendance";
   const eventFilter = isWebinar ? { webinarId: eventId } : { classId: eventId };
+  const now = new Date();
 
   // #1554 — a seat is released by status; the release matches zero rows when
   // the target is not (or no longer) on the roster, so nothing is refunded.
-  const upcoming = await prisma.appointmentOccurrence.count({
-    where: {
-      appointment: eventFilter,
-      completionStatus: "SCHEDULED",
-      startsAt: { gt: new Date() },
-    },
+  const unended = await prisma.appointmentOccurrence.count({
+    where: { appointment: eventFilter, ...unendedSlot(now) },
   });
-  if (upcoming === 0) return;
+  if (unended === 0) return;
   const eventWrapper = await prisma.appointment.findFirst({
     where: eventFilter,
     select: { id: true },
@@ -1056,11 +1063,30 @@ async function removeAttendee(
           // A retired row is refused by the front door.
           deletedAt: null,
         },
-        select: { id: true },
+        select: {
+          id: true,
+          amount: true,
+          paymentIntent: true,
+          createdAt: true,
+          ...REFUNDABLE_BALANCE_SELECT,
+        },
       });
-      const owed = paid
-        ? moderationRefundOwed(eventWrapper.id, paid.id, null)
+      // The seat's undelivered sessions as of the ban; a delivered one keeps
+      // its pay, and a session under way is not delivered.
+      const share = paid
+        ? await releasedSeatOwedTx(tx, {
+            appointmentId: eventWrapper.id,
+            userId: targetUserId,
+            payment: paid,
+            releasedAt: now,
+            now,
+            cause: "moderation",
+          })
         : null;
+      const owed =
+        paid && share
+          ? moderationRefundOwed(eventWrapper.id, paid.id, share.amountPaise)
+          : null;
       const held = owed ? await stampOwedOrHeld(tx, owed) : null;
       // First writer wins: the owed refund already on the payment is the one driven.
       return { owed: held ? null : owed, held };

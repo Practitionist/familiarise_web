@@ -1,8 +1,9 @@
 /**
  * A moderation ban on real Postgres: a plan refunds only its undelivered
  * sessions, whoever was banned; a live plan with nothing placed ahead is ended
- * too; sessions support already refunded are not paid twice; and a
- * single-session consultation not yet held still refunds in full.
+ * too; sessions support already refunded are not paid twice; a single-session
+ * consultation not yet held still refunds in full; and a banned learner's
+ * class or webinar seat is refunded for what it was not delivered.
  */
 import "./harness-cancel-route";
 import { randomUUID } from "node:crypto";
@@ -16,6 +17,8 @@ import {
 } from "./harness";
 import { seedCardPayment } from "./harness-plans";
 import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
+import { seatClassBuyer, seedClassUnderWay } from "./harness-class-series";
+import { seedHeldSeat, seedWebinar } from "./harness-seats";
 
 import { cancelFutureEngagementsForUser } from "../../../lib/moderation/cancel-user-engagements";
 
@@ -139,7 +142,27 @@ async function seedPlan(shape: {
   };
 }
 
+/** The ban reads the profile ids off the user row, where sign-up writes them. */
+async function linkProfiles(userId: string) {
+  const consultant = await prisma.consultantProfile.findFirst({
+    where: { userId },
+    select: { id: true },
+  });
+  const consultee = await prisma.consulteeProfile.findFirst({
+    where: { userId },
+    select: { id: true },
+  });
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      consultantProfileId: consultant?.id ?? null,
+      consulteeProfileId: consultee?.id ?? null,
+    },
+  });
+}
+
 const ban = async (userId: string) => {
+  await linkProfiles(userId);
   const admin = await seedHost();
   return cancelFutureEngagementsForUser(userId, {
     initiatedByUserId: admin.userId,
@@ -286,5 +309,91 @@ describe("a ban on a single-session consultation", () => {
       select: { status: true },
     });
     expect(row.status).toBe("CANCELLED");
+  });
+});
+
+describe("a ban on a learner who holds a class or webinar seat", () => {
+  /** 8 sessions for ₹8,000 a seat (₹1,000 a session), 3 already delivered. */
+  const CLASS = { price: 800_000, sessions: 8, delivered: 3 };
+
+  it("after 3 of 8 class sessions: ₹5,000 back under the ban's key, the seat released", async () => {
+    const host = await seedHost();
+    const cls = await seedClassUnderWay(host, CLASS);
+    const seat = await seatClassBuyer(cls, CLASS);
+
+    const summary = await ban(seat.userId);
+
+    expect(summary.failures).toEqual([]);
+    expect(summary.attendeeRemovals).toBe(1);
+    const refunds = await prisma.refund.findMany({
+      where: { paymentId: seat.paymentId },
+      select: { dedupeKey: true, amountPaise: true },
+    });
+    expect(refunds).toEqual([
+      {
+        dedupeKey: `moderation:${cls.appointmentId}:${seat.paymentId}`,
+        amountPaise: 500_000,
+      },
+    ]);
+    const row = await prisma.appointmentParticipant.findFirstOrThrow({
+      where: { appointmentId: cls.appointmentId, userId: seat.userId },
+      select: { status: true },
+    });
+    expect(["HELD", "CONFIRMED", "ATTENDED"]).not.toContain(row.status);
+    // The class runs on for everyone else.
+    const event = await prisma.class.findUniqueOrThrow({
+      where: { id: cls.classId },
+      select: { status: true },
+    });
+    expect(event.status).toBe("SCHEDULED");
+  });
+
+  it("a webinar seat is refunded in full while the webinar is under way, and left alone once it has ended", async () => {
+    const live = await seedWebinar({
+      capacity: 10,
+      price: 100_000,
+      startsAt: new Date(Date.now() - HOUR_MS / 2),
+    });
+    const over = await seedWebinar({
+      capacity: 10,
+      price: 100_000,
+      startsAt: new Date(Date.now() - 3 * HOUR_MS),
+    });
+    const liveSeat = await seedHeldSeat(live, {
+      status: "SUCCEEDED",
+      expiresAt: null,
+    });
+    // The same learner also holds a seat on the webinar that already ended.
+    const overPayment = await prisma.payment.create({
+      data: {
+        amount: BigInt(100_000),
+        originalAmount: BigInt(100_000),
+        paymentMethod: "card",
+        paymentIntent: `order_dbtier_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+        paymentStatus: "SUCCEEDED",
+        userId: liveSeat.buyer.userId,
+        appointmentId: over.appointmentId,
+        isMockPayment: true,
+        expiresAt: null,
+        legs: { create: [{ source: "CARD", amountPaise: BigInt(100_000) }] },
+      },
+    });
+    await prisma.appointmentParticipant.create({
+      data: {
+        appointmentId: over.appointmentId,
+        userId: liveSeat.buyer.userId,
+        role: "CONSULTEE",
+        status: "CONFIRMED",
+        paymentId: overPayment.id,
+      },
+    });
+
+    await ban(liveSeat.buyer.userId);
+
+    expect(await refundedPaise(liveSeat.payment.id)).toBe(
+      Number(liveSeat.payment.amount),
+    );
+    expect(await refundedPaise(overPayment.id)).toBe(0);
   });
 });
