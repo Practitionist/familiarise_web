@@ -89,7 +89,7 @@ Each rule lists what happens today, the rule, a worked example, and the abuse th
 
 These three extend the [session outcome report window](2026-11-23-session-outcome-report-window.md) record, which is updated by the work that builds them.
 
-- When an operator marks "expert absent" on a consultation and cancelling the whole booking does not fit (another session was held or is still to come, the booking already completed, or the session was already voided), that one session is voided: the strike is recorded at once, the expert has 14 days to deliver a make-up, and then the session's share is refunded.
+- When an operator marks "expert absent" on a consultation, the expert always gets a strike and the learner always gets the money back where money was paid. A consultation is one call, and it has no make-up feature, so nothing waits 14 days. A booking still live is cancelled and refunded in full. A booking that had already completed, or a session already voided as cut short, is refunded in full at once. An unpaid booking records the strike only. During a declared outage the operator is refused, because an outage is not the expert's fault.
 - While any session of a plan carries a "learner absent" verdict still inside its 48-hour window, no tranche of that plan is released. Each verdict holds the plan for at most 48 hours. Windows can overlap: a second absence 24 hours after the first keeps the plan held until the second window closes, 72 hours after the first opened. There is no cap across verdicts; the hold ends when the last open window closes.
 - When an operator relabels a void that was waiting for confirmation, the 14-day make-up window counts from the relabel, the date the learners were told.
 
