@@ -23,6 +23,7 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { stampRefundOwed } from "@/lib/payments/operations/refund-owed";
 import {
+  isCompletedOccurrence,
   sessionsTotalOf,
   subscriptionIsOver,
   subscriptionPlanEnd,
@@ -31,6 +32,7 @@ import { incidentRefundKey } from "./incident-keys";
 import { onClassSessionVoided } from "./class-sessions";
 import { LIVE_PARTICIPANT_STATUSES } from "./participants";
 import { flushClassVoidNotices } from "./session-outcome-sweep";
+import { unstampUndeliveredTranches } from "./subscription-cycle";
 import { transitionOccurrenceCompletion, transitionTrial } from "./transitions";
 
 const HOUR_MS = 3_600_000;
@@ -435,6 +437,13 @@ async function commitIncidentVoid(
             startsAt: occ.startsAt,
             voidedAt: now,
             hostAttributed: false,
+          });
+        }
+        // A plan's delivered session just left its cycle undelivered.
+        if (occ.appointment.subscriptionId && isCompletedOccurrence(occ)) {
+          await unstampUndeliveredTranches(tx, {
+            appointmentId: occ.appointmentId,
+            now,
           });
         }
       } else if (occ.outcome !== "PLATFORM_OUTAGE") {

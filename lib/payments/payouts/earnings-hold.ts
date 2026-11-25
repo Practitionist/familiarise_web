@@ -140,9 +140,17 @@ export async function lastLiveOccurrenceEnd(
   return last?.endsAt ?? null;
 }
 
+/** Unreleased rows a session move re-anchors: a hold on a PENDING row freezes its status, not its date. */
+const UNRELEASED = {
+  OR: [
+    { status: "PENDING" as const },
+    { status: "HELD" as const, preHoldStatus: "PENDING" as const },
+  ],
+};
+
 /**
  * Pull a reschedule's hold push back once its proposal ends, restored (withdraw,
- * expiry, decline) or confirmed (auto-confirm, accept): every PENDING hold later
+ * expiry, decline) or confirmed (auto-confirm, accept): every unreleased hold later
  * than what the live sessions imply (plus the new-expert days) returns to it.
  * Never earlier than that; a NULL hold (an undelivered tranche) and a settled
  * subscription cycle's tranche are left alone.
@@ -169,7 +177,7 @@ export async function restoreEarningsHold(
   // A settled subscription cycle keeps its own hold (cycle settle + hold).
   const where = {
     paymentId: { in: appointment.payment.map((p) => p.id) },
-    status: "PENDING" as const,
+    ...UNRELEASED,
     holdUntil: { not: null },
     cycleOrdinal: null,
   };
@@ -201,7 +209,7 @@ export async function restoreEarningsHold(
     );
     if (!row.holdUntil || !target || row.holdUntil <= target) continue;
     const res = await db.consultantEarnings.updateMany({
-      where: { id: row.id, status: "PENDING", holdUntil: row.holdUntil },
+      where: { id: row.id, ...UNRELEASED, holdUntil: row.holdUntil },
       data: { holdUntil: target },
     });
     moved += res.count;
@@ -210,7 +218,7 @@ export async function restoreEarningsHold(
     const target = implied(row.createdAt);
     if (!row.holdUntil || row.holdUntil <= target) continue;
     const res = await db.organizationEarnings.updateMany({
-      where: { id: row.id, status: "PENDING", holdUntil: row.holdUntil },
+      where: { id: row.id, ...UNRELEASED, holdUntil: row.holdUntil },
       data: { holdUntil: target },
     });
     moved += res.count;
@@ -256,8 +264,10 @@ export async function resolveEarningsAnchor(
 /**
  * Re-anchor every unreleased earning of the appointment's payments after its
  * live occurrences changed (first allocation, top-up, reschedule). PENDING rows
- * only: a READY or PAID row has already left the hold, and a dispute-held row
- * keeps the hold the dispute imposed.
+ * and rows held from PENDING, which stay HELD; a READY or PAID row has already
+ * left the hold, and a subscription tranche keeps the date its cycle stamped.
+ * A consultant row's date carries the payee's new-expert days; an
+ * organisation row's never does.
  *
  * The capture instant is the earnings row's own `createdAt` — Payment carries
  * no capture timestamp and its `createdAt` is order creation, which can sit
@@ -285,17 +295,23 @@ export async function recomputeEarningsHold(
   const holdHours = holdHoursFor(
     appointment.appointmentType as AppointmentType,
   );
-  // #1766 — a NULL hold is an undelivered subscription tranche; only the
-  // completion path may stamp it, so a reschedule leaves it alone.
+  // A subscription tranche keeps its own date: only the completion path stamps
+  // it, and once stamped a later session never moves it.
   const wherePendingHold = {
     paymentId: { in: appointment.payment.map((p) => p.id) },
-    status: "PENDING" as const,
+    ...UNRELEASED,
     holdUntil: { not: null },
+    cycleOrdinal: null,
   };
   const [pendingConsultant, pendingOrg] = await Promise.all([
     db.consultantEarnings.findMany({
       where: wherePendingHold,
-      select: { id: true, createdAt: true, holdUntil: true },
+      select: {
+        id: true,
+        createdAt: true,
+        holdUntil: true,
+        consultantProfileId: true,
+      },
     }),
     db.organizationEarnings?.findMany({
       where: wherePendingHold,
@@ -305,16 +321,23 @@ export async function recomputeEarningsHold(
   let moved = 0;
   for (const earning of pendingConsultant) {
     if (!earning.holdUntil) continue;
-    const computed = computeHoldUntil({
-      capturedAt: earning.createdAt,
-      lastOccurrenceEndsAt: lastEnd,
-      holdHours,
-    });
-    if (computed.getTime() <= earning.holdUntil.getTime()) continue;
+    // The new-expert days follow the payee, as at mint.
+    const computed = await withNewExpertHold(
+      db,
+      earning.consultantProfileId,
+      computeHoldUntil({
+        capturedAt: earning.createdAt,
+        lastOccurrenceEndsAt: lastEnd,
+        holdHours,
+      }),
+    );
+    if (!computed || computed.getTime() <= earning.holdUntil.getTime()) {
+      continue;
+    }
     const res = await db.consultantEarnings.updateMany({
       where: {
         id: earning.id,
-        status: "PENDING",
+        ...UNRELEASED,
         holdUntil: { lt: computed },
       },
       data: { holdUntil: computed },
@@ -332,7 +355,7 @@ export async function recomputeEarningsHold(
     const res = await db.organizationEarnings.updateMany({
       where: {
         id: earning.id,
-        status: "PENDING",
+        ...UNRELEASED,
         holdUntil: { lt: computed },
       },
       data: { holdUntil: computed },

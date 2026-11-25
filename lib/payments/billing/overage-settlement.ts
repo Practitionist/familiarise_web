@@ -9,8 +9,6 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
-  EarningStatus,
-  EarningsHoldReason,
   PaymentStatus,
   type Currency,
   type PaymentGateway,
@@ -26,12 +24,11 @@ import { orgBuyerCountry } from "@/lib/compliance/gst";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { overageAccrualKey } from "@/lib/payments/billing/overage-accrual-void";
 import {
-  lockHeldOverageEarnings,
+  holdParentEarningsForMemberOverage,
   releaseOverageHeldParentEarnings,
 } from "@/lib/payments/billing/overage-base-carve";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
-import { placeEarningsHolds } from "@/lib/payments/payouts/earnings-holds";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
 import { sendOrgOverageDueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
@@ -571,35 +568,9 @@ async function recordMemberOverageCharge(
     });
   }
 
-  // Hold the parent's earnings until every member overage on it settles
-  // (released by releaseOverageHeldParentEarnings). Rows an earlier batch
-  // already holds are written again, so a concurrent release waits for this one.
-  const holdable = {
-    paymentId,
-    OR: [
-      { status: EarningStatus.PENDING },
-      { status: EarningStatus.HELD, preHoldStatus: EarningStatus.PENDING },
-    ],
-  };
-  const consultantIds = (
-    await tx.consultantEarnings.findMany({
-      where: holdable,
-      select: { id: true },
-    })
-  ).map((r) => r.id);
-  const orgIds = (
-    await tx.organizationEarnings.findMany({
-      where: holdable,
-      select: { id: true },
-    })
-  ).map((r) => r.id);
-  await lockHeldOverageEarnings(tx, consultantIds, orgIds);
-  const overageHold = {
-    reason: EarningsHoldReason.OVERAGE,
-    sourceRef: paymentId,
-  };
-  await placeEarningsHolds(tx, "consultant", consultantIds, overageHold);
-  await placeEarningsHolds(tx, "org", orgIds, overageHold);
+  // Hold the parent's earnings until every member overage on it settles; a
+  // checkout writes them after this, and the earnings writer holds them then.
+  await holdParentEarningsForMemberOverage(tx, paymentId);
 
   return {
     userId,
