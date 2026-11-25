@@ -43,8 +43,14 @@ describe("computeHoldUntil", () => {
 describe("recomputeEarningsHold", () => {
   function db(opts: {
     lastEnd: Date | null;
-    earnings: { id: string; createdAt: Date; holdUntil: Date }[];
+    earnings: {
+      id: string;
+      createdAt: Date;
+      holdUntil: Date;
+      consultantProfileId?: string;
+    }[];
     orgEarnings?: { id: string; createdAt: Date; holdUntil: Date }[];
+    firstPaidAt?: Date;
   }) {
     const updateMany = jest.fn(async () => ({ count: 1 }));
     const orgUpdateMany = jest.fn(async () => ({ count: 1 }));
@@ -63,6 +69,10 @@ describe("recomputeEarningsHold", () => {
       consultantEarnings: {
         findMany: jest.fn(async () => opts.earnings),
         updateMany,
+        findFirst: jest.fn(async () => ({ createdAt: opts.firstPaidAt })),
+        aggregate: jest.fn(async () => ({
+          _sum: { consultantSharePaise: 9e9, refundedShareAmount: 0 },
+        })),
       },
       organizationEarnings: {
         findMany: jest.fn(async () => opts.orgEarnings ?? []),
@@ -103,7 +113,10 @@ describe("recomputeEarningsHold", () => {
     expect(update).toHaveBeenCalledWith({
       where: {
         id: "earn-1",
-        status: "PENDING",
+        OR: [
+          { status: "PENDING" },
+          { status: "HELD", preHoldStatus: "PENDING" },
+        ],
         holdUntil: { lt: at("2026-09-27T11:00:00Z") },
       },
       data: { holdUntil: at("2026-09-27T11:00:00Z") },
@@ -111,12 +124,44 @@ describe("recomputeEarningsHold", () => {
     expect(orgUpdate).toHaveBeenCalledWith({
       where: {
         id: "org-earn-1",
-        status: "PENDING",
+        OR: [
+          { status: "PENDING" },
+          { status: "HELD", preHoldStatus: "PENDING" },
+        ],
         holdUntil: { lt: at("2026-09-27T11:00:00Z") },
       },
       data: { holdUntil: at("2026-09-27T11:00:00Z") },
     });
   });
+
+  it.each([
+    ["a new expert's", new Date(), "2026-09-30T11:00:00Z"],
+    ["a tenured expert's", at("2020-01-01T00:00:00Z"), "2026-09-27T11:00:00Z"],
+  ])(
+    "%s moved session holds to its new end plus the hold and the expert's own extra days; the organisation's gets none",
+    async (_label, firstPaidAt, consultantHold) => {
+      const row = {
+        createdAt: at("2026-09-01T10:00:00Z"),
+        holdUntil: at("2026-09-08T10:00:00Z"),
+      };
+      const { client, update, orgUpdate } = db({
+        lastEnd: at("2026-09-20T11:00:00Z"),
+        earnings: [{ id: "earn-1", consultantProfileId: "cp-1", ...row }],
+        orgEarnings: [{ id: "org-earn-1", ...row }],
+        firstPaidAt,
+      });
+
+      expect(await recomputeEarningsHold(client, "appt-1")).toBe(2);
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { holdUntil: at(consultantHold) } }),
+      );
+      expect(orgUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { holdUntil: at("2026-09-27T11:00:00Z") },
+        }),
+      );
+    },
+  );
 
   it("leaves a null hold alone (#1766 — an undelivered tranche is stamped by the completion path)", async () => {
     const { client, update, mocks } = db({
