@@ -6,6 +6,12 @@ Platform facts measured or read on 2026-10-31 to 2026-11-01. The facts about the
 
 Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-experiments.md`): launch on option 4, the Netlify ticker plus Background Functions for jobs over 30 s. Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. Revisit when those two tests report, or at about 300 concurrent users, whichever comes first. Do not start either migration before then.
 
+## Review of 2026-11-13 (research, not a decision)
+
+A first-principles review agrees with launching on the ticker and concludes that no job engine is needed: the jobs are short, repeatable sweeps, and correctness comes from row state, the lease, compare-and-swap writes and constraints. The job runtime follows the web tier, so the open question is the app and database layout (#2751), not the engine (#2491). Full text: `docs/infrastructure/08-jobs-runtime-and-cold-start-review.md`.
+
+Reopen the engine question only on one of these, observed and not predicted: a flow with three or more external, non-repeatable steps that an idempotency key cannot make safe; waits of hours or days per item in volume; or a backlog whose oldest item keeps ageing between ticks. A job that needs more than 25 s is not enough, because a Background Function runs for up to 15 minutes. If a backlog needs a queue, first add a next-attempt column to the existing sweep. `pg_cron` with `pg_net` is the reserve clock, not a current proposal.
+
 ## Real app on Vercel
 
 The real `dev` app did not run on Vercel Hobby without changes: default build OOM; `CI_LEAN_BUILD=true` plus a 6144 MB heap built in 14 min, but every route returned 500 `MIDDLEWARE_INVOCATION_FAILED` (`middleware.js` cannot load as an ES module on Node 26); Node 22 builds hung at static generation (cause unverified). Option 1 therefore needs code and build changes, not a config switch. Report: `docs/maintenance/experiments/2026-10-31-job-runtime/15-real-app-vercel-bom1-attempt.md`.

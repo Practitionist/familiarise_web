@@ -8,6 +8,12 @@ Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-exper
 
 Option 1 is not a config switch: the real `dev` app failed on Vercel (Node 26 middleware ESM load, Node 22 static-generation hang), see `docs/maintenance/experiments/2026-10-31-job-runtime/15-real-app-vercel-bom1-attempt.md`.
 
+## Review of 2026-11-13 (research, not a decision)
+
+A first-principles review agrees with launching on the ticker and concludes that no job engine is needed: the jobs are short, repeatable sweeps, and correctness comes from row state, the lease, compare-and-swap writes and constraints. The job runtime follows the web tier, so the open question is the app and database layout (#2751), not the engine (#2491). Full text: `docs/infrastructure/08-jobs-runtime-and-cold-start-review.md`.
+
+Reopen the engine question only on one of these, observed and not predicted: a flow with three or more external, non-repeatable steps that an idempotency key cannot make safe; waits of hours or days per item in volume; or a backlog whose oldest item keeps ageing between ticks. A job that needs more than 25 s is not enough, because a Background Function runs for up to 15 minutes. If a backlog needs a queue, first add a next-attempt column to the existing sweep. `pg_cron` with `pg_net` is the reserve clock, not a current proposal.
+
 ## Decision-relevant facts
 
 - Only code that runs in Mumbai removes the per-statement cost. Netlify Singapore is 62-64 ms per statement with raw `pg` (about 95 ms measured through the app earlier; a bare Prisma client on raw queries adds 0.1 ms or less per statement in `bom1`, which does not cover the app client on Netlify, so the gap is unexplained), Trigger.dev Frankfurt 125 ms, `bom1` 1.0-2.1 ms.

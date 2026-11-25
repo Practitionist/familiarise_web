@@ -9,6 +9,8 @@
 
 Full CI on every pull request costs about 8,500 Actions minutes a month at the pre-launch pace of about 330 merged pull requests a month, against 2,000 free. The workflow `CI` (`ci.yaml`) has been disabled in the repository's Actions settings (state `disabled_manually`) since the minutes ran out on 2026-10-17, as have `Race Condition Tests` and `Knip`. The pace is a pre-launch burst. At the launch pace of 5 to 15 pull requests a week, even full CI is about 1,200 minutes. Organisation Actions storage sits at 90 percent of the Free plan's 0.5 GB.
 
+**Observed 2026-11-13.** `CI` was `active` in the Actions settings and ran on pull requests into `dev`, so decision 1 below was not in force on that day. Whether it was re-enabled on purpose is not recorded; issue #2752 tracks it and the runner question.
+
 ## Decision
 
 ### Before launch

@@ -3,7 +3,7 @@ title: Hosting for a burst-sensitive Next.js app
 band: 70-design-decisions
 audience: sde3
 status: accepted
-last-reviewed: 2026-11-06
+last-reviewed: 2026-11-13
 ---
 
 # ADR 32 — Hosting for a burst-sensitive Next.js app
@@ -90,6 +90,28 @@ This verdict is different from the August 2048 MB test. That test ran while the 
 The memory setting is per deploy. Netlify records memory per function on each deploy (`available_functions[].m` in `getDeploy`). It is set by `[functions."___netlify-server-handler"] memory = 2048` in the `netlify.toml` of the commit being built. In August this applied to a single deploy preview while production stayed at 1,024 MB. Netlify does not document `[functions]` as a context-aware key, so `[context.deploy-preview]` cannot scope it. The only safe scope is a throwaway branch that is never merged. The site record has no memory setting (`getSite` reports only `functions_region`). Compute bills by configured memory multiplied by duration ([Netlify functions configuration](https://docs.netlify.com/build/functions/configuration/)), so 2,048 MB would roughly double server-handler GB-hours, from about 53 to about 106 a month. That figure is extrapolated from a 35-minute sample of handler time at pre-launch traffic on 2026-11-05. The legacy Pro plan includes 1,000 GB-hours.
 
 A fresh deploy preview is not idle when it turns ready. The function log of the preview above shows server-handler invocations with Prisma start-up lines from the second the deploy turned ready, about 20 s before any probe request. A burst fired straight after a deploy therefore lands mostly on instances that are already booted. Wait at least 15 minutes after a deploy is ready before bursting it.
+
+### 2026-11-13: production re-measured, and a warm instance is warm only for loaded code
+
+Production (Turbopack build, 1,024 MB, `ap-southeast-1`) was burst once with 12 requests to `probe-bare` and once, 25 seconds later, with 16 to `probe-full`. The job fleet was paused before launch, so only one warm instance existed and both bursts created new ones. Rows are classified by `instanceId` and `uptimeAtEntryMs` as above.
+
+| Row                                                                 | `uptimeAtEntryMs` | End to end                                             | Peak memory |
+| ------------------------------------------------------------------- | ----------------- | ------------------------------------------------------ | ----------- |
+| New instance, `probe-bare` (6 instances)                            | 2,682–2,885 ms    | 4.2–4.9 s                                              | 126–136 MB  |
+| New instance, `probe-full` (6 instances)                            | 6,352–7,071 ms    | 7.8–8.7 s                                              | 259–263 MB  |
+| Instance from the first burst, its first `probe-full` (6 instances) | about 27–29 s     | 4.8–6.1 s                                              | 258–273 MB  |
+| The one instance that was warm beforehand                           | about 49 min      | 0.5–1.4 s; one request queued behind others took 5.5 s | 424 MB      |
+
+The end-to-end column was measured from outside India and is not comparable with the columns above; the boot column is. What it adds:
+
+- **The #1124 stall has not returned.** No `idleProbe.maxGapMs` passed 51 ms on any instance created during the test.
+- **The boot figures agree with 2026-11-05 and 2026-11-06.** Nothing has drifted.
+- **A warm instance is warm only for the code it has loaded.** The third row had already served `probe-bare` and still took 4.8–6.1 s on its first request that loads the `lib/auth` graph. A keep-warm ping of a light route therefore does not help a signed-in user, and an instance the ticker keeps alive through a `CRON_SECRET` route may still pay this cost (not measured).
+- **The warm pool is the ticker.** The 2026-11-06 burst found no cold instance in production; this one found a single warm instance, because the fleet is paused ([the pause record](../../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)).
+
+One caution on the 2,048 MB prediction above. Module loading is single-threaded, so one full core is the ceiling for most of the boot. At 0.58–0.62 CPU-seconds per second, a 6.3–7.1 s boot is about 3.7–4.4 CPU-seconds, which puts cold `probe-full` nearer 3.5–4 s than 3.1 s at any setting of one core or more. That is still an estimate.
+
+**The 2,048 MB test cannot run on the current plan.** On 2026-11-13 a throwaway deploy preview that set `[functions."___netlify-server-handler"] memory = 2048` failed before it deployed, with Netlify's message "Configuring function memory requires a Pro plan or higher with credit-based pricing". The same key was accepted on 2026-08-22. The measurement therefore waits on the billing-plan decision (`.claude/skills/billing-guardrails/references/netlify.md`), and that decision should count this lever. [The 2026-11-13 review](../../infrastructure/08-jobs-runtime-and-cold-start-review.md) sets it beside the other levers.
 
 ## Sources
 
