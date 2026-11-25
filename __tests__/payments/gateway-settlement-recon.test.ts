@@ -689,6 +689,50 @@ describe("the walk, the completeness check and the later passes", () => {
     );
   });
 
+  it("an unposted settlement whose stored lines net to zero is resolved only when the gateway also says zero", async () => {
+    mockCheckpoint.value = readThrough("2026-10-18");
+    const zeroNet = (settlement: string) => [
+      {
+        ...payment(`pay_${settlement}`, "2026-10-19", 1_000),
+        settlement_id: settlement,
+      },
+      {
+        entity_id: `rfnd_${settlement}`,
+        type: "refund",
+        amount: 1_000,
+        credit: 0,
+        debit: 1_000,
+        settlement_id: settlement,
+        settled_at: settledOn("2026-10-19"),
+      },
+    ];
+    mockPagesByDay.set("2026-10-19", [
+      [
+        ...zeroNet("setl_zero"),
+        ...zeroNet("setl_short"),
+        ...zeroNet("setl_gone"),
+      ],
+    ]);
+    // The gateway settled nothing for the first, ₹20 for the second, and cannot be read for the third.
+    mockSettlements.set("setl_zero", 0);
+    mockSettlements.set("setl_short", 2_000);
+
+    const result = await runReconcileGatewaySettlements(Date.now(), now);
+
+    expect(result).toMatchObject({ settlementsPosted: 0, settlementsHeld: 2 });
+    expect(
+      mockPost.mock.calls.filter(([, input]) =>
+        input.idempotencyKey.startsWith("settlement:"),
+      ),
+    ).toHaveLength(0);
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-gateway-settlements:held",
+        ids: ["setl_gone", "setl_short"],
+      }),
+    );
+  });
+
   it("holds a settlement whose entity cannot be read", async () => {
     mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-19", [

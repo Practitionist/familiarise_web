@@ -802,7 +802,8 @@ async function fetchSettlementAmount(
 /**
  * Posts one `settlement:<id>` journal for each settlement in the cohort whose
  * stored lines add up to the settlement entity's amount; any other settlement
- * is held. The cohort is the settlements with a line in the window, plus the
+ * is held, one whose lines net to zero included: it is resolved without a
+ * journal only when the entity's amount is zero too. The cohort is the settlements with a line in the window, plus the
  * `retryIds` with all their lines. Unposted settlements are examined in id
  * order after `after`, a bounded number a run. A journal already posted is only
  * compared with its lines. Returns whether the end of the order was reached,
@@ -857,10 +858,9 @@ async function postSettlementJournals(
   const posted = await debitTotalsByKey(
     nets.map((n) => `settlement:${n.settlementId}`),
   );
-  for (const { settlementId, net } of nets) {
-    if (net !== 0 && !posted.has(`settlement:${settlementId}`)) {
-      open.add(settlementId);
-    }
+  // Unposted settlements stay open until posted, or until the gateway confirms a zero net.
+  for (const { settlementId } of nets) {
+    if (!posted.has(`settlement:${settlementId}`)) open.add(settlementId);
   }
   let fetched = 0;
   let last = after;
@@ -877,7 +877,6 @@ async function postSettlementJournals(
       }
       continue;
     }
-    if (net === 0) continue;
     if (after !== null && settlementId <= after) continue;
     const capped = fetched >= MAX_SETTLEMENTS_PER_RUN;
     if (capped || isPastDeadline()) {
@@ -903,6 +902,11 @@ async function postSettlementJournals(
         settlementAmountPaise,
         oldestLineAt,
       });
+      continue;
+    }
+    // Lines that net to zero against a settlement of zero move no cash: no journal.
+    if (net === 0) {
+      open.delete(settlementId);
       continue;
     }
     const toCash = net > 0;
