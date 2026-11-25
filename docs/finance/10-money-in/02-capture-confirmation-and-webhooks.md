@@ -185,6 +185,8 @@ Retention is separate. `archive-webhook-events` prunes every processed or failed
 | Parked cash is never recognised as revenue                      | `UNAPPLIED_RECEIPTS` journal; earnings refused for a parked capture (`ParkedCaptureEarningsError`)              | `__tests__/payments/earnings-sync-healer.test.ts`           | `retry-auto-refunds`                  |
 | A payment status moves only from the status the writer expected | `updateMany` with the prior status in `WHERE`                                                                   | `__tests__/payments/money-races.test.ts`                    | `reconcile-payment-status`            |
 
+- **A system event written inside a transaction belongs to it.** `recordSystemEvent`, `recordSystemEventSafe` and `recordSystemErrorSafe` (`lib/enterprise/system-events.ts`) are best effort only on the global client. Given a transaction client they rethrow a failed insert, because Postgres has already aborted that transaction: the owner sees the real error, and `withSerializableRetry` can retry a serialization failure raised on the insert.
+
 ## Where in code
 
 - `app/api/webhooks/razorpay/route.ts`, `signature.ts`, `razorpay-dispatch.ts`.

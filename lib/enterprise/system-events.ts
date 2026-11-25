@@ -90,14 +90,25 @@ export interface RecordSystemEventParams {
    * `tx`: with PG_POOL_MAX=1 a global-client insert queues behind the open
    * transaction and dies at the 3 s connect timeout if Phase 1 outlives it.
    * Same convention as `recordTDSDeduction`. Defaults to the global client.
+   * A failed insert on a transaction client is always rethrown.
    */
   db?: Tx | typeof prisma;
 }
 
 /**
- * Record one operational event. Best-effort by default: if the insert fails we
- * log to console and return without throwing so the caller's main
- * code path is unaffected.
+ * Whether the write goes through a transaction client. A failed statement
+ * aborts the whole Postgres transaction, so there the failure belongs to the
+ * transaction's owner; best effort exists only on the global client.
+ */
+function isTransactionClient(db: Tx | typeof prisma | undefined): boolean {
+  return db !== undefined && db !== prisma;
+}
+
+/**
+ * Record one operational event. Best-effort on the global client: if the
+ * insert fails we log to console and return without throwing so the caller's
+ * main code path is unaffected. On a transaction client the failure is
+ * rethrown.
  *
  * #1270 — pass `strict` when the row is an AUTHORIZATION RECORD rather than
  * telemetry. Operator access to a B2C recording has no `OrgAuditLog` to fall
@@ -134,7 +145,13 @@ export async function recordSystemEvent(
     // The system_events insert itself failed — log and move on. An
     // outage of this table must not cascade into the calling worker.
     console.error("[recordSystemEvent] insert failed:", err);
-    if (params.strict || params.__reportInsertFailureToCaller) throw err;
+    if (
+      params.strict ||
+      params.__reportInsertFailureToCaller ||
+      isTransactionClient(params.db)
+    ) {
+      throw err;
+    }
   }
 
   // Not awaited: this runs on the webhook critical path, and the row above is the truth.
@@ -224,6 +241,7 @@ export function recordSystemErrorSafe(
     ...params,
     __reportInsertFailureToCaller: true,
   }).catch((err) => {
+    if (isTransactionClient(params.db)) throw err;
     console.error("[system-events] recordSystemError threw:", err);
     reportSystemEventWriteFailure("recordSystemError", err);
   });
@@ -314,6 +332,7 @@ export function recordSystemEventSafe(
     ...params,
     __reportInsertFailureToCaller: true,
   }).catch((err) => {
+    if (isTransactionClient(params.db)) throw err;
     console.error("[system-events] recordSystemEvent threw:", err);
     reportSystemEventWriteFailure("recordSystemEvent", err);
   });
