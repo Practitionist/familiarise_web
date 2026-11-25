@@ -34,6 +34,8 @@ const lineId = (n: number) => `line_${String(n).padStart(6, "0")}`;
 /** Report pages by IST day (`YYYY-M-D`), in page order. */
 const mockPagesByDay = new Map<string, unknown[][]>();
 const mockReportCalls: Array<{ day: string; skip: number }> = [];
+/** IST days (`YYYY-M-D`) whose report throws. */
+const mockFailingDays = new Set<string>();
 /** Settlement entity amounts by id; an id that is absent cannot be read. */
 const mockSettlements = new Map<string, number>();
 const mockCheckpoint: { value: string | null } = { value: null };
@@ -251,6 +253,7 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
         }) => {
           const day = `${q.year}-${q.month}-${q.day}`;
           mockReportCalls.push({ day, skip: q.skip });
+          if (mockFailingDays.has(day)) throw new Error("report unavailable");
           return { items: mockPagesByDay.get(day)?.[q.skip / 1000] ?? [] };
         },
       ),
@@ -289,6 +292,7 @@ const continuation = (result: RunResult) =>
     day: { key: string; skip: number } | null;
     rematchAfter: string | null;
     settle: { from: string | null; after: string | null; stale: boolean };
+    failedDays: string[];
   };
 /** A checkpoint that says every day up to `read` was read in full. */
 const readThrough = (read: string) =>
@@ -315,6 +319,7 @@ beforeEach(() => {
   mockSettlements.clear();
   mockCheckpoint.value = null;
   mockDeadline.afterReports = Infinity;
+  mockFailingDays.clear();
   for (const key of [...mockJournals.keys()]) {
     if (key.startsWith("settlement:")) mockJournals.delete(key);
   }
@@ -1026,5 +1031,88 @@ describe("a bound that stops a run is never silent", () => {
         ids: ["settlement-reads:2026-10-05"],
       }),
     );
+  });
+});
+
+describe("a date whose report cannot be read does not stop the run", () => {
+  // 2026-10-20 08:00 IST; "yesterday" is 2026-10-19 IST.
+  const now = new Date("2026-10-20T02:30:00Z");
+  const run = () => runReconcileGatewaySettlements(Date.now(), now);
+  const line = (entity_id: string, date: string) => ({
+    entity_id,
+    type: "transfer",
+    amount: 1_000,
+    credit: 1_000,
+    debit: 0,
+    settlement_id: `setl_${date}`,
+    settled_at: settledOn(date),
+  });
+
+  it("the failing date is passed over and retried first on later runs, and a later date's settlement is examined in the same run", async () => {
+    mockCheckpoint.value = readThrough("2026-10-09");
+    mockFailingDays.add("2026-10-12");
+    mockPagesByDay.set("2026-10-12", [[line("trf_12", "2026-10-12")]]);
+    mockPagesByDay.set("2026-10-15", [[line("trf_15", "2026-10-15")]]);
+    mockSettlements.set("setl_2026-10-12", 1_000);
+    mockSettlements.set("setl_2026-10-15", 1_000);
+
+    const first = await run();
+
+    expect(first).toMatchObject({
+      settlementsPosted: 1,
+      failedDays: ["2026-10-12"],
+      daysBehind: 0,
+      done: false,
+    });
+    expect(mockJournals.get("settlement:setl_2026-10-15")).toBe(1_000);
+    expect(continuation(first)).toMatchObject({
+      read: "2026-10-19",
+      failedDays: ["2026-10-12"],
+    });
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-gateway-settlements:report-failed",
+        ids: ["2026-10-12"],
+        message: expect.stringContaining("2026-10-12 (report unavailable)"),
+      }),
+    );
+
+    carryOn(first);
+    const second = await run();
+
+    expect(mockReportCalls[0]).toEqual({ day: "2026-10-12", skip: 0 });
+    expect(continuation(second).failedDays).toEqual(["2026-10-12"]);
+
+    carryOn(second);
+    mockFailingDays.clear();
+    const third = await run();
+
+    expect(third).toMatchObject({
+      inserted: 1,
+      settlementsPosted: 1,
+      failedDays: [],
+    });
+    expect(mockJournals.get("settlement:setl_2026-10-12")).toBe(1_000);
+    expect(continuation(third).failedDays).toEqual([]);
+  });
+
+  it("a second failing date in one run stops the walk there, and the later passes still run", async () => {
+    mockCheckpoint.value = readThrough("2026-10-09");
+    mockFailingDays.add("2026-10-12");
+    mockFailingDays.add("2026-10-14");
+    mockPagesByDay.set("2026-10-11", [[line("trf_11", "2026-10-11")]]);
+    mockSettlements.set("setl_2026-10-11", 1_000);
+
+    const result = await run();
+
+    expect(result).toMatchObject({
+      settlementsPosted: 1,
+      failedDays: ["2026-10-12", "2026-10-14"],
+      daysBehind: 6,
+    });
+    expect(continuation(result)).toMatchObject({
+      read: "2026-10-13",
+      failedDays: ["2026-10-12"],
+    });
   });
 });

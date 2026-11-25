@@ -1676,6 +1676,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.postedMismatches >
             0 ||
           r.daysBehind > 2 ||
+          r.failedDays.length > 0 ||
           r.stoppedShort.some((s) => s.bound !== "deadline"),
         items: (r) => ({ processed: r.fetched }),
         failureMessage: "Failed to reconcile gateway settlements",

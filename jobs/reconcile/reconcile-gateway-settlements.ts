@@ -46,6 +46,10 @@ const DAY_MS = 24 * 60 * 60_000;
 const MAX_DAYS_PER_RUN = 10;
 /** Pages of one day a run reads; a larger day resumes at the next page on the next run. */
 const MAX_PAGES_PER_DAY = 20;
+/** Dates whose report failed and which the walk passed over; one is retried each run. */
+const MAX_FAILED_DAYS = 5;
+/** One report page gets this long, so a date that times out cannot spend the run's whole time budget. */
+const REPORT_TIMEOUT_MS = 8_000;
 /** Settlements settled longer ago than this are examined only until a full pass has covered the days read. */
 const SETTLEMENT_LOOKBACK_DAYS = 60;
 /** Settlement entities one run fetches; the next run goes on after the last one. */
@@ -94,6 +98,7 @@ const dayKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * stopped at, the last line re-matched, and the settlement examination pass.
  * `settle.from` is the earliest day read outside the lookback that no full pass
  * has covered yet; `stale` says such a day was read while a pass was under way.
+ * `failedDays` are days at or before `read` whose report could not be read.
  */
 const continuationSchema = z.object({
   read: dayKeySchema.nullable(),
@@ -106,6 +111,7 @@ const continuationSchema = z.object({
     after: z.string().nullable(),
     stale: z.boolean(),
   }),
+  failedDays: z.array(dayKeySchema).max(MAX_FAILED_DAYS).default([]),
 });
 type Continuation = z.infer<typeof continuationSchema>;
 
@@ -114,6 +120,7 @@ const freshContinuation = (): Continuation => ({
   day: null,
   rematchAfter: null,
   settle: { from: null, after: null, stale: false },
+  failedDays: [],
 });
 
 /** The stored continuation; a missing or unreadable one starts the walk from the stored lines. */
@@ -134,7 +141,7 @@ async function readContinuation(): Promise<Continuation> {
  * entities examined in this run, with `after` the last one examined.
  */
 interface StoppedShort {
-  bound: "report-pages" | "settlement-reads" | "deadline";
+  bound: "report-pages" | "settlement-reads" | "failed-days" | "deadline";
   stage: "report" | "settlements";
   /** The IST day being read or examined; absent for the scheduled settlement cohort. */
   date?: string;
@@ -159,6 +166,8 @@ interface SettlementReconResult {
   postedMismatches: number;
   /** IST days up to yesterday still unread after this run. */
   daysBehind: number;
+  /** IST days whose report could not be read in this run or is still waiting for a retry. */
+  failedDays: string[];
   /** Every bound that cut this run short; empty when each read and the examination reached its end. */
   stoppedShort: StoppedShort[];
   /** True when every day up to yesterday is read and no settlement was left unexamined. */
@@ -181,10 +190,22 @@ interface PostedMismatch {
   linesNetPaise: number;
 }
 
+interface ReportFailure {
+  date: string;
+  message: string;
+}
+
 interface SettlementFindings {
   held: HeldSettlement[];
   postedMismatches: PostedMismatch[];
+  reportFailures: ReportFailure[];
 }
+
+const noFindings = (): SettlementFindings => ({
+  held: [],
+  postedMismatches: [],
+  reportFailures: [],
+});
 
 interface IstDay {
   year: number;
@@ -507,14 +528,17 @@ async function fetchReconPage(
   day: IstDay,
   skip: number,
 ): Promise<{ rows: ReconRow[]; fetched: number; rejected: number }> {
-  const raw: unknown = await withRazorpaySdkTimeout("settlements.reports", () =>
-    client.settlements.reports({
-      year: day.year,
-      month: day.month,
-      day: day.day,
-      count: PAGE_SIZE,
-      skip,
-    }),
+  const raw: unknown = await withRazorpaySdkTimeout(
+    "settlements.reports",
+    () =>
+      client.settlements.reports({
+        year: day.year,
+        month: day.month,
+        day: day.day,
+        count: PAGE_SIZE,
+        skip,
+      }),
+    REPORT_TIMEOUT_MS,
   );
   const items = reconPageSchema.parse(raw).items;
   const rows: ReconRow[] = [];
@@ -878,6 +902,7 @@ function emptyResult(): SettlementReconResult {
     settlementsHeld: 0,
     postedMismatches: 0,
     daysBehind: 0,
+    failedDays: [],
     stoppedShort: [],
     done: false,
     byStatus: { MATCHED: 0, AMOUNT_MISMATCH: 0, FEE_MISMATCH: 0, UNMATCHED: 0 },
@@ -901,7 +926,7 @@ async function reconcileOneDay(
   isPastDeadline: () => boolean,
 ): Promise<RunOutput> {
   const result = emptyResult();
-  const findings: SettlementFindings = { held: [], postedMismatches: [] };
+  const findings = noFindings();
   const read = await readDay(client, day, 0, isPastDeadline, result);
   if (read.complete && isPastDeadline()) {
     result.stoppedShort.push({
@@ -930,37 +955,87 @@ async function reconcileOneDay(
   return { result, findings };
 }
 
-/** The scheduled walk: unread days first, then the last two days again, then the later passes. */
+/**
+ * The scheduled walk: one earlier failed date, then unread days, then the last
+ * two days again, then the later passes.
+ */
 async function reconcileFromContinuation(
   client: RazorpayClient,
   now: Date,
   isPastDeadline: () => boolean,
 ): Promise<RunOutput> {
   const result = emptyResult();
-  const findings: SettlementFindings = { held: [], postedMismatches: [] };
+  const findings = noFindings();
   const state = await readContinuation();
   const yesterday = istDayOf(new Date(now.getTime() - DAY_MS));
   const dayBefore = istDayFrom(new Date(yesterday.start.getTime() - DAY_MS));
   const readBefore = state.read ? dayFromKey(state.read) : null;
   const firstUnread = await firstUnreadDay(readBefore, dayBefore);
 
+  // A date whose report throws is noted and never ends the run.
+  const readSafely = async (day: IstDay, skip: number) => {
+    try {
+      return await readDay(client, day, skip, isPastDeadline, result);
+    } catch (error) {
+      findings.reportFailures.push({
+        date: dayKey(day),
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  };
+  const completed: IstDay[] = [];
+
+  // One date that failed earlier is tried again first; if it fails again it goes to the back.
+  const retryKey = state.failedDays[0];
+  const retryDay = retryKey === undefined ? null : dayFromKey(retryKey);
+  if (retryKey !== undefined) {
+    state.failedDays = state.failedDays.slice(1);
+    const outcome = retryDay ? await readSafely(retryDay, 0) : null;
+    if (retryDay && outcome?.complete) completed.push(retryDay);
+    else if (retryDay) state.failedDays.push(retryKey);
+  }
+
   let read = readBefore;
-  let firstCompleted: IstDay | null = null;
   let cut = false;
+  let passedOver = false;
   for (
     let day = firstUnread, count = 0;
     day.start <= yesterday.start && count < MAX_DAYS_PER_RUN;
     day = istDayFrom(day.end), count++
   ) {
     const skip = state.day?.key === dayKey(day) ? state.day.skip : 0;
-    const outcome = await readDay(client, day, skip, isPastDeadline, result);
+    const outcome = await readSafely(day, skip);
+    if (outcome === null) {
+      // One failing date a run is passed over for a later retry; a second
+      // one, or a full list, stops the walk at that date.
+      const listFull = state.failedDays.length >= MAX_FAILED_DAYS;
+      if (passedOver || listFull) {
+        if (listFull) {
+          result.stoppedShort.push({
+            bound: "failed-days",
+            stage: "report",
+            date: dayKey(day),
+            reached: state.failedDays.length,
+          });
+        }
+        cut = true;
+        break;
+      }
+      passedOver = true;
+      state.failedDays.push(dayKey(day));
+      read = day;
+      state.read = dayKey(day);
+      state.day = null;
+      continue;
+    }
     if (!outcome.complete) {
       state.day = { key: dayKey(day), skip: outcome.nextSkip };
       cut = true;
       break;
     }
     read = day;
-    firstCompleted ??= day;
+    completed.push(day);
     state.read = dayKey(day);
     state.day = null;
   }
@@ -975,10 +1050,14 @@ async function reconcileFromContinuation(
   if (!cut && result.daysBehind === 0 && readBefore) {
     for (const day of [dayBefore, yesterday]) {
       if (day.start > readBefore.start) continue;
-      const again = await readDay(client, day, 0, isPastDeadline, result);
-      if (!again.complete) break;
+      const again = await readSafely(day, 0);
+      if (again && !again.complete) break;
     }
   }
+  const firstCompleted = completed.reduce<IstDay | null>(
+    (first, day) => (!first || day.start < first.start ? day : first),
+    null,
+  );
 
   // A day read outside the lookback stays in the cohort until a full pass covers it.
   const lookbackStart = now.getTime() - SETTLEMENT_LOOKBACK_DAYS * DAY_MS;
@@ -1020,7 +1099,14 @@ async function reconcileFromContinuation(
     }
   }
 
-  result.done = result.daysBehind === 0 && examined;
+  result.failedDays = [
+    ...new Set([
+      ...state.failedDays,
+      ...findings.reportFailures.map((failure) => failure.date),
+    ]),
+  ];
+  result.done =
+    result.daysBehind === 0 && examined && result.failedDays.length === 0;
   result.checkpoint = JSON.stringify(state);
   result.settlementsHeld = findings.held.length;
   result.postedMismatches = findings.postedMismatches.length;
@@ -1040,7 +1126,7 @@ async function reconcileGatewaySettlements(
         skipped: "RAZORPAY_KEY_ID or RAZORPAY_SECRET not configured",
         done: true,
       },
-      findings: { held: [], postedMismatches: [] },
+      findings: noFindings(),
     };
   }
   const isPastDeadline = startDeadline(startedAt);
@@ -1091,6 +1177,26 @@ async function reportSettlementFindings(
         extra: { rejectedRows: result.rejectedRows },
         fingerprint: [RECONCILE_GATEWAY_SETTLEMENTS_JOB, "rejected-rows"],
       },
+    );
+  }
+  if (findings.reportFailures.length > 0) {
+    const message = `Razorpay settlement report could not be read for ${findings.reportFailures.length} date(s): ${findings.reportFailures
+      .map((failure) => `${failure.date} (${failure.message})`)
+      .join("; ")}; each stays in line for a retry`;
+    await reportStandingFinding(
+      {
+        key: `${RECONCILE_GATEWAY_SETTLEMENTS_JOB}:report-failed`,
+        ids: findings.reportFailures.map((failure) => failure.date),
+        message,
+      },
+      () =>
+        reportSentryMessage(message, {
+          subsystem: "payments",
+          op: RECONCILE_GATEWAY_SETTLEMENTS_JOB,
+          level: "error",
+          extra: { failures: findings.reportFailures },
+          fingerprint: [RECONCILE_GATEWAY_SETTLEMENTS_JOB, "report-failed"],
+        }),
     );
   }
   if (findings.held.length > 0) {
@@ -1148,7 +1254,7 @@ export async function runReconcileGatewaySettlements(
       throw new InvalidDateParamError();
     }
   }
-  let findings: SettlementFindings = { held: [], postedMismatches: [] };
+  let findings = noFindings();
   // The lock records the checkpoint from the result it is handed.
   const result = await withCronLock(
     "reconcile-gateway-settlements",
