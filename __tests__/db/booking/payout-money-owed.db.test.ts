@@ -3,11 +3,13 @@
  * Postgres: a batch leaves a READY earning whose payment carries an owed-refund
  * marker and pays the expert's other earning; a marker that lands on an earning
  * already batched blocks the claim before anything is sent; once the markers
- * clear, a later batch picks the earning up.
+ * clear, a later batch picks the earning up. An earning the heal sweep writes
+ * after its payment's dispute opened stays PENDING past its hold and out of
+ * the batch until the dispute is decided.
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
-import { seedConsultee, seedHost } from "./harness";
+import { HOUR_MS, seedConsultee, seedHost, seedOneToOne } from "./harness";
 
 jest.mock("../../../lib/redis", () => ({
   ...jest.requireActual("../../../lib/redis"),
@@ -26,6 +28,8 @@ jest.mock("../../../lib/payments/payouts/balance-preflight", () => ({
 }));
 
 import { stampRefundOwed } from "../../../lib/payments/operations/refund-owed";
+import { releaseEarningsFromHold } from "../../../scripts/earnings/release-earnings";
+import { syncPaymentEarnings } from "../../../scripts/earnings/sync-payment-earnings";
 import {
   checkPayoutEligibility,
   createPayoutBatch,
@@ -151,4 +155,66 @@ it("a stamped marker keeps a READY earning out of the batch and blocks the claim
   const second = await createPayoutBatch([cp]);
   expect(second).toMatchObject({ minted: 1, failed: 0 });
   expect((await earningOf(owed.earningId)).status).toBe("BATCHED");
+});
+
+it("an earning written after its payment's dispute opened is neither released nor batched until the dispute is decided", async () => {
+  const { host, owed, clean } = await seedTwoReadyEarnings();
+  const cp = host.consultantProfileId;
+  const buyer = await seedConsultee();
+  const past = new Date(Date.now() - 10 * 24 * HOUR_MS);
+  const booking = await seedOneToOne(
+    "consultation",
+    host,
+    buyer,
+    { startsAt: past, endsAt: new Date(past.getTime() + HOUR_MS) },
+    {
+      status: "COMPLETED",
+      isTentative: false,
+      completionStatus: "COMPLETED",
+      payment: { status: "SUCCEEDED", expiresAt: null, amount: 50_000 },
+    },
+  );
+  const paymentId = booking.payment!.id;
+  // A gateway capture whose earnings write never landed: the heal sweep's cohort.
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: { isMockPayment: false },
+  });
+  const dispute = await prisma.dispute.create({
+    data: {
+      paymentId,
+      amountPaise: BigInt(50_000),
+      reason: "database tier",
+      status: "NEEDS_RESPONSE",
+      disputeId: `disp_dbtier_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+    },
+  });
+
+  await syncPaymentEarnings();
+  const late = await prisma.consultantEarnings.findFirstOrThrow({
+    where: { paymentId, consultantProfileId: cp },
+    select: { id: true, status: true },
+  });
+  expect(late.status).toBe("PENDING");
+  await prisma.consultantEarnings.update({
+    where: { id: late.id },
+    data: { holdUntil: new Date(Date.now() - HOUR_MS) },
+  });
+
+  await releaseEarningsFromHold();
+  expect((await earningOf(late.id)).status).toBe("PENDING");
+
+  const batch = await createPayoutBatch([cp]);
+  expect(batch).toMatchObject({ minted: 1, failed: 0 });
+  expect((await earningOf(late.id)).payoutId).toBeNull();
+  expect((await earningOf(owed.earningId)).status).toBe("BATCHED");
+  expect((await earningOf(clean.earningId)).status).toBe("BATCHED");
+
+  await prisma.dispute.update({
+    where: { id: dispute.id },
+    data: { status: "WON" },
+  });
+  await releaseEarningsFromHold();
+  expect((await earningOf(late.id)).status).toBe("READY");
 });

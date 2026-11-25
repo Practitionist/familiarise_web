@@ -100,15 +100,14 @@ export const NO_MONEY_OWED_PAYMENT = {
 } satisfies Prisma.PaymentWhereInput;
 
 /**
- * A payment whose PENDING earnings may be released: no refund in flight or
- * owed, every live session delivered, and no session owing a make-up, parked
- * for a human or carrying an unconfirmed learner-absent verdict. A
- * subscription's misses do not hold it (`EARNINGS_HOLDING_MISS`). The claim's
- * WHERE repeats it, so a gate that appears mid-run keeps the row.
+ * A payment whose PENDING earnings may be released: no money owed back on it,
+ * every live session delivered, and no session owing a make-up, parked for a
+ * human or carrying an unconfirmed learner-absent verdict. A subscription's
+ * misses do not hold it (`EARNINGS_HOLDING_MISS`). The claim's WHERE repeats
+ * it, so a gate that appears mid-run keeps the row.
  */
 export const RELEASABLE_PAYMENT = {
-  refunds: NO_MONEY_OWED_PAYMENT.refunds,
-  refundOwedKey: NO_MONEY_OWED_PAYMENT.refundOwedKey,
+  ...NO_MONEY_OWED_PAYMENT,
   NOT: {
     appointment: {
       occurrences: { some: UNDELIVERED_OCCURRENCE },
