@@ -35,10 +35,16 @@ jest.mock("../../lib/prisma", () => {
   const supportFinancialRecommendation = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   };
+  // The owed-refund marker a settled refund is taken off.
+  const payment = {
+    findUnique: jest.fn(),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  };
   return {
     __esModule: true,
     default: {
       refund,
+      payment,
       supportFinancialRecommendation,
       $executeRaw: jest.fn().mockResolvedValue(1),
       // The stranded-refund backstop selects its cohort ids with raw SQL.
@@ -46,7 +52,7 @@ jest.mock("../../lib/prisma", () => {
       // #1589 N-P0-01 — the SUCCEEDED mark now runs in its own tx with the
       // payer's notice; the tx sees the same refund table.
       $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
-        fn({ refund, supportFinancialRecommendation }),
+        fn({ refund, payment, supportFinancialRecommendation }),
       ),
     },
   };
@@ -142,6 +148,7 @@ interface ReconcileRefundMock {
 }
 interface ReconcilePrismaMock {
   refund: ReconcileRefundMock;
+  payment: { findUnique: jest.Mock; updateMany: jest.Mock };
   supportFinancialRecommendation: { updateMany: jest.Mock };
   $transaction: jest.Mock;
   $queryRaw: jest.Mock;
@@ -149,6 +156,7 @@ interface ReconcilePrismaMock {
 
 // Single seam over the generated client (repo-wide mock idiom).
 const refundTable = (prisma as unknown as ReconcilePrismaMock).refund;
+const paymentTable = (prisma as unknown as ReconcilePrismaMock).payment;
 const mockStrandedIds = (prisma as unknown as ReconcilePrismaMock).$queryRaw;
 const mockList = listRefunds as jest.Mock;
 const mockGet = getRefund as jest.Mock;
@@ -607,12 +615,20 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
         stillOwedPaise: 0,
         note: "settled by hand",
       },
+      // What the restore wrote when the refund was failed: ₹100 back on the live marker.
       settledOwedRestored: true,
+      settledOwedRestoredPaise: 10_000,
+      settledOwedRestoredKey: "owed:pay-9",
     };
     refundTable.findUnique.mockResolvedValue({
       paymentId: "pay-9",
       metadata: givenBack,
       updatedAt: new Date(0),
+    });
+    // The marker still owes ₹250, of which this refund's ₹100 was given back.
+    paymentTable.findUnique.mockResolvedValueOnce({
+      refundOwedKey: "owed:pay-9",
+      refundOwedPaise: 25_000,
     });
 
     const result = await reconcilePendingRefunds();
@@ -621,6 +637,16 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
     expect(refundTable.updateMany).toHaveBeenCalledWith({
       where: { id: "row_revived", updatedAt: new Date(0) },
       data: { metadata: { ...givenBack, settledOwedResettled: true } },
+    });
+    // The settled ₹100 comes off the owed refund, by compare-and-set on the marker as read.
+    expect(paymentTable.updateMany).toHaveBeenCalledTimes(1);
+    expect(paymentTable.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "pay-9",
+        refundOwedKey: "owed:pay-9",
+        refundOwedPaise: 25_000,
+      },
+      data: { refundOwedPaise: 15_000 },
     });
   });
 
