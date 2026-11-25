@@ -84,6 +84,14 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue({ created: true }),
 }));
+const mockBookTopUpRefund = jest.fn(async (..._a: unknown[]) => ({
+  booked: true,
+  clawbackPaise: 5_000,
+  shortfallPaise: 0,
+}));
+jest.mock("../../lib/payments/operations/wallet-refund", () => ({
+  bookTopUpRefund: (...a: unknown[]) => mockBookTopUpRefund(...a),
+}));
 const mockStampSeat = jest.fn(async (..._a: unknown[]) => 1);
 jest.mock("../../lib/booking/participants", () => ({
   ...jest.requireActual("../../lib/booking/participants"),
@@ -275,6 +283,7 @@ type TransactionFn = (
 
 import { DeferSignal, handleRefundCreated } from "../../app/api/webhooks/utils";
 import { walletCredit } from "../../lib/api/organizations/wallet";
+import { postLedgerTxn } from "../../lib/payments/ledger/post";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -631,6 +640,80 @@ describe("a booking refund's seat is decided as its webhook settles it", () => {
     expect(store.refunds[0].status).toBe("SUCCEEDED");
     expect(mockStampSeat).not.toHaveBeenCalled();
     expect(mockIntentInTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("a refund event that says its payment was never captured books nothing on the enterprise rails either", () => {
+  const TOP_UP = {
+    id: "tu_1",
+    billingAccountId: "ba_1",
+    amountPaise: 5_000,
+    providerOrderId: "order_tu",
+  };
+  const INVOICE = {
+    id: "inv_1",
+    organizationId: "org_1",
+    invoiceNumber: "INV-1",
+    subtotalPaise: 5_000,
+    totalPaise: 5_000,
+    status: "PAID",
+  };
+  /** One delivery for a payment no Payment row holds, against the rows given. */
+  async function deliver(
+    rows: { topUp?: typeof TOP_UP; invoice?: typeof INVOICE },
+    captured: boolean | undefined,
+  ) {
+    const tx = txStub();
+    tx.walletTopUp.findFirst.mockResolvedValue((rows.topUp ?? null) as never);
+    tx.organizationInvoice.findFirst.mockResolvedValue(
+      (rows.invoice ?? null) as never,
+    );
+    (prisma as unknown as { $transaction: TransactionFn }).$transaction = (
+      fn,
+    ) => fn(tx);
+    const result = await handleRefundCreated(
+      "rfnd_ent",
+      "order_unknown",
+      5_000,
+      "INR",
+      "processed",
+      "pay_ent",
+      undefined,
+      captured,
+    );
+    return { tx, result };
+  }
+
+  test.each([
+    ["a confirmed wallet top-up", { topUp: TOP_UP }],
+    ["a paid organisation invoice", { invoice: INVOICE }],
+    ["no row at all", {}],
+  ])("captured:false against %s", async (_label, rows) => {
+    const { tx, result } = await deliver(rows, false);
+
+    expect(result).toBeUndefined();
+    expect(mockBookTopUpRefund).not.toHaveBeenCalled();
+    expect(postLedgerTxn).not.toHaveBeenCalled();
+    expect(tx.orgAuditLog.create).not.toHaveBeenCalled();
+    expect(store.events).toEqual([
+      expect.objectContaining({
+        severity: "WARN",
+        correlationId: "refund-unmatched:rfnd_ent",
+        context: expect.objectContaining({
+          gatewayRefundId: "rfnd_ent",
+          orderId: "order_unknown",
+          gatewayPaymentId: "pay_ent",
+          reason: expect.stringContaining("never captured"),
+        }),
+      }),
+    ]);
+  });
+
+  test("a top-up refund whose event carries no flag is booked as before", async () => {
+    await deliver({ topUp: TOP_UP }, undefined);
+
+    expect(mockBookTopUpRefund).toHaveBeenCalledTimes(1);
+    expect(store.events).toHaveLength(0);
   });
 });
 

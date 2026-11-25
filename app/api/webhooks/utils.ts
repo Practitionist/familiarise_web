@@ -492,8 +492,9 @@ export {
 interface UnmatchedRefundEvent {
   gatewayRefundId: string;
   orderId: string;
-  paymentId: string;
-  paymentStatus: PaymentStatus;
+  /** Null when no Payment row holds the refunded payment. */
+  paymentId: string | null;
+  paymentStatus: PaymentStatus | null;
   gatewayPaymentId: string | null;
   capturedGatewayPaymentId: string | null;
   amountPaise: number;
@@ -553,6 +554,21 @@ function decideRefundEvent(
     };
   }
   return { kind: "book" };
+}
+
+/** The event to record for a refused refund, or null when this gateway refund already has one. */
+async function unrecordedUnmatchedRefund(
+  tx: Tx,
+  event: UnmatchedRefundEvent,
+): Promise<UnmatchedRefundEvent | null> {
+  const recorded = await tx.systemEvent.findFirst({
+    where: {
+      category: "PAYMENT",
+      correlationId: unmatchedRefundCorrelationId(event.gatewayRefundId),
+    },
+    select: { id: true },
+  });
+  return recorded ? null : event;
 }
 
 /** Written after the transaction commits; strict, so a failed insert fails the delivery. */
@@ -661,31 +677,42 @@ export async function handleRefundCreated(
           }
           if (decision.kind === "refuse") {
             // Books nothing; one event per gateway refund, whatever redelivers it.
-            const recorded = await tx.systemEvent.findFirst({
-              where: {
-                category: "PAYMENT",
-                correlationId: unmatchedRefundCorrelationId(refundId),
-              },
-              select: { id: true },
+            unmatched = await unrecordedUnmatchedRefund(tx, {
+              gatewayRefundId: refundId,
+              orderId: payment.paymentIntent,
+              paymentId: payment.id,
+              paymentStatus: payment.paymentStatus,
+              gatewayPaymentId: providerPaymentId ?? null,
+              capturedGatewayPaymentId: payment.gatewayPaymentId,
+              amountPaise: amount,
+              severity: decision.severity,
+              reason: decision.reason,
             });
-            if (!recorded) {
-              unmatched = {
-                gatewayRefundId: refundId,
-                orderId: payment.paymentIntent,
-                paymentId: payment.id,
-                paymentStatus: payment.paymentStatus,
-                gatewayPaymentId: providerPaymentId ?? null,
-                capturedGatewayPaymentId: payment.gatewayPaymentId,
-                amountPaise: amount,
-                severity: decision.severity,
-                reason: decision.reason,
-              };
-            }
             return;
           }
         }
 
         if (!payment) {
+          // The event's own word that the payment was never captured is
+          // decisive for a top-up, an invoice receipt and an unknown payment too.
+          if (
+            eventPaymentCaptured === false &&
+            mapGatewayRefundStatus(status) !== RefundStatus.FAILED
+          ) {
+            unmatched = await unrecordedUnmatchedRefund(tx, {
+              gatewayRefundId: refundId,
+              orderId: paymentIntentId,
+              paymentId: null,
+              paymentStatus: null,
+              gatewayPaymentId: providerPaymentId ?? null,
+              capturedGatewayPaymentId: null,
+              amountPaise: amount,
+              severity: "WARN",
+              reason: "the refunded gateway payment was never captured",
+            });
+            return;
+          }
+
           // Fall through to enterprise branches. We need the original
           // provider payment id (`pay_<…>`) to look up org-level rows.
           if (!providerPaymentId) {
