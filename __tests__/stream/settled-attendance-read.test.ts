@@ -32,14 +32,16 @@ const stream = {
   sessionsNext: undefined as string | undefined,
   /** When set, the call listing never answers. */
   stall: false,
+  configured: true,
   /** Participant pages per `callId/session`, each with the total Stream reported on it. */
   pages: new Map<string, { rows: Row[]; total: number }[]>(),
 };
 
 jest.mock("../../lib/stream-client", () => ({
-  isStreamConfigured: () => true,
+  isStreamConfigured: () => stream.configured,
   withStreamCircuitBreaker: (op: () => Promise<unknown>) => op(),
   streamHttpStatus: (e: { status?: number }) => e?.status ?? null,
+  isRateLimitError: (e: { status?: number }) => e?.status === 429,
   getStreamVideoClient: () => ({
     video: {
       queryCalls: () =>
@@ -139,6 +141,7 @@ beforeEach(() => {
   stream.sessionEnded = true;
   stream.sessionsNext = undefined;
   stream.stall = false;
+  stream.configured = true;
   stream.failParticipants = null;
   stream.pages = new Map();
 });
@@ -249,14 +252,26 @@ it.each([
   },
 );
 
-it("a participant read failing with 503 is unavailable", async () => {
-  stream.failParticipants = { status: 503 };
-  expect(await read()).toEqual({ kind: "unavailable" });
+it.each([
+  [{ status: 503 }, false],
+  [new Error("socket hang up"), false],
+  [{ status: 429 }, true],
+])(
+  "a request that fails with %p is unavailable, and says whether Stream throttled it (%p)",
+  async (failure, throttled) => {
+    stream.failParticipants = failure as { status: number };
+    expect(await read()).toEqual({ kind: "unavailable", throttled });
+  },
+);
+
+it("Stream without its keys is unavailable, never an answer", async () => {
+  stream.configured = false;
+  expect(await read()).toEqual({ kind: "unavailable", throttled: false });
 });
 
-it("a call list longer than one page is unavailable, since Stream refuses its cursor", async () => {
+it("a call list longer than one page is Stream's answer, not a failed request: not final", async () => {
   stream.callsNext = "cursor";
-  expect(await read()).toEqual({ kind: "unavailable" });
+  expect(await read()).toEqual({ kind: "not-final" });
 });
 
 it("a session listing whose cursor repeats is not final, never a complete list", async () => {

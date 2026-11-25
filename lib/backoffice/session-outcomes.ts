@@ -20,6 +20,7 @@ import {
   onClassSessionVoided,
   onClassVoidConfirmed,
 } from "@/lib/booking/class-sessions";
+import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
   classifySessionOutcome,
@@ -57,6 +58,7 @@ import {
   PROPOSED_CONSULTANT_NO_SHOW,
   reportWindowClosesAt,
 } from "@/lib/booking/misses";
+import { unstampUndeliveredTranches } from "@/lib/booking/subscription-cycle";
 import {
   claimNoShowTx,
   NoShowDuringOutageError,
@@ -276,6 +278,17 @@ async function moveStatus(
     reason: `ops:session.set-outcome:${args.outcome}`,
     actorUserId: args.actorUserId,
   });
+  // A plan's delivered session just left its cycle undelivered. Before the class branch's return, so no path skips it.
+  if (
+    to === "VOIDED" &&
+    occ.appointment.subscription &&
+    isCompletedOccurrence(occ)
+  ) {
+    await unstampUndeliveredTranches(tx, {
+      appointmentId: occ.appointmentId,
+      now,
+    });
+  }
   if (to === "VOIDED" && occ.appointment.classId) {
     return onClassSessionVoided(tx, {
       appointmentId: occ.appointmentId,

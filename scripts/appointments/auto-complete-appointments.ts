@@ -70,9 +70,12 @@ import {
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
   readOutageWindows,
+  readOutcomeQueueAge,
   staleNeedsHumanWhere,
+  type OutcomeQueueAge,
   type OutcomeSlot,
   type SlotDecision,
+  type StreamReadBudget,
 } from "@/lib/booking/session-outcome-sweep";
 import {
   createRunFailureReporter,
@@ -323,6 +326,12 @@ export interface AutoCompleteResult {
   classEndSeatsOwed: number;
   classEndOwedPaise: number;
   classEndCreditSeatsEscalated: number;
+  /** Minutes since the booked end of the oldest session with no outcome yet; null when none waits or the read failed. */
+  oldestUndecidedSessionMinutes: number | null;
+  /** Sessions waiting for a person; null when the read failed. */
+  needsHumanSessions: number | null;
+  /** Minutes the oldest of them has waited; null when none waits or the read failed. */
+  oldestNeedsHumanMinutes: number | null;
   errors: string[];
   timestamp: string;
   /** The window-close pass's resume cursor, kept by the run trail; absent when the pass was skipped. */
@@ -356,6 +365,7 @@ async function completeUnderLock(
     await withAppointmentLock(appointmentId, run, {
       ...SWEEP_LOCK_RETRY_CONFIG,
       callTimeoutMs,
+      deadlineAt: deadline.until,
     });
     return true;
   } catch (error) {
@@ -1191,7 +1201,7 @@ async function decideOneSlot(
   slot: OutcomeSlot,
   ctx: Omit<
     Parameters<typeof decideSlotOutcome>[1],
-    "onUnreadable" | "failures" | "settleDeadlineAt"
+    "onUnreadable" | "failures" | "settleDeadlineAt" | "stream"
   >,
   run: SlotRun,
   settle: { wrappers: Set<string>; decidedHosts: Set<string> },
@@ -1201,6 +1211,7 @@ async function decideOneSlot(
     onUnreadable: (id) => run.unreadable.push(id),
     failures: run.streamFailures,
     settleDeadlineAt: run.settleDeadlineAt,
+    stream: run.stream,
   });
   if (tallyDecision(run.tally, decision) && slot.appointment.subscriptionId) {
     settle.wrappers.add(slot.appointmentId);
@@ -1221,6 +1232,8 @@ interface SlotRun {
   streamFailures: RunFailureReporter;
   /** Every session's Stream reads must answer by the end of the run's start budget. */
   settleDeadlineAt: number;
+  /** Set by the first throttled read; every later session of the run waits without asking Stream. */
+  stream: StreamReadBudget;
   menteeFailures: RunFailureReporter;
 }
 
@@ -1438,6 +1451,7 @@ async function autoCompleteAppointmentsUnlocked(
     unreadable: [],
     streamFailures: createRunFailureReporter("stream"),
     settleDeadlineAt: deadlines.settleDeadlineAt,
+    stream: { throttled: false, deferred: 0 },
     menteeFailures: createRunFailureReporter("bookings"),
   };
   const parents: ParentPassState[] = PARENT_PASSES.map((pass) => ({
@@ -1450,6 +1464,7 @@ async function autoCompleteAppointmentsUnlocked(
   const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
   let rounds = 0;
   let checkpoint: string | null | undefined;
+  let queueAge: OutcomeQueueAge | null = null;
   try {
     // Before the drain, which can spend the whole budget, and before the alerts, so a confirmed verdict is not counted as waiting.
     const confirms = await confirmClosedOutcomes(
@@ -1484,6 +1499,21 @@ async function autoCompleteAppointmentsUnlocked(
         `Failed to escalate aged needs-human sessions: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
+    try {
+      // After the drain, so the summary states what this run left behind.
+      const now = new Date();
+      queueAge = await readOutcomeQueueAge(
+        prisma,
+        now,
+        undecidedSlotWhere(
+          new Date(now.getTime() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000),
+        ),
+      );
+    } catch (error) {
+      allErrors.push(
+        `Failed to read the outcome queue's age: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
   } finally {
     // Run-level reports survive a bite that throws.
     if (slotRun.unreadable.length > 0) {
@@ -1497,6 +1527,17 @@ async function autoCompleteAppointmentsUnlocked(
         );
       });
     }
+    // One report for the run, however many sessions the throttle left waiting.
+    if (slotRun.stream.throttled) {
+      slotRun.streamFailures.add(
+        "session-outcome-sweep.stream-throttled",
+        new Error(
+          "Stream throttled an attendance read; the run stopped reading Stream",
+        ),
+        { deferred: slotRun.stream.deferred },
+        { level: "warning" },
+      );
+    }
     slotRun.streamFailures.flush();
     slotRun.menteeFailures.flush();
   }
@@ -1508,6 +1549,11 @@ async function autoCompleteAppointmentsUnlocked(
   // Summary
   console.log(`\n📊 Auto-Complete Summary (${rounds} round(s)):`);
   console.log(`   Sessions deferred: ${tally.deferred}`);
+  if (queueAge) {
+    console.log(
+      `   Queue age: oldest undecided ${queueAge.oldestUndecidedMinutes ?? 0} min; ${queueAge.needsHuman} waiting for a person, oldest ${queueAge.oldestNeedsHumanMinutes ?? 0} min`,
+    );
+  }
   console.log(`   Webinars completed: ${completed("webinars")}`);
   console.log(`   Classes completed: ${completed("classes")}`);
   console.log(`   Consultations completed: ${completed("consultations")}`);
@@ -1532,6 +1578,9 @@ async function autoCompleteAppointmentsUnlocked(
     classEndSeatsOwed: classEnd.owed,
     classEndOwedPaise: classEnd.owedPaise,
     classEndCreditSeatsEscalated: classEnd.escalated,
+    oldestUndecidedSessionMinutes: queueAge?.oldestUndecidedMinutes ?? null,
+    needsHumanSessions: queueAge?.needsHuman ?? null,
+    oldestNeedsHumanMinutes: queueAge?.oldestNeedsHumanMinutes ?? null,
     errors: allErrors,
     timestamp: new Date().toISOString(),
     // The run trail keeps it for the window-close pass's next run; a skipped pass writes none.

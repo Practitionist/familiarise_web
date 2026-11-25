@@ -70,6 +70,7 @@ const confirmed = new Date(newEnd.getTime() + 48 * HOUR);
 type EarningRow = {
   id: string;
   status: "PENDING" | "READY" | "PAID" | "HELD";
+  preHoldStatus?: "READY";
   holdUntil: Date | null;
   createdAt: Date;
   cycleOrdinal: number | null;
@@ -80,6 +81,7 @@ type EarningsWhere = {
   id?: string;
   paymentId?: { in: string[] };
   status?: string;
+  OR?: { status: string; preHoldStatus?: string }[];
   holdUntil?: Date | { not: null };
   cycleOrdinal?: null;
 };
@@ -88,6 +90,13 @@ function earningsTable(rows: EarningRow[]) {
   const matches = (row: EarningRow, where: EarningsWhere) =>
     (where.id === undefined || row.id === where.id) &&
     (where.status === undefined || row.status === where.status) &&
+    (where.OR === undefined ||
+      where.OR.some(
+        (alt) =>
+          row.status === alt.status &&
+          (alt.preHoldStatus === undefined ||
+            row.preHoldStatus === alt.preHoldStatus),
+      )) &&
     (where.cycleOrdinal === undefined || row.cycleOrdinal === null) &&
     (where.holdUntil === undefined ||
       (where.holdUntil instanceof Date
@@ -120,6 +129,8 @@ function confirmingTx() {
     (["PENDING", "READY", "PAID", "HELD"] as const).map((status) => ({
       id: `ce-${status}`,
       status,
+      // A row held after its release keeps the date it was released on.
+      ...(status === "HELD" && { preHoldStatus: "READY" as const }),
       holdUntil: buffered,
       createdAt: capturedAt,
       cycleOrdinal: null,

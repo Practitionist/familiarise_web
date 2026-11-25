@@ -31,6 +31,7 @@ import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
 import {
   ATTENDANCE_SETTLE_WAIT_MS,
+  attendanceReadableAt,
   SETTLE_MEETING_SELECT,
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
@@ -107,9 +108,18 @@ export type OutcomeSlot = Prisma.AppointmentOccurrenceGetPayload<{
   select: typeof OUTCOME_SLOT_SELECT;
 }>;
 
+/** One run's Stream reads: once a read is throttled, no later session asks Stream in that run. */
+export interface StreamReadBudget {
+  throttled: boolean;
+  /** Sessions left for a later run because of the throttle, the throttled read's own included. */
+  deferred: number;
+}
+
 export interface OutcomeContext {
   now: Date;
   outages: OutageWindow[];
+  /** Shared by every session of the run; absent, each session reads Stream on its own. */
+  stream?: StreamReadBudget;
   /** Called once per session parked because Stream's record could not be read in time. */
   onUnreadable?: (occurrenceId: string) => void;
   /** The run's Stream failure reporter, flushed once per run. */
@@ -217,16 +227,35 @@ async function slotEvidence(
   ) {
     return { kind: "intervals", intervals: [] };
   }
-  const settled = await settleOccurrenceAttendance(
-    { occurrenceId: slot.id, endsAt: slot.endsAt, meeting },
-    { now: ctx.now, failures: ctx.failures, deadlineAt: ctx.settleDeadlineAt },
-  );
+  const target = { occurrenceId: slot.id, endsAt: slot.endsAt, meeting };
+  // A stored record needs no read, and a room too fresh to read is not asked either.
+  const wouldReadStream =
+    !meeting.attendanceSettledAt && ctx.now >= attendanceReadableAt(target);
+  if (ctx.stream?.throttled && wouldReadStream) {
+    ctx.stream.deferred++;
+    return { kind: "wait" };
+  }
+  const settled = await settleOccurrenceAttendance(target, {
+    now: ctx.now,
+    failures: ctx.failures,
+    deadlineAt: ctx.settleDeadlineAt,
+  });
   if (settled.kind === "settled") {
+    if (settled.throttled && ctx.stream) ctx.stream.throttled = true;
     return { kind: "intervals", intervals: settled.intervals };
   }
-  // A read cut short by this run's deadline says nothing about Stream: always try again.
+  // A room too fresh to read was never asked, so it says nothing either.
+  if (settled.kind === "too-early" && !wouldReadStream) return { kind: "wait" };
+  // A failed request, or a read cut short by this run's deadline, says nothing about the session: always try again.
+  if (settled.kind === "unavailable") {
+    if (settled.throttled && ctx.stream) {
+      ctx.stream.throttled = true;
+      ctx.stream.deferred++;
+    }
+    return { kind: "wait" };
+  }
   if (settled.kind === "out-of-time") return { kind: "wait" };
-  // Past Stream's retention nothing will come back; anything else is retried until the wait ends.
+  // Past Stream's retention nothing will come back; an answer that is not final is retried until the wait ends.
   const waited =
     ctx.now.getTime() - slot.endsAt.getTime() >= ATTENDANCE_SETTLE_WAIT_MS;
   return settled.kind === "expired" || waited
@@ -771,6 +800,58 @@ export async function alertStaleNeedsHuman(
     });
   }
   return stale;
+}
+
+export interface OutcomeQueueAge {
+  /** Minutes since the booked end of the oldest session still without an outcome; null when none waits. */
+  oldestUndecidedMinutes: number | null;
+  /** Sessions on the needs-human list. */
+  needsHuman: number;
+  /** Minutes the oldest of them has waited, from its verdict or else its booked end; null when the list is empty. */
+  oldestNeedsHumanMinutes: number | null;
+}
+
+const minutesSince = (from: Date | null | undefined, now: Date) =>
+  from
+    ? Math.max(0, Math.floor((now.getTime() - from.getTime()) / 60_000))
+    : null;
+
+/** The outcome queue's age for the run summary; `undecided` is the slot pass's own cohort. */
+export async function readOutcomeQueueAge(
+  db: Pick<Tx, "appointmentOccurrence">,
+  now: Date,
+  undecided: Prisma.AppointmentOccurrenceWhereInput,
+): Promise<OutcomeQueueAge> {
+  const waiting = needsHumanWhere(now);
+  const [oldestUndecided, needsHuman, oldestVerdict, oldestUnjudged] =
+    await Promise.all([
+      db.appointmentOccurrence.findFirst({
+        where: undecided,
+        orderBy: { endsAt: "asc" },
+        select: { endsAt: true },
+      }),
+      db.appointmentOccurrence.count({ where: waiting }),
+      db.appointmentOccurrence.findFirst({
+        where: { AND: [waiting, { outcomeAt: { not: null } }] },
+        orderBy: { outcomeAt: "asc" },
+        select: { outcomeAt: true },
+      }),
+      db.appointmentOccurrence.findFirst({
+        where: { AND: [waiting, { outcomeAt: null }] },
+        orderBy: { endsAt: "asc" },
+        select: { endsAt: true },
+      }),
+    ]);
+  // A waiting session ages from its verdict, or from its booked end when none was written.
+  const waits = [
+    minutesSince(oldestVerdict?.outcomeAt, now),
+    minutesSince(oldestUnjudged?.endsAt, now),
+  ].filter((m): m is number => m !== null);
+  return {
+    oldestUndecidedMinutes: minutesSince(oldestUndecided?.endsAt, now),
+    needsHuman,
+    oldestNeedsHumanMinutes: waits.length > 0 ? Math.max(...waits) : null,
+  };
 }
 
 /** Closed unconfirmed verdicts judged per page; the pass pages by keyset until its deadline, so weak rows cannot hide older ones. */
