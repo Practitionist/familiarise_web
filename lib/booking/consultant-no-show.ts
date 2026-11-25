@@ -200,6 +200,109 @@ export interface NoShowClaim {
   payment: { id: string; currency: string };
 }
 
+/** Why a booking cannot take the no-show claim; the ops door names it to the operator. */
+export type NoShowClaimBar =
+  | { reason: "BOOKING_MISSING" }
+  | { reason: "NOT_APPROVED"; status: AppointmentStatus }
+  | { reason: "UNPAID" }
+  | { reason: "NOT_PROPOSED" }
+  | {
+      reason: "SIBLING";
+      sibling: Pick<
+        ClaimOccurrence,
+        "id" | "startsAt" | "completionStatus" | "outcome"
+      >;
+    }
+  | { reason: "CONSULTANT_PRESENT" };
+
+export type NoShowJudgement = { claim: NoShowClaim } | { bar: NoShowClaimBar };
+
+/**
+ * Whether the claim may run on this booking now: a live, paid, APPROVED consultation with no
+ * vetoing sibling. By "evidence" (the pass and ops Confirm) the strike session must also be a
+ * standing proposal and the consultant have no stay on any proposed session. By "operator" the
+ * verdict is the operator's own: the door parks the strike session as the proposal, and the
+ * stored presence is not asked.
+ */
+export function judgeNoShowClaim(
+  row: ClaimRow,
+  strikeOccurrenceId: string,
+  by: "evidence" | "operator",
+): NoShowJudgement {
+  const consultantUserId = row.consultationPlan?.consultantProfile?.userId;
+  const consulteeUserId = row.requestedBy?.userId;
+  const appointment = row.appointment;
+  if (!consultantUserId || !consulteeUserId || !appointment) {
+    return { bar: { reason: "BOOKING_MISSING" } };
+  }
+  if (row.status !== AppointmentStatus.APPROVED) {
+    return { bar: { reason: "NOT_APPROVED", status: row.status } };
+  }
+  const payment = appointment.payment[0];
+  if (!payment) return { bar: { reason: "UNPAID" } };
+  const strike = appointment.occurrences.find(
+    (o) => o.id === strikeOccurrenceId,
+  );
+  if (
+    !strike ||
+    strike.isTentative ||
+    strike.deletedAt !== null ||
+    (by === "evidence" && !isStanding(strike))
+  ) {
+    return { bar: { reason: "NOT_PROPOSED" } };
+  }
+  const sibling = appointment.occurrences.find(
+    (o) => o.id !== strike.id && vetoesClaim(o),
+  );
+  if (sibling) {
+    return {
+      bar: {
+        reason: "SIBLING",
+        sibling: {
+          id: sibling.id,
+          startsAt: sibling.startsAt,
+          completionStatus: sibling.completionStatus,
+          outcome: sibling.outcome,
+        },
+      },
+    };
+  }
+  const proposal = appointment.occurrences.filter(
+    (o) => o.id === strike.id || isStanding(o),
+  );
+  // Any stay of the consultant on a proposed session, even after the booked end, is not a no-show.
+  if (
+    by === "evidence" &&
+    proposal.some((o) =>
+      (o.meeting?.presences ?? []).some((p) => p.userId === consultantUserId),
+    )
+  ) {
+    return { bar: { reason: "CONSULTANT_PRESENT" } };
+  }
+  return {
+    claim: {
+      consultationId: row.id,
+      appointmentId: appointment.id,
+      organizationId: appointment.organizationId,
+      strikeOccurrenceId: strike.id,
+      occurrenceIds: proposal.map((o) => o.id),
+      windows: proposal.map((o) => ({
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+      })),
+      consultantProfileId: row.consultationPlan.consultantProfileId,
+      consultantUserId,
+      consulteeUserId,
+      consultantName:
+        row.consultationPlan.consultantProfile.user?.name ?? "Consultant",
+      consulteeName: row.requestedBy.user?.name ?? "Consultee",
+      planTitle: row.consultationPlan.title ?? "Consultation",
+      startsAt: proposal[0].startsAt,
+      payment,
+    },
+  };
+}
+
 /**
  * The claim the detector's rules allow on this booking now, or null: a live paid
  * consultation whose every live session is a standing expert-absent proposal the consultant has no stay in.
@@ -208,50 +311,8 @@ export function noShowClaimOf(
   row: ClaimRow,
   strikeOccurrenceId: string,
 ): NoShowClaim | null {
-  const consultantUserId = row.consultationPlan?.consultantProfile?.userId;
-  const consulteeUserId = row.requestedBy?.userId;
-  const appointment = row.appointment;
-  const payment = appointment?.payment[0];
-  if (
-    !consultantUserId ||
-    !consulteeUserId ||
-    !appointment ||
-    !payment ||
-    row.status !== AppointmentStatus.APPROVED
-  ) {
-    return null;
-  }
-  const strike = appointment.occurrences.find(
-    (o) => o.id === strikeOccurrenceId,
-  );
-  if (!strike || strike.isTentative || !isStanding(strike)) return null;
-  if (appointment.occurrences.some(vetoesClaim)) return null;
-  const proposal = appointment.occurrences.filter(isStanding);
-  // Any stay of the consultant on a proposed session, even after the booked end, is not a no-show.
-  if (
-    proposal.some((o) =>
-      (o.meeting?.presences ?? []).some((p) => p.userId === consultantUserId),
-    )
-  ) {
-    return null;
-  }
-  return {
-    consultationId: row.id,
-    appointmentId: appointment.id,
-    organizationId: appointment.organizationId,
-    strikeOccurrenceId,
-    occurrenceIds: proposal.map((o) => o.id),
-    windows: proposal.map((o) => ({ startsAt: o.startsAt, endsAt: o.endsAt })),
-    consultantProfileId: row.consultationPlan.consultantProfileId,
-    consultantUserId,
-    consulteeUserId,
-    consultantName:
-      row.consultationPlan.consultantProfile.user?.name ?? "Consultant",
-    consulteeName: row.requestedBy.user?.name ?? "Consultee",
-    planTitle: row.consultationPlan.title ?? "Consultation",
-    startsAt: proposal[0].startsAt,
-    payment,
-  };
+  const judged = judgeNoShowClaim(row, strikeOccurrenceId, "evidence");
+  return "claim" in judged ? judged.claim : null;
 }
 
 /** Reads the booking behind a proposed session and judges whether its claim may run. */
@@ -264,6 +325,20 @@ export async function readNoShowClaim(
     select: CLAIM_SELECT,
   });
   return row ? noShowClaimOf(row, occurrenceId) : null;
+}
+
+/** An operator's own expert-absent verdict on a session of the booking: the claim, or why it cannot run. */
+export async function readOperatorNoShowClaim(
+  db: Pick<Tx, "consultation">,
+  occurrenceId: string,
+): Promise<NoShowJudgement> {
+  const row = await db.consultation.findFirst({
+    where: { appointment: { occurrences: { some: { id: occurrenceId } } } },
+    select: CLAIM_SELECT,
+  });
+  return row
+    ? judgeNoShowClaim(row, occurrenceId, "operator")
+    : { bar: { reason: "BOOKING_MISSING" } };
 }
 
 /** An outage now overlaps a proposed session: the claim rolls back and the next pass judges it weak. */

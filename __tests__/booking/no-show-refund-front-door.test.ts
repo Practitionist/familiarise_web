@@ -125,7 +125,11 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
-import { confirmConsultantNoShow } from "../../lib/booking/consultant-no-show";
+import {
+  confirmConsultantNoShow,
+  readNoShowClaim,
+  readOperatorNoShowClaim,
+} from "../../lib/booking/consultant-no-show";
 import { createRunFailureReporter } from "../../lib/observability/run-failures";
 import { SWEEP_START_DEADLINE_MS } from "../../lib/cron/run-deadline";
 import {
@@ -581,6 +585,52 @@ describe("consultant no-show refunds", () => {
     expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
     expect(prisma.systemEvent.create).not.toHaveBeenCalled();
     expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  describe("an operator's own expert-absent verdict", () => {
+    const judge = (row: ReturnType<typeof proposedClaimRow>) => {
+      (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(row);
+      return readOperatorNoShowClaim(prisma, "occ-1");
+    };
+
+    it("takes the claim on a session not yet parked as a proposal and whatever the stored presence, which the detector's rule declines", async () => {
+      const row = proposedClaimRow({ id: "pay-1" });
+      Object.assign(row.appointment.occurrences[0], {
+        outcome: "INCONCLUSIVE",
+        meeting: { presences: [{ userId: CONSULTANT_USER }] },
+      });
+
+      expect(await judge(row)).toMatchObject({
+        claim: { strikeOccurrenceId: "occ-1", occurrenceIds: ["occ-1"] },
+      });
+      expect(await readNoShowClaim(prisma, "occ-1")).toBeNull();
+    });
+
+    it("names why a booking cannot take it: unpaid, not approved, or a sibling decided another way", async () => {
+      const unpaid = proposedClaimRow({ id: "pay-1" });
+      unpaid.appointment.payment = [];
+      expect(await judge(unpaid)).toEqual({ bar: { reason: "UNPAID" } });
+
+      const completed = proposedClaimRow({ id: "pay-1" });
+      completed.status = "COMPLETED";
+      expect(await judge(completed)).toEqual({
+        bar: { reason: "NOT_APPROVED", status: "COMPLETED" },
+      });
+
+      const held = proposedClaimRow({ id: "pay-1" });
+      held.appointment.occurrences.push({
+        ...held.appointment.occurrences[0],
+        id: "occ-held",
+        completionStatus: "COMPLETED",
+        outcome: "HELD",
+      });
+      expect(await judge(held)).toMatchObject({
+        bar: {
+          reason: "SIBLING",
+          sibling: { id: "occ-held", outcome: "HELD" },
+        },
+      });
+    });
   });
 
   it("neither claims nor strikes a session inside a declared incident", async () => {

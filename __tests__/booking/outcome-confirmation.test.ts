@@ -47,6 +47,9 @@ jest.mock("../../lib/booking/consultant-no-show", () => ({
     held: null,
   })),
   readNoShowClaim: jest.fn(async () => ({ consultationId: "cons-a" })),
+  readOperatorNoShowClaim: jest.fn(async () => ({
+    claim: { consultationId: "cons-a" },
+  })),
   claimNoShowTx: jest.fn(async () => ({ held: null })),
   settleClaimedNoShow: jest.fn(async () => ({ refunded: true })),
 }));
@@ -71,6 +74,7 @@ import {
   claimNoShowTx,
   confirmConsultantNoShow,
   readNoShowClaim,
+  readOperatorNoShowClaim,
   settleClaimedNoShow,
 } from "@/lib/booking/consultant-no-show";
 
@@ -809,5 +813,98 @@ describe("ops set-outcome", () => {
       }),
     ).rejects.toMatchObject({ code: "SESSION_MOVED" });
     expect(row("a").outcome).toBe("HOST_ABSENT");
+  });
+
+  const expertAbsent = (occurrenceId = "a") =>
+    setSessionOutcome(tx, {
+      occurrenceId,
+      outcome: "HOST_ABSENT",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+
+  it("expert absent on a consultation runs the no-show claim in the door's transaction, whatever parked the session, and never voids it", async () => {
+    // The pass declined this proposal, the sweep parked this one inconclusive, and this one was written held.
+    for (const parked of [
+      proposal("a"),
+      proposal("a", { outcome: "INCONCLUSIVE" }),
+      proposal("a", { completionStatus: "COMPLETED", outcome: "HELD" }),
+    ]) {
+      occurrences.rows.splice(0, occurrences.rows.length, parked);
+      jest.clearAllMocks();
+
+      const result = await expertAbsent();
+
+      expect(readOperatorNoShowClaim).toHaveBeenCalledWith(tx, "a");
+      expect(claimNoShowTx).toHaveBeenCalledWith(
+        tx,
+        { consultationId: "cons-a" },
+        { now: NOW, actorUserId: "ops-1" },
+      );
+      // The session is the standing proposal the claim's compare-and-set cancels.
+      expect(row("a")).toMatchObject({
+        completionStatus: "UNVERIFIED",
+        outcome: "HOST_ABSENT",
+        outcomeConfirmedAt: null,
+      });
+      expect(result.after).toEqual({
+        completionStatus: "CANCELLED",
+        outcome: "HOST_ABSENT",
+      });
+      // The refund is driven only after the door's transaction commits.
+      expect(settleClaimedNoShow).not.toHaveBeenCalled();
+      await result.afterCommit?.();
+      expect(settleClaimedNoShow).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it.each([
+    [{ reason: "UNPAID" }, "NO_SHOW_UNPAID"],
+    [
+      { reason: "NOT_APPROVED", status: "COMPLETED" },
+      "NO_SHOW_BOOKING_NOT_APPROVED",
+    ],
+    [
+      {
+        reason: "SIBLING",
+        sibling: {
+          id: "b",
+          startsAt: at(-1440),
+          completionStatus: "COMPLETED",
+          outcome: "HELD",
+        },
+      },
+      "NO_SHOW_SIBLING_SESSION",
+    ],
+  ] as const)(
+    "refuses expert absent on a consultation the claim cannot take (%j), writing nothing and never voiding",
+    async (bar, code) => {
+      occurrences.rows.push(proposal("a", { outcome: "INCONCLUSIVE" }));
+      jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({ bar });
+
+      await expect(expertAbsent()).rejects.toMatchObject({
+        code,
+        httpStatus: 409,
+      });
+
+      expect(claimNoShowTx).not.toHaveBeenCalled();
+      expect(row("a")).toMatchObject({
+        completionStatus: "UNVERIFIED",
+        outcome: "INCONCLUSIVE",
+      });
+    },
+  );
+
+  it("refuses expert absent on a consultation session that is already voided: it stays on its refund path", async () => {
+    occurrences.rows.push(
+      proposal("a", { completionStatus: "VOIDED", outcome: "CUT_SHORT" }),
+    );
+
+    await expect(expertAbsent()).rejects.toMatchObject({
+      code: "TRANSITION_NOT_ALLOWED",
+    });
+
+    expect(claimNoShowTx).not.toHaveBeenCalled();
+    expect(row("a").outcome).toBe("CUT_SHORT");
   });
 });

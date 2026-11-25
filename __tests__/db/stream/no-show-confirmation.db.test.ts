@@ -11,6 +11,7 @@ import {
   readNoShowClaim,
 } from "../../../lib/booking/consultant-no-show";
 import { IllegalTransitionError } from "../../../lib/enterprise/transitions";
+import { overturnSessionOutcome } from "../../../lib/backoffice/session-outcomes";
 import { detectConsultantNoShows } from "../../../scripts/appointments/detect-consultant-no-shows";
 import { createOrReuseSupportCase } from "../../../lib/support/case-service";
 import { intakeFor } from "../seed";
@@ -256,6 +257,77 @@ it("a sibling session parked as nobody joined vetoes the claim in its compare-an
     () => false,
   );
   expect(await moneyOf(room)).toMatchObject(untouched);
+});
+
+it("ops Set outcome expert absent on a disputed proposal cancels, refunds in full once and strikes once, and voids nothing", async () => {
+  const room = await seedNoShow(12);
+  const proposed = await propose(room);
+  // The consultant's dispute keeps the pass from ever claiming it; an operator decides.
+  await report(room, room.hostId, "provider_attended", new Date());
+  await confirmClosedOutcomes(
+    new Date(proposed.outcomeAt!.getTime() + 49 * HOUR),
+    () => false,
+  );
+  expect((await moneyOf(room)).status).toBe("APPROVED");
+
+  const result = await overturnSessionOutcome({
+    occurrenceId: room.occurrenceId,
+    outcome: "HOST_ABSENT",
+    actorUserId: room.learnerId,
+  });
+
+  expect(result.after).toEqual({
+    completionStatus: "CANCELLED",
+    outcome: "HOST_ABSENT",
+  });
+  expect(await moneyOf(room)).toMatchObject({
+    status: "CANCELLED",
+    refunds: [
+      {
+        dedupeKey: `consultant-no-show:${room.payment!.id}`,
+        amountPaise: 100_000,
+      },
+    ],
+    strikes: 1,
+    session: { completionStatus: "CANCELLED" },
+    refundOwedKey: null,
+  });
+  const { voidedAt } = await prisma.appointmentOccurrence.findUniqueOrThrow({
+    where: { id: room.occurrenceId },
+    select: { voidedAt: true },
+  });
+  expect(voidedAt).toBeNull();
+});
+
+it("ops Set outcome expert absent on an unpaid consultation is refused by name and changes nothing", async () => {
+  const room = await seedConsultationRoom(13);
+  await prisma.appointmentOccurrence.update({
+    where: { id: room.occurrenceId },
+    data: {
+      completionStatus: "UNVERIFIED",
+      outcome: "INCONCLUSIVE",
+      outcomeAt: new Date(),
+    },
+  });
+
+  await expect(
+    overturnSessionOutcome({
+      occurrenceId: room.occurrenceId,
+      outcome: "HOST_ABSENT",
+      actorUserId: room.learnerId,
+    }),
+  ).rejects.toMatchObject({ code: "NO_SHOW_UNPAID" });
+
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: room.occurrenceId },
+      select: { completionStatus: true, outcome: true, voidedAt: true },
+    }),
+  ).toEqual({
+    completionStatus: "UNVERIFIED",
+    outcome: "INCONCLUSIVE",
+    voidedAt: null,
+  });
 });
 
 /** A declared incident over the room's booked hour, removed with its remedies afterwards so no other suite sees it. */

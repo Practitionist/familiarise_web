@@ -4,7 +4,8 @@
  * read Stream's record of a session again
  * (`session.reread-attendance`), and page through the sessions only a human
  * can decide. A void's make-up or refund is money, so an overturn that would
- * un-void a session is refused once either has happened.
+ * un-void a session is refused once either has happened. Expert absent on a
+ * consultation is never a void: both doors run the no-show claim.
  */
 
 import {
@@ -60,7 +61,10 @@ import {
   claimNoShowTx,
   NoShowDuringOutageError,
   readNoShowClaim,
+  readOperatorNoShowClaim,
   settleClaimedNoShow,
+  type NoShowClaim,
+  type NoShowClaimBar,
 } from "@/lib/booking/consultant-no-show";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
@@ -127,7 +131,11 @@ const OVERTURN_SELECT = {
   deletedAt: true,
   isTentative: true,
   appointment: {
-    select: { classId: true, subscription: { select: { status: true } } },
+    select: {
+      classId: true,
+      consultationId: true,
+      subscription: { select: { status: true } },
+    },
   },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
@@ -280,6 +288,154 @@ async function moveStatus(
   return null;
 }
 
+/** Why the expert-absent remedy cannot run on this consultation, as the operator reads it. */
+function noShowBarRefusal(bar: NoShowClaimBar): OpsRefusal {
+  const remedy = "cancelled and refunded as expert absent";
+  switch (bar.reason) {
+    case "UNPAID":
+      return new OpsRefusal(
+        "NO_SHOW_UNPAID",
+        `This consultation has no captured payment, so it cannot be ${remedy}.`,
+      );
+    case "NOT_APPROVED":
+      return new OpsRefusal(
+        "NO_SHOW_BOOKING_NOT_APPROVED",
+        `This consultation is ${bar.status.toLowerCase().replaceAll("_", " ")}, so it can no longer be ${remedy}.`,
+      );
+    case "SIBLING": {
+      const { sibling } = bar;
+      const state = sibling.outcome
+        ? `recorded as ${sibling.outcome.toLowerCase().replaceAll("_", " ")}`
+        : `${sibling.completionStatus.toLowerCase()} with no outcome`;
+      return new OpsRefusal(
+        "NO_SHOW_SIBLING_SESSION",
+        `Expert absent cancels and refunds the whole booking, and its session starting ${sibling.startsAt.toISOString()} is ${state}. Only a booking whose every session is expert absent can be ${remedy}.`,
+        409,
+        { occurrenceId: sibling.id },
+      );
+    }
+    default:
+      return new OpsRefusal(
+        "NO_SHOW_NOT_CLAIMABLE",
+        `This session's booking cannot be ${remedy}.`,
+      );
+  }
+}
+
+/** The claim on the door's transaction, its misses as refusals; answers the refund drive to run after the commit. */
+async function runNoShowClaim(
+  tx: Tx,
+  claim: NoShowClaim,
+  actorUserId: string | null,
+  now: Date,
+): Promise<() => Promise<void>> {
+  let held: Awaited<ReturnType<typeof claimNoShowTx>>["held"];
+  try {
+    ({ held } = await claimNoShowTx(tx, claim, { now, actorUserId }));
+  } catch (error) {
+    if (error instanceof IllegalTransitionError) {
+      throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+    }
+    if (error instanceof NoShowDuringOutageError) {
+      throw new OpsRefusal(
+        "NO_SHOW_DURING_OUTAGE",
+        "An outage overlaps this session, so it is not a consultant no-show; give it another outcome with Set outcome.",
+      );
+    }
+    throw error;
+  }
+  // The owed marker committed with the claim, so a lost drive is retried by the owed-refund sweep.
+  return async () => {
+    const failures = createRunFailureReporter("admin");
+    try {
+      await settleClaimedNoShow(claim, held, { errors: [], failures });
+    } finally {
+      failures.flush();
+    }
+  };
+}
+
+/** Parks the session as the unconfirmed expert-absent proposal the claim's compare-and-set cancels. */
+async function parkAsNoShowProposal(
+  tx: Tx,
+  occ: OverturnRow,
+  args: OverturnArgs,
+  now: Date,
+): Promise<void> {
+  const proposal = {
+    outcome: "HOST_ABSENT",
+    outcomeAt: now,
+    outcomeConfirmedAt: null,
+  } as const;
+  if (occ.completionStatus !== "UNVERIFIED") {
+    await transitionOccurrenceCompletion(tx, {
+      where: { id: occ.id, deletedAt: null, isTentative: false },
+      to: "UNVERIFIED",
+      fromIn: [occ.completionStatus],
+      data: proposal,
+      reason: `ops:session.set-outcome:${args.outcome}`,
+      actorUserId: args.actorUserId,
+    });
+    return;
+  }
+  // Already the proposal: its verdict time stands.
+  if (occ.outcome === "HOST_ABSENT" && occ.outcomeConfirmedAt === null) return;
+  const { count } = await tx.appointmentOccurrence.updateMany({
+    where: {
+      id: occ.id,
+      deletedAt: null,
+      completionStatus: "UNVERIFIED",
+      outcome: occ.outcome,
+      outcomeConfirmedAt: occ.outcomeConfirmedAt,
+    },
+    data: proposal,
+  });
+  if (count === 0) {
+    throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+  }
+}
+
+/**
+ * Expert absent on a consultation is one remedy whoever decides it: the no-show claim cancels the
+ * booking, owes the full refund and writes the strike in this transaction. A booking the claim
+ * cannot take is refused with the reason, never voided.
+ */
+async function decideConsultationNoShow(
+  tx: Tx,
+  occ: OverturnRow,
+  args: OverturnArgs,
+  now: Date,
+) {
+  if (
+    occ.completionStatus !== "UNVERIFIED" &&
+    !OCCURRENCE_COMPLETION_ALLOWED_FROM.UNVERIFIED.includes(
+      occ.completionStatus,
+    )
+  ) {
+    throw new OpsRefusal(
+      "TRANSITION_NOT_ALLOWED",
+      `A ${occ.completionStatus.toLowerCase()} consultation session cannot be decided expert absent; it keeps its own make-up or refund path.`,
+    );
+  }
+  const judged = await readOperatorNoShowClaim(tx, occ.id);
+  if ("bar" in judged) throw noShowBarRefusal(judged.bar);
+  await parkAsNoShowProposal(tx, occ, args, now);
+  const afterCommit = await runNoShowClaim(
+    tx,
+    judged.claim,
+    args.actorUserId,
+    now,
+  );
+  return {
+    before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
+    after: {
+      completionStatus: OccurrenceCompletionStatus.CANCELLED,
+      outcome: args.outcome,
+    },
+    afterCommit,
+  };
+}
+
 /** Overturn one past session's outcome; the status follows the outcome. */
 export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   const now = args.now ?? new Date();
@@ -288,6 +444,9 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
     select: OVERTURN_SELECT,
   });
   assertDecided(occ, now);
+  if (args.outcome === "HOST_ABSENT" && occ.appointment.consultationId) {
+    return decideConsultationNoShow(tx, occ, args, now);
+  }
   const to = COMPLETION_FOR_OUTCOME[args.outcome];
   // #1834 — the door's fromIn is the row's own status, so the map is asked here.
   if (
@@ -468,39 +627,19 @@ async function confirmNoShowProposal(
       "This booking no longer qualifies for the no-show refund; decide it with Set outcome.",
     );
   }
-  let held;
-  try {
-    ({ held } = await claimNoShowTx(tx, claim, {
-      now,
-      actorUserId: args.actorUserId ?? null,
-    }));
-  } catch (error) {
-    if (error instanceof IllegalTransitionError) {
-      throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
-    }
-    if (error instanceof NoShowDuringOutageError) {
-      throw new OpsRefusal(
-        "NO_SHOW_DURING_OUTAGE",
-        "An outage overlaps this session, so it is not a consultant no-show; decide it with Set outcome.",
-      );
-    }
-    throw error;
-  }
+  const afterCommit = await runNoShowClaim(
+    tx,
+    claim,
+    args.actorUserId ?? null,
+    now,
+  );
   return {
     before: { outcome: "HOST_ABSENT", outcomeConfirmedAt: null },
     after: {
       outcome: "HOST_ABSENT" as const,
       outcomeConfirmedAt: now.toISOString(),
     },
-    // The owed marker committed with the claim, so a lost drive is retried by the owed-refund sweep.
-    afterCommit: async () => {
-      const failures = createRunFailureReporter("admin");
-      try {
-        await settleClaimedNoShow(claim, held, { errors: [], failures });
-      } finally {
-        failures.flush();
-      }
-    },
+    afterCommit,
   };
 }
 
