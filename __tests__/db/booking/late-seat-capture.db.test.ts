@@ -1,14 +1,16 @@
 /**
- * A capture promotes a HELD webinar seat only while checkout would still sell
- * it to this buyer: a session still ahead, and no other live booking of the
- * buyer's at that time. Otherwise the seat is released and the capture takes
- * the refund path.
+ * A capture promotes a HELD seat only while checkout would still sell it to
+ * this buyer: a session still ahead, enrolment open for a class, and no other
+ * live booking of the buyer's at that time. A seat paid for while its hold was
+ * live skips the enrolment rule. Otherwise the seat is released and the
+ * capture takes the refund path.
  */
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "../../../lib/prisma";
 import { confirmExistingAppointment } from "../../../lib/payments/webhooks/handlers";
 import { HOUR_MS, seedConsultee, seedHost, seedOneToOne } from "./harness";
+import { CLASS_UNDER_WAY, seedClassUnderWay } from "./harness-class-series";
 import { seedWebinar } from "./harness-seats";
 
 /** A buyer holding an unpaid seat on a webinar that starts at `startsAt`. */
@@ -43,11 +45,47 @@ async function heldSeatOn(startsAt?: Date) {
   return { webinar, buyer, seatId: seat.id };
 }
 
-const capture = (appointmentId: string, payerUserId: string) =>
+const capture = (
+  appointmentId: string,
+  payerUserId: string,
+  opts?: { paidInsideHold: boolean },
+) =>
   prisma.$transaction(
-    (tx) => confirmExistingAppointment(tx, appointmentId, payerUserId),
+    (tx) => confirmExistingAppointment(tx, appointmentId, payerUserId, opts),
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
+
+/** A buyer holding an unpaid seat on a class whose first three sessions have run and that allows no late join. */
+async function heldSeatOnClassUnderWay() {
+  const cls = await seedClassUnderWay(await seedHost(), CLASS_UNDER_WAY);
+  const buyer = await seedConsultee();
+  const price = BigInt(CLASS_UNDER_WAY.price);
+  const payment = await prisma.payment.create({
+    data: {
+      amount: price,
+      originalAmount: price,
+      paymentMethod: "card",
+      paymentIntent: `order_dbtier_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "PENDING",
+      userId: buyer.userId,
+      appointmentId: cls.appointmentId,
+      isMockPayment: true,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+      legs: { create: [{ source: "CARD", amountPaise: price }] },
+    },
+  });
+  const seat = await prisma.appointmentParticipant.create({
+    data: {
+      appointmentId: cls.appointmentId,
+      userId: buyer.userId,
+      role: "CONSULTEE",
+      status: "HELD",
+      paymentId: payment.id,
+    },
+  });
+  return { cls, buyer, seatId: seat.id };
+}
 
 const seatStatus = async (seatId: string) =>
   (
@@ -112,5 +150,67 @@ describe("a capture on a HELD webinar seat", () => {
 
     expect(result).toEqual({ capturedAfterTerminal: false });
     expect(await seatStatus(seatId)).toBe("CONFIRMED");
+  });
+});
+
+describe("a capture on a HELD class seat after enrolment has closed", () => {
+  it("releases the seat when the processing time decides", async () => {
+    const { cls, buyer, seatId } = await heldSeatOnClassUnderWay();
+
+    const result = await capture(cls.appointmentId, buyer.userId);
+
+    expect(result).toEqual({ capturedAfterTerminal: true, seatReleased: true });
+    expect(await seatStatus(seatId)).toBe("CANCELLED");
+  });
+
+  it("confirms the seat when the gateway took the money while the hold was live", async () => {
+    const { cls, buyer, seatId } = await heldSeatOnClassUnderWay();
+
+    const result = await capture(cls.appointmentId, buyer.userId, {
+      paidInsideHold: true,
+    });
+
+    expect(result).toEqual({ capturedAfterTerminal: false });
+    expect(await seatStatus(seatId)).toBe("CONFIRMED");
+  });
+
+  it("still releases a seat paid inside its hold once every session is over", async () => {
+    const { cls, buyer, seatId } = await heldSeatOnClassUnderWay();
+    await prisma.appointmentOccurrence.updateMany({
+      where: { appointmentId: cls.appointmentId },
+      data: {
+        startsAt: new Date(Date.now() - 3 * HOUR_MS),
+        endsAt: new Date(Date.now() - 2 * HOUR_MS),
+      },
+    });
+
+    const result = await capture(cls.appointmentId, buyer.userId, {
+      paidInsideHold: true,
+    });
+
+    expect(result).toEqual({ capturedAfterTerminal: true, seatReleased: true });
+    expect(await seatStatus(seatId)).toBe("CANCELLED");
+  });
+
+  it("still releases a seat paid inside its hold when the buyer is busy at a remaining session", async () => {
+    const { cls, buyer, seatId } = await heldSeatOnClassUnderWay();
+    const next = await prisma.appointmentOccurrence.findFirstOrThrow({
+      where: { appointmentId: cls.appointmentId, startsAt: { gt: new Date() } },
+      orderBy: { startsAt: "asc" },
+    });
+    await seedOneToOne(
+      "consultation",
+      await seedHost(),
+      buyer,
+      { startsAt: next.startsAt, endsAt: next.endsAt },
+      { status: "APPROVED", isTentative: false },
+    );
+
+    const result = await capture(cls.appointmentId, buyer.userId, {
+      paidInsideHold: true,
+    });
+
+    expect(result).toEqual({ capturedAfterTerminal: true, seatReleased: true });
+    expect(await seatStatus(seatId)).toBe("CANCELLED");
   });
 });

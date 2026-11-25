@@ -283,6 +283,8 @@ describe("order.paid carries the payment entity (#1582 F-P0-01)", () => {
       { type: "booking" },
       118000,
       "pay_OrderPaid000001",
+      // The payment entity's own time rides along for the hold-deadline rule.
+      { gatewayCapturedAt: new Date(1_700_000_000 * 1000) },
     );
   });
 });

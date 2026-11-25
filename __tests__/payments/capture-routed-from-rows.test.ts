@@ -219,6 +219,60 @@ describe("a capture whose payment carries no notes", () => {
   });
 });
 
+describe("the gateway's own time for the payment", () => {
+  const PAID_AT_SECONDS = 1_764_000_000;
+
+  it("rides from the door to the booking writer", async () => {
+    paymentRow.mockResolvedValue({ parentPaymentId: null });
+    const gatewayCapturedAt = new Date(PAID_AT_SECONDS * 1000);
+
+    await routeCapturedPayment({
+      orderId: ORDER,
+      notes: {},
+      amountPaise: 50_000,
+      gatewayPaymentId: PAY,
+      gatewayCapturedAt,
+    });
+
+    expect(handlePaymentSuccess).toHaveBeenCalledWith(ORDER, {}, 50_000, PAY, {
+      gatewayCapturedAt,
+    });
+  });
+
+  it("is read off the payment entity of a payment.captured event", async () => {
+    paymentRow.mockResolvedValue({ parentPaymentId: null });
+
+    await processRazorpayWebhookEvent(
+      {
+        entity: "event",
+        account_id: "acc_1",
+        event: "payment.captured",
+        contains: ["payment"],
+        created_at: PAID_AT_SECONDS + 500,
+        payload: {
+          payment: {
+            entity: {
+              id: PAY,
+              amount: 50_000,
+              currency: "INR",
+              status: "captured",
+              order_id: ORDER,
+              notes: [],
+              created_at: PAID_AT_SECONDS,
+            },
+          },
+        },
+      },
+      "payment.captured",
+      "evt-captured",
+    );
+
+    expect(handlePaymentSuccess).toHaveBeenCalledWith(ORDER, {}, 50_000, PAY, {
+      gatewayCapturedAt: new Date(PAID_AT_SECONDS * 1000),
+    });
+  });
+});
+
 describe("notes that disagree with the order's row", () => {
   it("the row wins and the disagreement is reported once", async () => {
     paymentRow.mockResolvedValue({ parentPaymentId: null });

@@ -43,6 +43,7 @@ import {
   razorpayPayoutErrorSchema,
   fundAccountValidationEntitySchema,
   disputeUpdateEntitySchema,
+  gatewayPaymentTime,
   razorpayWebhookEnvelopeSchema,
 } from "@/schemas/webhooks/razorpay";
 import { handleFundAccountValidationWebhook } from "@/lib/payments/payouts/reverse-penny-drop";
@@ -174,6 +175,8 @@ export async function routeCapturedPayment(params: {
   gatewayPaymentId?: string;
   /** Razorpay's `method`; the standalone sale rails record it on their Payment. */
   method?: string;
+  /** The gateway's own time for the payment; a seat hold still live then is honoured. */
+  gatewayCapturedAt?: Date;
   /** Gateway fee (GST included) and its GST, from the webhook's payment entity only. */
   fee?: { feePaise: number; taxPaise: number };
   /** The webhook payment entity's payer fields, hashed onto the Payment for the referral vest. */
@@ -198,8 +201,10 @@ async function dispatchCapturedPayment(params: {
   amountPaise?: number;
   gatewayPaymentId?: string;
   method?: string;
+  gatewayCapturedAt?: Date;
 }): Promise<void> {
   const { orderId, notes, amountPaise, gatewayPaymentId, method } = params;
+  const { gatewayCapturedAt } = params;
 
   // #1861 P4b — IDs only. `orderId` is what Payment.paymentIntent stores;
   // an internal Payment.id or appointmentId is not yet resolved at this
@@ -246,7 +251,11 @@ async function dispatchCapturedPayment(params: {
       return;
     default:
       // The booking pipeline stores the `pay_` id on the Payment row it confirms.
-      await handlePaymentSuccess(orderId, notes, amountPaise, gatewayPaymentId);
+      await (gatewayCapturedAt
+        ? handlePaymentSuccess(orderId, notes, amountPaise, gatewayPaymentId, {
+            gatewayCapturedAt,
+          })
+        : handlePaymentSuccess(orderId, notes, amountPaise, gatewayPaymentId));
   }
 }
 
@@ -308,6 +317,7 @@ export async function processRazorpayWebhookEvent(
           amountPaise: capturedEntity.amount,
           gatewayPaymentId: capturedEntity.id,
           method: capturedEntity.method,
+          gatewayCapturedAt: gatewayPaymentTime(capturedEntity.created_at),
           fee: payloadFee(capturedEntity),
           payer: capturedEntity,
         });
@@ -323,6 +333,7 @@ export async function processRazorpayWebhookEvent(
           amountPaise: paidEntity?.amount,
           gatewayPaymentId: paidEntity?.id,
           method: paidEntity?.method,
+          gatewayCapturedAt: gatewayPaymentTime(paidEntity?.created_at),
           fee: paidEntity ? payloadFee(paidEntity) : undefined,
           payer: paidEntity,
         });

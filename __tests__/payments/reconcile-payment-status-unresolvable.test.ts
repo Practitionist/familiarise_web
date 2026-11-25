@@ -490,7 +490,13 @@ describe("reconcile-payment-status — rows decide, and a bare 400 is not an unk
         // Razorpay answers an empty notes map as an array.
         json: async () => ({
           items: [
-            { status: "captured", id: "pay_side_1", amount: 12950, notes: [] },
+            {
+              status: "captured",
+              id: "pay_side_1",
+              amount: 12950,
+              notes: [],
+              created_at: 1_764_000_000,
+            },
           ],
         }),
       });
@@ -503,6 +509,7 @@ describe("reconcile-payment-status — rows decide, and a bare 400 is not an unk
       gatewayPaymentId: "pay_side_1",
       notes: { type: "overage_member" },
       amountPaise: 12950,
+      gatewayCapturedAt: new Date(1_764_000_000 * 1000),
     });
   });
 });

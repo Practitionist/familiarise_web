@@ -42,7 +42,10 @@ import {
 } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
-import { razorpayNotesSchema } from "@/schemas/webhooks/razorpay";
+import {
+  gatewayPaymentTime,
+  razorpayNotesSchema,
+} from "@/schemas/webhooks/razorpay";
 import { isUnknownIdAnswer } from "@/lib/payments/core/razorpay-unknown-id";
 import {
   razorpayErrorDescription,
@@ -258,6 +261,8 @@ type GatewayLookup =
       notes?: Record<string, string>;
       /** Captured amount in paise, for the parity check. */
       amountPaise?: number;
+      /** The gateway's own time for the captured payment. */
+      gatewayCapturedAt?: Date;
     }
   | { kind: "unknown_id"; detail: string }
   | { kind: "gateway_error"; detail: string };
@@ -344,6 +349,13 @@ async function getRazorpayPaymentStatus(
                 ? orderNotes
                 : razorpayNotesSchema.parse(capturedPayment.notes),
             amountPaise: Number(capturedPayment.amount),
+            gatewayCapturedAt: gatewayPaymentTime(
+              z
+                .number()
+                .optional()
+                .catch(undefined)
+                .parse(capturedPayment.created_at),
+            ),
           };
         }
       }
@@ -883,6 +895,7 @@ async function reconcilePaymentStatusUnlocked(
               notes,
               amountPaise: gatewayStatus.amountPaise,
               gatewayPaymentId: gatewayStatus.paymentId,
+              gatewayCapturedAt: gatewayStatus.gatewayCapturedAt,
             });
             console.log(`   Confirmed via pipeline: ${payment.id}`);
             reconciledCount++;

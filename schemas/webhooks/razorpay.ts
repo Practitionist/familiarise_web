@@ -47,9 +47,20 @@ export const razorpayPaymentEntitySchema = z
     fee: z.number().int().nonnegative().nullable().optional(),
     /** GST on the fee, in paise. */
     tax: z.number().int().nonnegative().nullable().optional(),
+    /** When the gateway created the payment, in Unix seconds; the only time the entity carries. */
+    created_at: z.number().int().positive().optional().catch(undefined),
     ...payerInstrumentShape,
   })
   .passthrough();
+
+/** The gateway's own time for a payment as a Date; undefined when the entity carried none. */
+export function gatewayPaymentTime(
+  createdAtSeconds: number | null | undefined,
+): Date | undefined {
+  return typeof createdAtSeconds === "number" && createdAtSeconds > 0
+    ? new Date(createdAtSeconds * 1000)
+    : undefined;
+}
 
 export type RazorpayPaymentEntity = z.infer<typeof razorpayPaymentEntitySchema>;
 
@@ -75,6 +86,8 @@ export const razorpayFetchedPaymentSchema = z
     amount: z.number().int().positive(),
     currency: z.string(),
     notes: razorpayNotesSchema,
+    /** When the gateway created the payment, in Unix seconds; the only time the entity carries. */
+    created_at: z.number().int().positive().optional().catch(undefined),
   })
   .passthrough();
 
@@ -209,6 +222,7 @@ const orderEventPayloadSchema = z.object({
           method: z.string().optional().catch(undefined),
           fee: z.number().int().nonnegative().nullable().optional(),
           tax: z.number().int().nonnegative().nullable().optional(),
+          created_at: z.number().int().positive().optional().catch(undefined),
           ...payerInstrumentShape,
         })
         .passthrough(),

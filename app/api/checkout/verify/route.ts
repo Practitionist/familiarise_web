@@ -8,7 +8,10 @@ import {
   withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
-import { razorpayNotesSchema } from "@/schemas/webhooks/razorpay";
+import {
+  gatewayPaymentTime,
+  razorpayNotesSchema,
+} from "@/schemas/webhooks/razorpay";
 import { applyRateLimit, checkoutLimiter } from "@/lib/rate-limit";
 import {
   deriveBookingPresentation,
@@ -264,6 +267,7 @@ export async function GET(req: NextRequest) {
                 ? Number(captured.amount)
                 : undefined,
             gatewayPaymentId: captured?.id,
+            gatewayCapturedAt: gatewayPaymentTime(captured?.created_at),
           });
 
           // Re-read the whole graph: bookingState below reads the request

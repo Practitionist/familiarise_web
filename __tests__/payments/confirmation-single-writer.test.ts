@@ -156,6 +156,7 @@ beforeEach(() => {
     amount: 250000,
     currency: "INR",
     status: "captured",
+    created_at: 1_764_000_000,
     notes: { appointmentType: "CONSULTATION" },
   });
 });
@@ -186,6 +187,7 @@ describe("verify-signature drives the canonical pipeline", () => {
       notes: { appointmentType: "CONSULTATION" },
       amountPaise: 250000,
       gatewayPaymentId: PAY_ID,
+      gatewayCapturedAt: new Date(1_764_000_000 * 1000),
     });
   });
 
@@ -395,7 +397,15 @@ describe("GET /api/checkout/verify?sync=true is budgeted and time-boxed", () => 
     });
     // Razorpay answers an empty notes map as an array.
     ordersFetchPayments.mockResolvedValue({
-      items: [{ id: PAY_ID, status: "captured", amount: 50000, notes: [] }],
+      items: [
+        {
+          id: PAY_ID,
+          status: "captured",
+          amount: 50000,
+          notes: [],
+          created_at: 1_764_000_000,
+        },
+      ],
     });
 
     await verifyGet(verifyRequest());
@@ -405,6 +415,8 @@ describe("GET /api/checkout/verify?sync=true is budgeted and time-boxed", () => 
       notes: { appointmentType: "CONSULTATION", userId: USER_ID },
       amountPaise: 50000,
       gatewayPaymentId: PAY_ID,
+      // The gateway's own time for the payment, for the hold-deadline rule.
+      gatewayCapturedAt: new Date(1_764_000_000 * 1000),
     });
   });
 });

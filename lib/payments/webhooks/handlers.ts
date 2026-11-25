@@ -381,7 +381,12 @@ export async function handlePaymentSuccess(
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
   gatewayPaymentId?: string,
-  options?: { recover?: boolean; deferLateCaptureRefund?: boolean },
+  options?: {
+    recover?: boolean;
+    deferLateCaptureRefund?: boolean;
+    /** The gateway's own time for the payment; absent, the processing time decides. */
+    gatewayCapturedAt?: Date;
+  },
 ): Promise<PaymentSuccessTxResult["outcome"] | null> {
   const recovering = options?.recover === true;
   const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
@@ -1062,11 +1067,17 @@ export async function handlePaymentSuccess(
             payment.expiresAt !== null &&
             payment.expiresAt < confirmNow;
 
+          // A seat hold still live when the gateway took the money is honoured.
+          const paidInsideHold =
+            payment.expiresAt !== null &&
+            options?.gatewayCapturedAt !== undefined &&
+            options.gatewayCapturedAt <= payment.expiresAt;
+
           const confirmResult = await confirmExistingAppointment(
             tx,
             appointment.id,
             payment.userId,
-            { holdExpired, now: confirmNow },
+            { holdExpired, now: confirmNow, paidInsideHold },
           );
 
           console.log(
@@ -1978,6 +1989,8 @@ async function confirmSeatAfterCapture(
     now: Date;
     /** The seat's hold lapsed before this capture: it confirms only if a place is still free. */
     holdExpired: boolean;
+    /** The gateway took the money while the hold was live: only an ended event or a busy buyer refuses. */
+    paidInsideHold: boolean;
   },
 ): Promise<SeatCaptureOutcome> {
   // A HELD seat is promoted only while checkout would still sell it to this
@@ -2046,6 +2059,8 @@ async function confirmSeatAfterCapture(
  * Why checkout would not sell this seat to this buyer now, or null: the sale
  * rule of the webinar and class checkout handlers (a session ahead, enrolment
  * open), room for a seat whose hold lapsed, then the buyer's own calendar.
+ * A seat paid for inside its hold skips the enrolment rule: it is refused only
+ * when the event is over, has no place left, or the buyer is busy.
  */
 async function heldSeatRefusal(
   tx: Tx,
@@ -2056,6 +2071,7 @@ async function heldSeatRefusal(
     userId: string;
     now: Date;
     holdExpired: boolean;
+    paidInsideHold: boolean;
   },
 ): Promise<string | null> {
   const { kind, eventId, now } = args;
@@ -2100,15 +2116,19 @@ async function heldSeatRefusal(
     if (!batch) return "the class is missing";
     const last = sessions.findLast((s) => s.completionStatus !== "CANCELLED");
     if (last && last.endsAt < now) return "the class has ended";
-    const enrolment = classEnrolmentFrom({
-      pricePaise: batch.classPlan.price,
-      N: batch.classPlan.totalSessions,
-      lateJoinUntilSession: batch.classPlan.lateJoinUntilSession,
-      sessions,
-      now,
-    });
-    if (enrolment.state !== "open") {
-      return `enrolment for the class is ${enrolment.state}`;
+    if (args.paidInsideHold) {
+      if (!last) return "the class has no session ahead";
+    } else {
+      const enrolment = classEnrolmentFrom({
+        pricePaise: batch.classPlan.price,
+        N: batch.classPlan.totalSessions,
+        lateJoinUntilSession: batch.classPlan.lateJoinUntilSession,
+        sessions,
+        now,
+      });
+      if (enrolment.state !== "open") {
+        return `enrolment for the class is ${enrolment.state}`;
+      }
     }
   }
   // A lapsed seat stopped counting for capacity, so another buyer may hold
@@ -2338,7 +2358,12 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
-  opts?: { holdExpired?: boolean; now?: Date },
+  opts?: {
+    holdExpired?: boolean;
+    now?: Date;
+    /** The gateway took the money at or before the seat's hold deadline. */
+    paidInsideHold?: boolean;
+  },
 ): Promise<{
   capturedAfterTerminal: boolean;
   doubleBookingBlocked?: boolean;
@@ -2577,6 +2602,7 @@ export async function confirmExistingAppointment(
       userId,
       now: opts?.now ?? new Date(),
       holdExpired: opts?.holdExpired === true,
+      paidInsideHold: opts?.paidInsideHold === true,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };
@@ -2619,6 +2645,7 @@ export async function confirmExistingAppointment(
       userId,
       now: opts?.now ?? new Date(),
       holdExpired: opts?.holdExpired === true,
+      paidInsideHold: opts?.paidInsideHold === true,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };

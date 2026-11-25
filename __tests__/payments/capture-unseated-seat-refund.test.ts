@@ -702,6 +702,104 @@ describe("the auto-refund marker on a released seat", () => {
   });
 });
 
+// A hold still live when the gateway took the money is honoured: only an ended event or a busy buyer refunds.
+describe("a capture the gateway took while the seat's hold was live", () => {
+  const MIN_MS = 60_000;
+  const classAppointment = {
+    id: APPOINTMENT,
+    consultation: null,
+    subscription: null,
+    webinar: null,
+    class: { id: "class-1" },
+  };
+  const released = { capturedAfterTerminal: true, seatReleased: true };
+  const promoted = expect.objectContaining({ data: { status: "CONFIRMED" } });
+  const cancelled = expect.objectContaining({ data: { status: "CANCELLED" } });
+  /** Paid at 09:58, session 1 started at 10:00 with no late join, processed at 10:01; the hold runs to 10:10. */
+  const paidBeforeTheStart = () => {
+    appointmentFindUnique.mockResolvedValue(classAppointment);
+    occurrenceFindMany.mockResolvedValue([session(-1 / 60, 1), session(24, 2)]);
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({ expiresAt: new Date(Date.now() + 9 * MIN_MS) }),
+    );
+    participantFindFirst.mockResolvedValue({
+      id: "part-1",
+      status: "CANCELLED",
+      paymentId: "pay-1",
+    });
+    return new Date(Date.now() - 3 * MIN_MS);
+  };
+  const capture = (gatewayCapturedAt?: Date) =>
+    handlePaymentSuccess(
+      "order-1",
+      CLASS_METADATA as unknown as Record<string, string>,
+      10000,
+      "pay_gw_1",
+      gatewayCapturedAt ? { gatewayCapturedAt } : undefined,
+    );
+
+  it("seats a buyer who paid at 09:58 for a class that started at 10:00, processed at 10:01", async () => {
+    const paidAt = paidBeforeTheStart();
+
+    expect(await capture(paidAt)).toBe("confirmed");
+
+    expect(participantUpdateMany).toHaveBeenCalledWith(promoted);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(cancelled);
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("with no gateway time the processing time decides: enrolment has closed, so it refunds", async () => {
+    paidBeforeTheStart();
+
+    await capture();
+
+    expect(participantUpdateMany).toHaveBeenCalledWith(cancelled);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("a gateway time later than the hold deadline is not inside the hold", async () => {
+    paidBeforeTheStart();
+
+    await capture(new Date(Date.now() + 10 * MIN_MS));
+
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+  });
+
+  const confirmPaidInsideHold = () =>
+    confirmExistingAppointment(txStub as never, APPOINTMENT, BUYER, {
+      paidInsideHold: true,
+    });
+
+  it("still refunds in full when the class has ended", async () => {
+    paidBeforeTheStart();
+    occurrenceFindMany.mockResolvedValue([session(-48, 1), session(-24, 2)]);
+
+    expect(await confirmPaidInsideHold()).toEqual(released);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+  });
+
+  it("still refunds in full when a webinar is over", async () => {
+    occurrenceFindMany.mockResolvedValue([session(-3)]);
+    participantFindFirst.mockResolvedValue({
+      id: "part-1",
+      status: "CANCELLED",
+      paymentId: "pay-1",
+    });
+
+    expect(await confirmPaidInsideHold()).toEqual(released);
+  });
+
+  it("still refunds in full when the buyer has another live booking at that time", async () => {
+    paidBeforeTheStart();
+    buyerConflictFindFirst.mockResolvedValue({ id: "appt-other" });
+
+    expect(await confirmPaidInsideHold()).toEqual(released);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+  });
+});
+
 // The post-commit marker writers replace only the pending marker they read.
 describe("a post-commit marker writer", () => {
   const STUCK =
