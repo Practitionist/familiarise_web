@@ -1833,8 +1833,15 @@ export async function handlePaymentFailure(
       return;
     }
 
+    // Conditional on the order and the lapsed deadline just read: a checkout
+    // re-minted on the row since is not failed.
     const { count } = await tx.payment.updateMany({
-      where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+      where: {
+        id: payment.id,
+        paymentStatus: PaymentStatus.PENDING,
+        paymentIntent: paymentIntentId,
+        expiresAt: payment.expiresAt,
+      },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
     if (count === 0) {

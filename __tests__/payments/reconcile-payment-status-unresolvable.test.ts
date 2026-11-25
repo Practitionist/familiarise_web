@@ -315,7 +315,11 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
     expect(body.retiredCount).toBe(1);
     expect(body.unresolvableCount).toBe(1);
     expect(retireOrphanPendingPayment).toHaveBeenCalledTimes(1);
-    expect(retireOrphanPendingPayment).toHaveBeenCalledWith("pay-old");
+    // The order the gateway was asked about rides along, so a row re-minted since is not retired.
+    expect(retireOrphanPendingPayment).toHaveBeenCalledWith(
+      "pay-old",
+      pendingRow.paymentIntent,
+    );
     // The row is never written directly here — the helper owns the CAS.
     expect(prisma.payment.updateMany).not.toHaveBeenCalled();
     // #1822 Q-4 — the retire helper's own SystemEvent, plus a second one this

@@ -740,7 +740,10 @@ async function reconcilePaymentStatusUnlocked(
         if (payment.createdAt < orphanCutoff) {
           try {
             const { outcome, errors: retireErrors } =
-              await retireOrphanPendingPayment(payment.id);
+              await retireOrphanPendingPayment(
+                payment.id,
+                payment.paymentIntent,
+              );
             errors.push(...retireErrors);
             if (outcome === "retired") {
               console.warn(
