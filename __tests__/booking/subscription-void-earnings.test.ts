@@ -62,6 +62,7 @@ describe("subscription misses do not hold earnings", () => {
 describe("ops overturn to VOIDED on a plan", () => {
   const NOW = new Date("2026-06-01T00:00:00Z");
   const unstamp = jest.fn(async (_args: unknown) => ({ count: 1 }));
+  const unstampOrg = jest.fn(async (_args: unknown) => ({ count: 1 }));
   // 4 sessions at 1 a week: the void leaves the second cycle undelivered.
   const session = (completionStatus: string, day: number) => ({
     startsAt: new Date(Date.UTC(2026, 4, day, 10)),
@@ -93,6 +94,7 @@ describe("ops overturn to VOIDED on a plan", () => {
         }),
       },
       consultantEarnings: { updateMany: unstamp },
+      organizationEarnings: { updateMany: unstampOrg },
       appointmentOccurrence: {
         findUnique: async () => ({
           id: "occ-1",
@@ -130,7 +132,7 @@ describe("ops overturn to VOIDED on a plan", () => {
     },
   );
 
-  it("un-stamps the tranche a live plan's voided session un-delivers", async () => {
+  it("un-stamps the tranche and the organisation earning a live plan's voided session un-delivers", async () => {
     await setSessionOutcome(txFor("APPROVED"), {
       occurrenceId: "occ-1",
       outcome: "PLATFORM_OUTAGE",
@@ -141,6 +143,13 @@ describe("ops overturn to VOIDED on a plan", () => {
       where: expect.objectContaining({
         paymentId: { in: ["pay-1"] },
         cycleOrdinal: { gt: 0 },
+        holdUntil: { not: null },
+      }),
+      data: { holdUntil: null },
+    });
+    expect(unstampOrg).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        paymentId: { in: ["pay-1"] },
         holdUntil: { not: null },
       }),
       data: { holdUntil: null },

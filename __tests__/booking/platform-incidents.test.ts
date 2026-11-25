@@ -19,6 +19,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     bookingStatusHistory: { create: jest.fn() },
     consultantEarnings: { updateMany: jest.fn() },
+    organizationEarnings: { updateMany: jest.fn() },
     incidentRemedy: {
       createMany: jest.fn(),
       updateMany: jest.fn(),
@@ -125,6 +126,7 @@ const db = prisma as unknown as {
     Fn
   >;
   consultantEarnings: Record<"updateMany", Fn>;
+  organizationEarnings: Record<"updateMany", Fn>;
   incidentRemedy: Record<
     "createMany" | "updateMany" | "findMany" | "groupBy" | "count",
     Fn
@@ -369,7 +371,7 @@ describe("the retroactive void", () => {
     );
   });
 
-  it("un-stamps the tranche a live plan's voided session un-delivers, in the void's commit", async () => {
+  it("un-stamps the tranche and the organisation earning a live plan's voided session un-delivers, in the void's commit", async () => {
     db.refund.findFirst.mockResolvedValue(null);
     db.appointmentOccurrence.findMany.mockResolvedValue([
       { id: "occ-1", completionStatus: "COMPLETED" },
@@ -379,6 +381,7 @@ describe("the retroactive void", () => {
     ]);
     db.incidentRemedy.createMany.mockResolvedValue({ count: 1 });
     db.consultantEarnings.updateMany.mockResolvedValue({ count: 1 });
+    db.organizationEarnings.updateMany.mockResolvedValue({ count: 1 });
     // 12 sessions at 4 a week: the void leaves 3 of the first cycle's 4 delivered.
     const session = (completionStatus: string, i: number) => ({
       startsAt: at(i * 24 * 60),
@@ -419,19 +422,24 @@ describe("the retroactive void", () => {
     const out = await voidForIncident(livePlan, "inc-1", NOW);
 
     expect(out.outcome).toBe("voided");
+    const unreleased = {
+      paymentId: { in: ["pay-1"] },
+      holdUntil: { not: null },
+      OR: [
+        { status: { in: ["PENDING", "PENDING_TRUST"] } },
+        {
+          status: "HELD",
+          preHoldStatus: { in: ["PENDING", "PENDING_TRUST"] },
+        },
+      ],
+    };
     expect(db.consultantEarnings.updateMany).toHaveBeenCalledWith({
-      where: {
-        paymentId: { in: ["pay-1"] },
-        cycleOrdinal: { gt: -1 },
-        holdUntil: { not: null },
-        OR: [
-          { status: { in: ["PENDING", "PENDING_TRUST"] } },
-          {
-            status: "HELD",
-            preHoldStatus: { in: ["PENDING", "PENDING_TRUST"] },
-          },
-        ],
-      },
+      where: { ...unreleased, cycleOrdinal: { gt: -1 } },
+      data: { holdUntil: null },
+    });
+    // The plan is no longer delivered in full, so its organisation earning waits again too.
+    expect(db.organizationEarnings.updateMany).toHaveBeenCalledWith({
+      where: unreleased,
       data: { holdUntil: null },
     });
   });

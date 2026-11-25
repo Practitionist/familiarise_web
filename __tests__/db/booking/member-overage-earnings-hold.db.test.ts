@@ -399,9 +399,35 @@ describe("a delivered subscription tranche keeps its stamped date when a later c
   });
 });
 
-it("a voided cycle's tranche loses its stamp and is stamped afresh when the make-up is delivered; a released tranche keeps its date", async () => {
+it("a voided cycle's tranche and the plan's organisation earning lose their stamps and are stamped afresh when the make-up is delivered; a released tranche keeps its date", async () => {
   const { host, appointmentId, periodStart, parent } =
     await mintSubscription(false);
+  // The buyer kept one of the two sessions, so one delivered session delivers the plan in full
+  // and settlement dates the host organisation's earning along with the tranches.
+  await prisma.appointment.update({
+    where: { id: appointmentId },
+    data: { subscription: { update: { sessionsRefunded: 1 } } },
+  });
+  const org = await prisma.organization.create({
+    data: { name: "Host org", slug: `db-tier-${randomUUID()}` },
+  });
+  const orgEarning = await prisma.organizationEarnings.create({
+    data: {
+      organizationId: org.id,
+      paymentId: parent.id,
+      grossAmountPaise: BigInt(400_000),
+      platformFeePaise: BigInt(80_000),
+      orgSharePaise: BigInt(40_000),
+      consultantSharePaise: BigInt(280_000),
+      status: "PENDING",
+      holdUntil: null,
+    },
+  });
+  const orgHold = () =>
+    prisma.organizationEarnings.findUniqueOrThrow({
+      where: { id: orgEarning.id },
+      select: { status: true, holdUntil: true },
+    });
   const first = await addSession(appointmentId, host.consultantProfileId, {
     ordinal: 1,
     startsAt: new Date(periodStart.getTime() + 7 * DAY_MS),
@@ -412,6 +438,7 @@ it("a voided cycle's tranche loses its stamp and is stamped afresh when the make
   );
   const stamped = (await earningsOf(parent.id))[0].holdUntil;
   expect(stamped).not.toBeNull();
+  expect((await orgHold()).holdUntil).not.toBeNull();
   // The second tranche stands in for one already released to the expert.
   await prisma.consultantEarnings.updateMany({
     where: { paymentId: parent.id, cycleOrdinal: 1 },
@@ -459,8 +486,9 @@ it("a voided cycle's tranche loses its stamp and is stamped afresh when the make
     { cycleOrdinal: 0, status: "PENDING", holdUntil: null },
     releasedTranche,
   ]);
+  expect(await orgHold()).toEqual({ status: "PENDING", holdUntil: null });
 
-  // The make-up is placed three days out; allocation re-anchors the appointment's holds and stamps no tranche.
+  // The make-up is placed three days out; allocation re-anchors the appointment's holds and stamps neither row.
   const makeUp = await addSession(appointmentId, host.consultantProfileId, {
     ordinal: 2,
     startsAt: new Date(Date.now() + 3 * DAY_MS),
@@ -468,8 +496,9 @@ it("a voided cycle's tranche loses its stamp and is stamped afresh when the make
   });
   await recomputeEarningsHold(prisma, appointmentId);
   expect((await holds())[0].holdUntil).toBeNull();
+  expect((await orgHold()).holdUntil).toBeNull();
 
-  // The make-up is delivered: completion stamps the tranche from that session's end.
+  // The make-up is delivered: completion stamps both rows from that session's end.
   await prisma.appointmentOccurrence.update({
     where: { id: makeUp.id },
     data: { completionStatus: "COMPLETED", completedAt: makeUp.endsAt },
@@ -491,4 +520,6 @@ it("a voided cycle's tranche loses its stamp and is stamped afresh when the make
     },
     releasedTranche,
   ]);
+  // An organisation earning carries no new-expert days.
+  expect(await orgHold()).toEqual({ status: "PENDING", holdUntil: fresh });
 });

@@ -78,13 +78,15 @@ function deliveredTranches(
 }
 
 /**
- * A live plan's tranche keeps its stamp only while its cycle is delivered.
- * Called in the transaction that voided a delivered session: every unreleased
- * tranche above the matured ordinal returns to unstamped, for the next
- * completion to stamp. A READY, BATCHED or PAID tranche is left alone.
+ * A live plan's tranche keeps its stamp only while its cycle is delivered, and
+ * its organisation earning only while every cycle is. Called in the
+ * transaction that voided a delivered session: every unreleased tranche above
+ * the matured ordinal, and the organisation rows once the last tranche is no
+ * longer matured, return to unstamped for the next completion to stamp. A
+ * READY, BATCHED or PAID row is left alone. Answers the rows cleared.
  */
 export async function unstampUndeliveredTranches(
-  tx: Pick<Tx, "appointment" | "consultantEarnings">,
+  tx: Pick<Tx, "appointment" | "consultantEarnings" | "organizationEarnings">,
   args: { appointmentId: string; now: Date },
 ): Promise<number> {
   const wrapper = await tx.appointment.findUnique({
@@ -129,21 +131,27 @@ export async function unstampUndeliveredTranches(
   ) {
     return 0;
   }
-  const { matured } = deliveredTranches(
+  const { tranches, matured } = deliveredTranches(
     wrapper.subscription,
     wrapper.occurrences,
     args.now,
   );
+  const stamped = {
+    paymentId: { in: wrapper.payment.map((p) => p.id) },
+    holdUntil: { not: null },
+    ...UNSTAMPED,
+  };
   const { count } = await tx.consultantEarnings.updateMany({
-    where: {
-      paymentId: { in: wrapper.payment.map((p) => p.id) },
-      cycleOrdinal: { gt: matured },
-      holdUntil: { not: null },
-      ...UNSTAMPED,
-    },
+    where: { ...stamped, cycleOrdinal: { gt: matured } },
     data: { holdUntil: null },
   });
-  return count;
+  // The mirror of the settle stamp, which dates these rows only once the last tranche has matured.
+  if (matured >= tranches.count - 1) return count;
+  const org = await tx.organizationEarnings.updateMany({
+    where: stamped,
+    data: { holdUntil: null },
+  });
+  return count + org.count;
 }
 
 /**
