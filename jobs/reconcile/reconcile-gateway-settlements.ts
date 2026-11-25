@@ -208,7 +208,9 @@ interface HeldSettlement {
 
 interface PostedMismatch {
   settlementId: string;
-  postedPaise: number;
+  /** What the posted journal moved into CASH; negative is out of it. */
+  postedCashPaise: number;
+  /** Credits less debits of the stored lines, in the same sign. */
   linesNetPaise: number;
 }
 
@@ -305,6 +307,41 @@ async function debitTotalsByKey(keys: string[]): Promise<Map<string, number>> {
     out.set(
       t.idempotencyKey,
       t.entries.reduce((s, e) => s + sumPaise(e.amountPaise), 0),
+    );
+  }
+  return out;
+}
+
+/** The signed CASH movement of each journal (debits less credits), by its idempotency key. */
+async function cashMovementByKey(keys: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (keys.length === 0) return out;
+  const txns = await prisma.ledgerTransaction.findMany({
+    where: { idempotencyKey: { in: keys } },
+    select: {
+      idempotencyKey: true,
+      entries: {
+        select: {
+          direction: true,
+          amountPaise: true,
+          account: { select: { kind: true } },
+        },
+      },
+    },
+  });
+  for (const t of txns) {
+    out.set(
+      t.idempotencyKey,
+      t.entries
+        .filter((e) => e.account.kind === "CASH")
+        .reduce(
+          (sum, e) =>
+            sum +
+            (e.direction === "DEBIT"
+              ? sumPaise(e.amountPaise)
+              : -sumPaise(e.amountPaise)),
+          0,
+        ),
     );
   }
   return out;
@@ -855,7 +892,7 @@ async function postSettlementJournals(
     );
   const open = new Set<string>();
   if (nets.length === 0) return { finished: true, after: null, open };
-  const posted = await debitTotalsByKey(
+  const posted = await cashMovementByKey(
     nets.map((n) => `settlement:${n.settlementId}`),
   );
   // Unposted settlements stay open until posted, or until the gateway confirms a zero net.
@@ -866,12 +903,13 @@ async function postSettlementJournals(
   let last = after;
   for (const { settlementId, net, oldestLineAt } of nets) {
     const key = `settlement:${settlementId}`;
-    const postedPaise = posted.get(key);
-    if (postedPaise !== undefined) {
-      if (postedPaise !== Math.abs(net)) {
+    const postedCashPaise = posted.get(key);
+    if (postedCashPaise !== undefined) {
+      // Signed, so a journal into cash never matches lines that net out of it.
+      if (postedCashPaise !== net) {
         findings.postedMismatches.push({
           settlementId,
-          postedPaise,
+          postedCashPaise,
           linesNetPaise: net,
         });
       }
@@ -1296,7 +1334,13 @@ async function reportSettlementFindings(
     );
   }
   if (findings.postedMismatches.length > 0) {
-    const message = `${findings.postedMismatches.length} posted Razorpay settlement journal(s) differ from their stored lines; the ledger is immutable, so correct by a hand journal`;
+    const message = `${findings.postedMismatches.length} posted Razorpay settlement journal(s) differ in amount or direction from their stored lines (${findings.postedMismatches
+      .slice(0, 5)
+      .map(
+        (m) =>
+          `${m.settlementId}: journal ${m.postedCashPaise} into cash, lines ${m.linesNetPaise}`,
+      )
+      .join("; ")}); the ledger is immutable, so correct by a hand journal`;
     await reportStandingFinding(
       {
         key: `${RECONCILE_GATEWAY_SETTLEMENTS_JOB}:posted-differs`,

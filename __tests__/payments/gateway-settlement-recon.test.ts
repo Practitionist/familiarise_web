@@ -53,20 +53,49 @@ const mockJournals = new Map<string, number>([
 ]);
 type PostInput = {
   idempotencyKey: string;
-  postings: Array<{ direction: string; amountPaise: number }>;
+  postings: Array<{
+    account: { kind: string };
+    direction: string;
+    amountPaise: number;
+  }>;
 };
-/** A posted settlement journal is on the books for every later run. */
+/**
+ * A posted settlement journal is on the books for every later run, stored as
+ * its cash movement: positive into CASH, negative out of it.
+ */
 const mockPost = jest.fn(async (_db: unknown, input: PostInput) => {
   if (input.idempotencyKey.startsWith("settlement:")) {
     mockJournals.set(
       input.idempotencyKey,
       input.postings
-        .filter((p) => p.direction === "DEBIT")
-        .reduce((sum, p) => sum + p.amountPaise, 0),
+        .filter((p) => p.account.kind === "CASH")
+        .reduce(
+          (sum, p) =>
+            sum + (p.direction === "DEBIT" ? p.amountPaise : -p.amountPaise),
+          0,
+        ),
     );
   }
   return { created: true };
 });
+/** The entries of a stored journal: both legs of a settlement, one debit otherwise. */
+const mockEntriesOf = (key: string, value: number) => {
+  if (!key.startsWith("settlement:")) {
+    return [
+      { direction: "DEBIT", amountPaise: value, account: { kind: "OTHER" } },
+    ];
+  }
+  const amountPaise = Math.abs(value);
+  const cash = value > 0 ? "DEBIT" : "CREDIT";
+  return [
+    { direction: cash, amountPaise, account: { kind: "CASH" } },
+    {
+      direction: cash === "DEBIT" ? "CREDIT" : "DEBIT",
+      amountPaise,
+      account: { kind: "GATEWAY_CLEARING" },
+    },
+  ];
+};
 const mockRefunds = [{ id: "r1", refundId: "rfnd_1", amountPaise: 9_000 }];
 const mockTopUps = [
   {
@@ -243,12 +272,26 @@ jest.mock("../../lib/prisma", () => ({
     dispute: { findMany: jest.fn(async () => []) },
     ledgerTransaction: {
       findMany: jest.fn(
-        async ({ where }: { where: { idempotencyKey: { in: string[] } } }) =>
+        async ({
+          where,
+          select,
+        }: {
+          where: { idempotencyKey: { in: string[] } };
+          select: { entries: { where?: { direction: string } } };
+        }) =>
           where.idempotencyKey.in.flatMap((k) => {
-            const debit = mockJournals.get(k);
-            return debit === undefined
-              ? []
-              : [{ idempotencyKey: k, entries: [{ amountPaise: debit }] }];
+            const value = mockJournals.get(k);
+            if (value === undefined) return [];
+            const only = select.entries.where?.direction;
+            const entries = mockEntriesOf(k, value);
+            return [
+              {
+                idempotencyKey: k,
+                entries: only
+                  ? entries.filter((e) => e.direction === only)
+                  : entries,
+              },
+            ];
           }),
       ),
     },
@@ -760,6 +803,39 @@ describe("the walk, the completeness check and the later passes", () => {
       expect.objectContaining({
         key: "reconcile-gateway-settlements:posted-differs",
         ids: ["setl_2026-10-19"],
+      }),
+    );
+  });
+
+  it("reports a posted journal that moved cash the other way from what its lines now say", async () => {
+    mockCheckpoint.value = readThrough("2026-10-18");
+    // The lines net to ₹10 out of cash; the journal on the books moved ₹10 into cash.
+    mockPagesByDay.set("2026-10-19", [
+      [
+        {
+          entity_id: "rfnd_dir",
+          type: "refund",
+          amount: 1_000,
+          credit: 0,
+          debit: 1_000,
+          settlement_id: "setl_dir",
+          settled_at: settledOn("2026-10-19"),
+        },
+      ],
+    ]);
+    mockJournals.set("settlement:setl_dir", 1_000);
+
+    const result = await runReconcileGatewaySettlements(Date.now(), now);
+
+    expect(result).toMatchObject({ settlementsPosted: 0, postedMismatches: 1 });
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-gateway-settlements:posted-differs",
+        ids: ["setl_dir"],
+        message: expect.stringContaining(
+          "setl_dir: journal 1000 into cash, lines -1000",
+        ),
       }),
     );
   });
