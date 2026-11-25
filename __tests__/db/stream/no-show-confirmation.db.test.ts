@@ -299,7 +299,7 @@ it("ops Set outcome expert absent on a disputed proposal cancels, refunds in ful
   expect(voidedAt).toBeNull();
 });
 
-it("ops Set outcome expert absent on an unpaid consultation is refused by name and changes nothing", async () => {
+it("ops Set outcome expert absent on an unpaid consultation voids the one session with both stamps and one strike, and a repeat adds no strike or refund", async () => {
   const room = await seedConsultationRoom(13);
   await prisma.appointmentOccurrence.update({
     where: { id: room.occurrenceId },
@@ -309,25 +309,61 @@ it("ops Set outcome expert absent on an unpaid consultation is refused by name a
       outcomeAt: new Date(),
     },
   });
-
-  await expect(
+  const expertAbsent = () =>
     overturnSessionOutcome({
       occurrenceId: room.occurrenceId,
       outcome: "HOST_ABSENT",
       actorUserId: room.learnerId,
-    }),
-  ).rejects.toMatchObject({ code: "NO_SHOW_UNPAID" });
+    });
+  const strikes = async () => {
+    const { consultationPlan } = await prisma.consultation.findUniqueOrThrow({
+      where: { id: room.consultationId! },
+      select: { consultationPlan: { select: { consultantProfileId: true } } },
+    });
+    return prisma.systemEvent.count({
+      where: {
+        correlationId: `expert-reliability:${consultationPlan.consultantProfileId}`,
+      },
+    });
+  };
 
-  expect(
-    await prisma.appointmentOccurrence.findUniqueOrThrow({
-      where: { id: room.occurrenceId },
-      select: { completionStatus: true, outcome: true, voidedAt: true },
-    }),
-  ).toEqual({
-    completionStatus: "UNVERIFIED",
-    outcome: "INCONCLUSIVE",
-    voidedAt: null,
+  expect((await expertAbsent()).after).toEqual({
+    completionStatus: "VOIDED",
+    outcome: "HOST_ABSENT",
   });
+
+  const voided = await prisma.appointmentOccurrence.findUniqueOrThrow({
+    where: { id: room.occurrenceId },
+    select: {
+      completionStatus: true,
+      outcome: true,
+      voidedAt: true,
+      outcomeConfirmedAt: true,
+    },
+  });
+  expect(voided).toMatchObject({
+    completionStatus: "VOIDED",
+    outcome: "HOST_ABSENT",
+  });
+  // An operator-written void carries both stamps at the same instant.
+  expect(voided.voidedAt).not.toBeNull();
+  expect(voided.outcomeConfirmedAt).toEqual(voided.voidedAt);
+  expect(await strikes()).toBe(1);
+  // The booking stands and nothing is owed: there was no payment.
+  expect(
+    await prisma.consultation.findUniqueOrThrow({
+      where: { id: room.consultationId! },
+      select: { status: true },
+    }),
+  ).toEqual({ status: "APPROVED" });
+
+  await expertAbsent();
+  expect(await strikes()).toBe(1);
+  expect(
+    await prisma.refund.count({
+      where: { payment: { appointmentId: room.appointmentId } },
+    }),
+  ).toBe(0);
 });
 
 /** A declared incident over the room's booked hour, removed with its remedies afterwards so no other suite sees it. */

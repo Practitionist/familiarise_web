@@ -200,20 +200,41 @@ export interface NoShowClaim {
   payment: { id: string; currency: string };
 }
 
-/** Why a booking cannot take the no-show claim; the ops door names it to the operator. */
+/** A session of the booking as a refusal names it. */
+export type NoShowSibling = Pick<
+  ClaimOccurrence,
+  "id" | "startsAt" | "endsAt" | "completionStatus" | "outcome"
+>;
+
+/** Why a booking cannot take the no-show claim, with what the ops door needs to pick its session-level remedy. */
 export type NoShowClaimBar =
   | { reason: "BOOKING_MISSING" }
-  | { reason: "NOT_APPROVED"; status: AppointmentStatus }
+  | {
+      reason: "NOT_APPROVED";
+      status: AppointmentStatus;
+      paid: boolean;
+      /** The booking's other sessions that stand, which a void's whole-payment refund would also pay back. */
+      otherSessions: number;
+    }
   | { reason: "UNPAID" }
   | { reason: "NOT_PROPOSED" }
-  | {
-      reason: "SIBLING";
-      sibling: Pick<
-        ClaimOccurrence,
-        "id" | "startsAt" | "completionStatus" | "outcome"
-      >;
-    }
+  /** Every other live session that vetoes the claim; the booking is paid. */
+  | { reason: "SIBLING"; siblings: NoShowSibling[] }
   | { reason: "CONSULTANT_PRESENT" };
+
+/** A session that still stands on the booking: live, and not a void already settled. */
+function standsOnBooking(o: ClaimOccurrence): boolean {
+  return (
+    o.deletedAt === null &&
+    !o.isTentative &&
+    o.completionStatus !== OccurrenceCompletionStatus.CANCELLED &&
+    o.completionStatus !== OccurrenceCompletionStatus.RESCHEDULED &&
+    !(
+      o.completionStatus === OccurrenceCompletionStatus.VOIDED &&
+      o.seatsSettledAt !== null
+    )
+  );
+}
 
 export type NoShowJudgement = { claim: NoShowClaim } | { bar: NoShowClaimBar };
 
@@ -235,10 +256,19 @@ export function judgeNoShowClaim(
   if (!consultantUserId || !consulteeUserId || !appointment) {
     return { bar: { reason: "BOOKING_MISSING" } };
   }
-  if (row.status !== AppointmentStatus.APPROVED) {
-    return { bar: { reason: "NOT_APPROVED", status: row.status } };
-  }
   const payment = appointment.payment[0];
+  if (row.status !== AppointmentStatus.APPROVED) {
+    return {
+      bar: {
+        reason: "NOT_APPROVED",
+        status: row.status,
+        paid: payment !== undefined,
+        otherSessions: appointment.occurrences.filter(
+          (o) => o.id !== strikeOccurrenceId && standsOnBooking(o),
+        ).length,
+      },
+    };
+  }
   if (!payment) return { bar: { reason: "UNPAID" } };
   const strike = appointment.occurrences.find(
     (o) => o.id === strikeOccurrenceId,
@@ -251,19 +281,20 @@ export function judgeNoShowClaim(
   ) {
     return { bar: { reason: "NOT_PROPOSED" } };
   }
-  const sibling = appointment.occurrences.find(
+  const siblings = appointment.occurrences.filter(
     (o) => o.id !== strike.id && vetoesClaim(o),
   );
-  if (sibling) {
+  if (siblings.length > 0) {
     return {
       bar: {
         reason: "SIBLING",
-        sibling: {
-          id: sibling.id,
-          startsAt: sibling.startsAt,
-          completionStatus: sibling.completionStatus,
-          outcome: sibling.outcome,
-        },
+        siblings: siblings.map((o) => ({
+          id: o.id,
+          startsAt: o.startsAt,
+          endsAt: o.endsAt,
+          completionStatus: o.completionStatus,
+          outcome: o.outcome,
+        })),
       },
     };
   }

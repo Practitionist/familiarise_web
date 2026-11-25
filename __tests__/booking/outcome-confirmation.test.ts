@@ -15,6 +15,7 @@ jest.mock("../../lib/prisma", () => {
     platformIncident: memTable([], "pi"),
     refund: memTable([], "rf"),
     bookingStatusHistory: memTable([], "h"),
+    systemEvent: memTable([], "se"),
   };
   client.$transaction = (fn: (tx: unknown) => unknown) => fn(client);
   return { __esModule: true, default: client };
@@ -82,6 +83,8 @@ import {
 
 type Table = ReturnType<typeof memTable>;
 const occurrences = prisma.appointmentOccurrence as unknown as Table;
+const { systemEvent: strikes, platformIncident: incidents } =
+  prisma as unknown as Record<string, Table>;
 
 const NOW = new Date("2026-11-25T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -113,8 +116,12 @@ function verdict(id: string, overrides: Row = {}, meeting: Row = {}): Row {
     appointment: {
       subscriptionId: null,
       participants: [{ userId: "priya" }],
+      organizationId: null,
       consultation: {
-        consultationPlan: { consultantProfile: { userId: "hannah" } },
+        consultationPlan: {
+          consultantProfileId: "cp-hannah",
+          consultantProfile: { userId: "hannah" },
+        },
       },
       subscription: null,
       trial: null,
@@ -129,7 +136,9 @@ const row = (id: string) => occurrences.rows.find((r) => r.id === id)!;
 const tx = prisma as unknown as Tx;
 
 beforeEach(() => {
-  occurrences.rows.splice(0, occurrences.rows.length);
+  for (const table of [occurrences, strikes, incidents]) {
+    table.rows.splice(0, table.rows.length);
+  }
   jest.clearAllMocks();
   jest.mocked(readJobCheckpoint).mockImplementation(async () => null);
 });
@@ -962,29 +971,157 @@ describe("ops set-outcome", () => {
     }
   });
 
+  const parked = (overrides: Row = {}) =>
+    proposal("a", {
+      outcome: "INCONCLUSIVE",
+      ordinal: 1,
+      seatsSettledAt: null,
+      ...overrides,
+    });
+
   it.each([
-    [{ reason: "UNPAID" }, "NO_SHOW_UNPAID"],
+    ["an unpaid booking", { reason: "UNPAID" }],
     [
-      { reason: "NOT_APPROVED", status: "COMPLETED" },
-      "NO_SHOW_BOOKING_NOT_APPROVED",
+      "a paid booking no longer approved whose only session this is",
+      {
+        reason: "NOT_APPROVED",
+        status: "COMPLETED",
+        paid: true,
+        otherSessions: 0,
+      },
     ],
+  ] as const)(
+    "expert absent on %s voids this one session, confirmed as written, with one strike and no claim",
+    async (_label, bar) => {
+      occurrences.rows.push(parked());
+      jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({ bar });
+
+      const result = await expertAbsent();
+
+      // Both stamps at the same instant: the 14-day make-up window starts now.
+      expect(row("a")).toMatchObject({
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+        outcomeConfirmedAt: NOW,
+        voidedAt: NOW,
+      });
+      expect(result.after).toEqual({
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+      });
+      // No cancel, no owed refund marker and no refund drive: the day-14 sweep owns the money.
+      expect(claimNoShowTx).not.toHaveBeenCalled();
+      expect(result.afterCommit).toBeUndefined();
+      expect(strikes.rows.map((r) => r.context)).toEqual([
+        {
+          strike: "CONSULTANT_NO_SHOW",
+          consultantProfileId: "cp-hannah",
+          appointmentId: "apt-a",
+          occurrenceIds: ["a"],
+        },
+      ]);
+    },
+  );
+
+  it("expert absent on a session already voided relabels it and records the strike once: a repeat click writes no second strike", async () => {
+    occurrences.rows.push(
+      parked({
+        completionStatus: "VOIDED",
+        outcome: "CUT_SHORT",
+        voidedAt: hoursAgo(50),
+      }),
+    );
+
+    await expertAbsent();
+
+    expect(row("a")).toMatchObject({
+      completionStatus: "VOIDED",
+      outcome: "HOST_ABSENT",
+      outcomeConfirmedAt: NOW,
+    });
+    expect(readOperatorNoShowClaim).not.toHaveBeenCalled();
+    expect(strikes.rows).toHaveLength(1);
+
+    await expertAbsent();
+    expect(strikes.rows).toHaveLength(1);
+  });
+
+  it.each([
+    // The parked session's booking is unpaid, so the session-level void would otherwise run.
+    ["a parked session", {}, true],
     [
+      "an already voided session",
+      {
+        completionStatus: "VOIDED",
+        outcome: "PLATFORM_OUTAGE",
+        voidedAt: hoursAgo(50),
+      },
+      false,
+    ],
+  ] as const)(
+    "refuses expert absent on %s inside a declared incident: no void, no relabel, no strike",
+    async (_label, session, judged) => {
+      occurrences.rows.push(parked(session));
+      incidents.rows.push({ id: "pi-1", startsAt: at(30), endsAt: at(90) });
+      if (judged) {
+        jest
+          .mocked(readOperatorNoShowClaim)
+          .mockResolvedValueOnce({ bar: { reason: "UNPAID" } });
+      }
+      const before = { ...row("a") };
+
+      await expect(expertAbsent()).rejects.toMatchObject({
+        code: "NO_SHOW_DURING_OUTAGE",
+        httpStatus: 409,
+      });
+
+      expect(row("a")).toEqual(before);
+      expect(strikes.rows).toHaveLength(0);
+    },
+  );
+
+  const sibling = (over: Row) => ({
+    id: "b",
+    startsAt: at(-1440),
+    endsAt: at(-1380),
+    completionStatus: "COMPLETED",
+    outcome: "HELD",
+    ...over,
+  });
+
+  it.each([
+    [
+      // Parked and undecided: the whole-booking cancel may still apply once it is decided.
       {
         reason: "SIBLING",
-        sibling: {
-          id: "b",
-          startsAt: at(-1440),
-          completionStatus: "COMPLETED",
-          outcome: "HELD",
-        },
+        siblings: [
+          sibling({ completionStatus: "UNVERIFIED", outcome: "NOBODY_JOINED" }),
+        ],
       },
       "NO_SHOW_SIBLING_SESSION",
     ],
+    [
+      // A held session stands on a paid booking: one session's share has no refund path yet.
+      { reason: "SIBLING", siblings: [sibling({})] },
+      "NO_SHOW_OTHER_SESSIONS_STAND",
+    ],
+    [
+      {
+        reason: "NOT_APPROVED",
+        status: "COMPLETED",
+        paid: true,
+        otherSessions: 1,
+      },
+      "NO_SHOW_OTHER_SESSIONS_STAND",
+    ],
+    [{ reason: "BOOKING_MISSING" }, "NO_SHOW_NOT_CLAIMABLE"],
   ] as const)(
-    "refuses expert absent on a consultation the claim cannot take (%j), writing nothing and never voiding",
+    "refuses expert absent by name where neither remedy fits (%j), writing nothing",
     async (bar, code) => {
-      occurrences.rows.push(proposal("a", { outcome: "INCONCLUSIVE" }));
-      jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({ bar });
+      occurrences.rows.push(parked());
+      jest
+        .mocked(readOperatorNoShowClaim)
+        .mockResolvedValueOnce({ bar } as never);
 
       await expect(expertAbsent()).rejects.toMatchObject({
         code,
@@ -996,19 +1133,7 @@ describe("ops set-outcome", () => {
         completionStatus: "UNVERIFIED",
         outcome: "INCONCLUSIVE",
       });
+      expect(strikes.rows).toHaveLength(0);
     },
   );
-
-  it("refuses expert absent on a consultation session that is already voided: it stays on its refund path", async () => {
-    occurrences.rows.push(
-      proposal("a", { completionStatus: "VOIDED", outcome: "CUT_SHORT" }),
-    );
-
-    await expect(expertAbsent()).rejects.toMatchObject({
-      code: "TRANSITION_NOT_ALLOWED",
-    });
-
-    expect(claimNoShowTx).not.toHaveBeenCalled();
-    expect(row("a").outcome).toBe("CUT_SHORT");
-  });
 });

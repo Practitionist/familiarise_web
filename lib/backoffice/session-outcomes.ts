@@ -5,7 +5,8 @@
  * (`session.reread-attendance`), and page through the sessions only a human
  * can decide. A void's make-up or refund is money, so an overturn that would
  * un-void a session is refused once either has happened. Expert absent on a
- * consultation is never a void: both doors run the no-show claim.
+ * consultation cancels and refunds the whole booking where every live session
+ * is expert absent, and otherwise voids the one session; either way with a strike.
  */
 
 import {
@@ -68,7 +69,10 @@ import {
   settleClaimedNoShow,
   type NoShowClaim,
   type NoShowClaimBar,
+  type NoShowSibling,
 } from "@/lib/booking/consultant-no-show";
+import { recordExpertStrike } from "@/lib/booking/expert-reliability";
+import { readOverlappingOutages } from "@/lib/booking/outage-windows";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import {
@@ -137,7 +141,12 @@ const OVERTURN_SELECT = {
   appointment: {
     select: {
       classId: true,
-      consultationId: true,
+      organizationId: true,
+      consultation: {
+        select: {
+          consultationPlan: { select: { consultantProfileId: true } },
+        },
+      },
       subscription: { select: { status: true } },
     },
   },
@@ -323,28 +332,50 @@ async function moveStatus(
   return null;
 }
 
-/** Why the expert-absent remedy cannot run on this consultation, as the operator reads it. */
-function noShowBarRefusal(bar: NoShowClaimBar): OpsRefusal {
-  const remedy = "cancelled and refunded as expert absent";
+const words = (value: string) => value.toLowerCase().replaceAll("_", " ");
+
+const describeSibling = (sibling: NoShowSibling) =>
+  `the session starting ${sibling.startsAt.toISOString()} is ${
+    sibling.outcome
+      ? `recorded as ${words(sibling.outcome)}`
+      : `${words(sibling.completionStatus)} with no outcome`
+  }`;
+
+/** A paid booking whose other sessions stand: a void's day-14 refund is the whole payment, so one session cannot be voided alone. */
+const otherSessionsStand = (detail: string, occurrenceId?: string) =>
+  new OpsRefusal(
+    "NO_SHOW_OTHER_SESSIONS_STAND",
+    `This paid booking has other sessions that stand (${detail}). A voided consultation session is refunded as the whole payment after 14 days, so expert absent cannot be applied to one session of it. Refund this session's share through a refund recommendation on the booking's support case instead.`,
+    409,
+    occurrenceId ? { occurrenceId } : undefined,
+  );
+
+/**
+ * Where the whole-booking claim does not fit, the one session is voided with a strike instead.
+ * Answers the refusal when that does not fit either, or null when the session-level void may run.
+ */
+function sessionVoidRefusal(bar: NoShowClaimBar, now: Date): OpsRefusal | null {
   switch (bar.reason) {
     case "UNPAID":
-      return new OpsRefusal(
-        "NO_SHOW_UNPAID",
-        `This consultation has no captured payment, so it cannot be ${remedy}.`,
-      );
+      return null;
     case "NOT_APPROVED":
-      return new OpsRefusal(
-        "NO_SHOW_BOOKING_NOT_APPROVED",
-        `This consultation is ${bar.status.toLowerCase().replaceAll("_", " ")}, so it can no longer be ${remedy}.`,
-      );
+      return bar.paid && bar.otherSessions > 0
+        ? otherSessionsStand(
+            `${bar.otherSessions} besides this one, on a booking that is ${words(bar.status)}`,
+          )
+        : null;
     case "SIBLING": {
-      const { sibling } = bar;
-      const state = sibling.outcome
-        ? `recorded as ${sibling.outcome.toLowerCase().replaceAll("_", " ")}`
-        : `${sibling.completionStatus.toLowerCase()} with no outcome`;
+      // A parked session, or one the outcome sweep has not judged yet, may still turn out expert absent.
+      const undecided = (o: NoShowSibling) =>
+        o.completionStatus === "UNVERIFIED" ||
+        (o.completionStatus === "SCHEDULED" && o.endsAt <= now);
+      const decided = bar.siblings.find((o) => !undecided(o));
+      if (decided)
+        return otherSessionsStand(describeSibling(decided), decided.id);
+      const [sibling] = bar.siblings;
       return new OpsRefusal(
         "NO_SHOW_SIBLING_SESSION",
-        `Expert absent cancels and refunds the whole booking, and its session starting ${sibling.startsAt.toISOString()} is ${state}. Only a booking whose every session is expert absent can be ${remedy}.`,
+        `Another session of this booking has no decision yet: ${describeSibling(sibling)}. Decide that session first. If the expert was absent there too, set it expert absent and the whole booking is cancelled and refunded in full.`,
         409,
         { occurrenceId: sibling.id },
       );
@@ -352,8 +383,21 @@ function noShowBarRefusal(bar: NoShowClaimBar): OpsRefusal {
     default:
       return new OpsRefusal(
         "NO_SHOW_NOT_CLAIMABLE",
-        `This session's booking cannot be ${remedy}.`,
+        "This session's booking has no expert, learner or live session on record, so neither a refund nor a strike can be attributed. Escalate it to engineering with the session id.",
       );
+  }
+}
+
+/** No strike inside a declared incident or a maintenance window: that miss is not the expert's. */
+async function refuseDuringOutage(tx: Tx, occ: OverturnRow): Promise<void> {
+  const outages = await readOverlappingOutages(tx, [
+    { startsAt: occ.startsAt, endsAt: occ.endsAt },
+  ]);
+  if (outages.length > 0) {
+    throw new OpsRefusal(
+      "NO_SHOW_DURING_OUTAGE",
+      "A declared incident or maintenance window overlaps this session, so the miss is not the expert's. Set its outcome to a platform outage instead.",
+    );
   }
 }
 
@@ -374,7 +418,7 @@ async function runNoShowClaim(
     if (error instanceof NoShowDuringOutageError) {
       throw new OpsRefusal(
         "NO_SHOW_DURING_OUTAGE",
-        "An outage overlaps this session, so it is not a consultant no-show; give it another outcome with Set outcome.",
+        "A declared incident or maintenance window overlaps this session, so the miss is not the expert's. Set its outcome to a platform outage instead.",
       );
     }
     throw error;
@@ -430,30 +474,60 @@ async function parkAsNoShowProposal(
   }
 }
 
+type SessionStrike = Parameters<typeof recordExpertStrike>[1];
+
 /**
- * Expert absent on a consultation is one remedy whoever decides it: the no-show claim cancels the
- * booking, owes the full refund and writes the strike in this transaction. A booking the claim
- * cannot take is refused with the reason, never voided.
+ * Expert absent on a consultation, decided by an operator. Where every live session is expert
+ * absent the no-show claim cancels the booking, owes the full refund and writes the strike in this
+ * transaction (`claimed`). Otherwise this one session is voided by the door's own void path with a
+ * strike (`session`): unpaid, a booking no longer approved, or a session already voided. The strike
+ * is null for a session already confirmed expert absent, whose strike that write recorded.
  */
 async function decideConsultationNoShow(
   tx: Tx,
   occ: OverturnRow,
   args: OverturnArgs,
   now: Date,
-) {
-  if (
-    occ.completionStatus !== "UNVERIFIED" &&
-    !OCCURRENCE_COMPLETION_ALLOWED_FROM.UNVERIFIED.includes(
-      occ.completionStatus,
-    )
-  ) {
-    throw new OpsRefusal(
-      "TRANSITION_NOT_ALLOWED",
-      `A ${occ.completionStatus.toLowerCase()} consultation session cannot be decided expert absent; it keeps its own make-up or refund path.`,
-    );
+): Promise<
+  | {
+      kind: "claimed";
+      result: {
+        before: { completionStatus: string; outcome: OccurrenceOutcome | null };
+        after: {
+          completionStatus: OccurrenceCompletionStatus;
+          outcome: OccurrenceOutcome;
+        };
+        afterCommit: () => Promise<void>;
+      };
+    }
+  | { kind: "session"; strike: SessionStrike | null }
+> {
+  const consultantProfileId =
+    occ.appointment.consultation?.consultationPlan.consultantProfileId;
+  if (!consultantProfileId) {
+    throw sessionVoidRefusal({ reason: "BOOKING_MISSING" }, now);
+  }
+  const strike: SessionStrike = {
+    consultantProfileId,
+    organizationId: occ.appointment.organizationId,
+    cause: "CONSULTANT_NO_SHOW",
+    appointmentId: occ.appointmentId,
+    occurrenceIds: [occ.id],
+  };
+  if (occ.completionStatus === "VOIDED") {
+    if (occ.outcome === "HOST_ABSENT" && occ.outcomeConfirmedAt !== null) {
+      return { kind: "session", strike: null };
+    }
+    await refuseDuringOutage(tx, occ);
+    return { kind: "session", strike };
   }
   const judged = await readOperatorNoShowClaim(tx, occ.id);
-  if ("bar" in judged) throw noShowBarRefusal(judged.bar);
+  if ("bar" in judged) {
+    const refusal = sessionVoidRefusal(judged.bar, now);
+    if (refusal) throw refusal;
+    await refuseDuringOutage(tx, occ);
+    return { kind: "session", strike };
+  }
   await parkAsNoShowProposal(tx, occ, args, now);
   const afterCommit = await runNoShowClaim(
     tx,
@@ -462,12 +536,15 @@ async function decideConsultationNoShow(
     now,
   );
   return {
-    before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
-    after: {
-      completionStatus: OccurrenceCompletionStatus.CANCELLED,
-      outcome: args.outcome,
+    kind: "claimed",
+    result: {
+      before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
+      after: {
+        completionStatus: OccurrenceCompletionStatus.CANCELLED,
+        outcome: args.outcome,
+      },
+      afterCommit,
     },
-    afterCommit,
   };
 }
 
@@ -479,8 +556,11 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
     select: OVERTURN_SELECT,
   });
   assertDecided(occ, now);
-  if (args.outcome === "HOST_ABSENT" && occ.appointment.consultationId) {
-    return decideConsultationNoShow(tx, occ, args, now);
+  let strike: SessionStrike | null = null;
+  if (args.outcome === "HOST_ABSENT" && occ.appointment.consultation) {
+    const decided = await decideConsultationNoShow(tx, occ, args, now);
+    if (decided.kind === "claimed") return decided.result;
+    ({ strike } = decided);
   }
   const to = COMPLETION_FOR_OUTCOME[args.outcome];
   // #1834 — the door's fromIn is the row's own status, so the map is asked here.
@@ -526,6 +606,9 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
     to === occ.completionStatus
       ? await relabel(tx, occ, args, now)
       : await moveStatus(tx, occ, args, to, now);
+  // Once per session: the write above is a compare-and-set on the status, outcome and stamp read,
+  // and a session read as already confirmed expert absent carries no strike to write.
+  if (strike) await recordExpertStrike(tx, strike);
   return {
     before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
     after: { completionStatus: to, outcome: args.outcome },

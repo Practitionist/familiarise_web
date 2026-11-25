@@ -606,7 +606,7 @@ describe("consultant no-show refunds", () => {
       expect(await readNoShowClaim(prisma, "occ-1")).toBeNull();
     });
 
-    it("names why a booking cannot take it: unpaid, not approved, or a sibling decided another way", async () => {
+    it("names why a booking cannot take it, with what the door needs to choose the session-level remedy", async () => {
       const unpaid = proposedClaimRow({ id: "pay-1" });
       unpaid.appointment.payment = [];
       expect(await judge(unpaid)).toEqual({ bar: { reason: "UNPAID" } });
@@ -614,7 +614,12 @@ describe("consultant no-show refunds", () => {
       const completed = proposedClaimRow({ id: "pay-1" });
       completed.status = "COMPLETED";
       expect(await judge(completed)).toEqual({
-        bar: { reason: "NOT_APPROVED", status: "COMPLETED" },
+        bar: {
+          reason: "NOT_APPROVED",
+          status: "COMPLETED",
+          paid: true,
+          otherSessions: 0,
+        },
       });
 
       const held = proposedClaimRow({ id: "pay-1" });
@@ -627,8 +632,13 @@ describe("consultant no-show refunds", () => {
       expect(await judge(held)).toMatchObject({
         bar: {
           reason: "SIBLING",
-          sibling: { id: "occ-held", outcome: "HELD" },
+          siblings: [{ id: "occ-held", outcome: "HELD" }],
         },
+      });
+      // The same booking once it is no longer approved: the held session is one that stands.
+      held.status = "COMPLETED";
+      expect(await judge(held)).toMatchObject({
+        bar: { reason: "NOT_APPROVED", paid: true, otherSessions: 1 },
       });
     });
   });
