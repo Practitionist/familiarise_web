@@ -2,13 +2,14 @@
  * Daily Razorpay settlement reconciliation (ticker, 06:30–12:30 UTC window).
  *
  * Each run walks the settlement recon report forward one IST day at a time,
- * from the day after its checkpoint to yesterday, reading every day from the
- * first page to a short page. It stores the valid lines, matches each to our
- * money row, books a missing capture fee under `gatewayfee:<pay_id>`,
- * re-matches lines still unresolved, and posts one `settlement:<setl_id>`
- * journal (GATEWAY_CLEARING to CASH) only when the stored lines add up to the
- * settlement entity's amount. A posted journal is never edited; a difference is
- * reported.
+ * from the day after the last day read in full to yesterday, then reads the
+ * last two days again. It stores the valid lines, matches each to our money
+ * row, books a missing capture fee under `gatewayfee:<pay_id>`, re-matches
+ * lines still unresolved, and posts one `settlement:<setl_id>` journal
+ * (GATEWAY_CLEARING to CASH) only when the stored lines add up to the
+ * settlement entity's amount. Every bound (pages, days, lines, settlement
+ * reads) resumes from one continuation record kept as the job's checkpoint.
+ * A posted journal is never edited; a difference is reported.
  */
 import { z } from "zod";
 import type {
@@ -43,13 +44,13 @@ const IST_OFFSET_MS = 330 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 /** Days of the report one run reads; a longer gap is closed over the next runs. */
 const MAX_DAYS_PER_RUN = 10;
-/** Pages one day may take; a larger day stops the walk and shows as days behind. */
+/** Pages of one day a run reads; a larger day resumes at the next page on the next run. */
 const MAX_PAGES_PER_DAY = 20;
-/** Settlements settled longer ago than this are compared and posted only while their days are being read. */
+/** Settlements settled longer ago than this are examined only until a full pass has covered the days read. */
 const SETTLEMENT_LOOKBACK_DAYS = 60;
-/** Settlement entities one run fetches. */
+/** Settlement entities one run fetches; the next run goes on after the last one. */
 const MAX_SETTLEMENTS_PER_RUN = 50;
-/** Unresolved lines one run re-matches. */
+/** Unresolved lines one run re-matches; the next run goes on after the last one. */
 const REMATCH_BATCH = 200;
 const UNRESOLVED_STATUSES: GatewaySettlementLineStatus[] = [
   "UNMATCHED",
@@ -88,6 +89,45 @@ const settlementEntitySchema = z
 
 const dayKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+/**
+ * Where the next run resumes: the last day read in full, the page a capped day
+ * stopped at, the last line re-matched, and the settlement examination pass.
+ * `settle.from` is the earliest day read outside the lookback that no full pass
+ * has covered yet; `stale` says such a day was read while a pass was under way.
+ */
+const continuationSchema = z.object({
+  read: dayKeySchema.nullable(),
+  day: z
+    .object({ key: dayKeySchema, skip: z.number().int().nonnegative() })
+    .nullable(),
+  rematchAfter: z.string().nullable(),
+  settle: z.object({
+    from: dayKeySchema.nullable(),
+    after: z.string().nullable(),
+    stale: z.boolean(),
+  }),
+});
+type Continuation = z.infer<typeof continuationSchema>;
+
+const freshContinuation = (): Continuation => ({
+  read: null,
+  day: null,
+  rematchAfter: null,
+  settle: { from: null, after: null, stale: false },
+});
+
+/** The stored continuation; a missing or unreadable one starts the walk from the stored lines. */
+async function readContinuation(): Promise<Continuation> {
+  const stored = await readJobCheckpoint(RECONCILE_GATEWAY_SETTLEMENTS_JOB);
+  if (!stored) return freshContinuation();
+  try {
+    const parsed = continuationSchema.safeParse(JSON.parse(stored));
+    return parsed.success ? parsed.data : freshContinuation();
+  } catch {
+    return freshContinuation();
+  }
+}
+
 interface SettlementReconResult {
   success: true;
   skipped?: ConfigSkip;
@@ -107,7 +147,7 @@ interface SettlementReconResult {
   daysBehind: number;
   /** True when every day up to yesterday is read and no settlement was left unexamined. */
   done: boolean;
-  /** The last IST day read in full (YYYY-MM-DD); absent on a manual run of one date. */
+  /** The continuation record as JSON; absent on a manual run of one date. */
   checkpoint?: string;
   byStatus: Record<GatewaySettlementLineStatus, number>;
 }
@@ -535,93 +575,98 @@ async function storePage(
   return { inserted: count, complete };
 }
 
-/** Reads one day from its first page to a short page; false when the deadline or the page bound cut it short. */
+/**
+ * Reads a day's pages from `skip` until a short page. A read cut by the
+ * deadline or the page bound says where the next run resumes.
+ */
 async function readDay(
   client: RazorpayClient,
   day: IstDay,
+  skip: number,
   isPastDeadline: () => boolean,
   result: SettlementReconResult,
-): Promise<boolean> {
+): Promise<{ complete: boolean; nextSkip: number }> {
+  let offset = skip;
   for (let page = 0; page < MAX_PAGES_PER_DAY; page++) {
-    if (isPastDeadline()) return false;
+    if (isPastDeadline()) return { complete: false, nextSkip: offset };
     const { rows, fetched, rejected } = await fetchReconPage(
       client,
       day,
-      page * PAGE_SIZE,
+      offset,
     );
     result.fetched += fetched;
     result.rejectedRows += rejected;
     if (rows.length > 0) {
       const stored = await storePage(rows, isPastDeadline, result);
       result.inserted += stored.inserted;
-      if (!stored.complete) return false;
+      if (!stored.complete) return { complete: false, nextSkip: offset };
     }
-    if (fetched < PAGE_SIZE) return true;
+    if (fetched < PAGE_SIZE) return { complete: true, nextSkip: 0 };
+    offset += PAGE_SIZE;
   }
-  return false;
+  return { complete: false, nextSkip: offset };
 }
 
 /**
- * The first day to read, and the last day already read in full. The walk
- * starts the day after the checkpoint (without one, on the day of the last
- * stored line) and never later than the day before yesterday, so late rows of
- * the last two days are still picked up.
+ * The first day not yet read: the day after the last day read in full, or with
+ * no record the day of the last stored line, never later than the day before
+ * yesterday.
  */
-async function firstDayToRead(
-  yesterday: IstDay,
-): Promise<{ first: IstDay; readThrough: IstDay | null }> {
-  const dayBefore = istDayFrom(new Date(yesterday.start.getTime() - DAY_MS));
-  const stored = await readJobCheckpoint(RECONCILE_GATEWAY_SETTLEMENTS_JOB);
-  const readThrough = stored ? dayFromKey(stored) : null;
-  let anchor = readThrough ? istDayFrom(readThrough.end) : null;
-  if (!anchor) {
-    const last = await prisma.gatewaySettlementLine.findFirst({
-      where: { provider: "RAZORPAY", settledAt: { not: null } },
-      orderBy: { settledAt: "desc" },
-      select: { settledAt: true },
-    });
-    anchor = last?.settledAt ? istDayOf(last.settledAt) : null;
-  }
-  return {
-    first: anchor && anchor.start < dayBefore.start ? anchor : dayBefore,
-    readThrough,
-  };
+async function firstUnreadDay(
+  read: IstDay | null,
+  dayBefore: IstDay,
+): Promise<IstDay> {
+  if (read) return istDayFrom(read.end);
+  const last = await prisma.gatewaySettlementLine.findFirst({
+    where: { provider: "RAZORPAY", settledAt: { not: null } },
+    orderBy: { settledAt: "desc" },
+    select: { settledAt: true },
+  });
+  const anchor = last?.settledAt ? istDayOf(last.settledAt) : null;
+  return anchor && anchor.start < dayBefore.start ? anchor : dayBefore;
 }
 
-/** Matches again a bounded, rotating batch of lines that no earlier pass resolved. */
-async function rematchUnresolved(
-  now: Date,
-  result: SettlementReconResult,
-): Promise<void> {
-  const where = {
-    provider: "RAZORPAY" as const,
-    status: { in: UNRESOLVED_STATUSES },
-  };
-  const total = await prisma.gatewaySettlementLine.count({ where });
-  if (total === 0) return;
-  const lines = await prisma.gatewaySettlementLine.findMany({
-    where,
-    orderBy: [{ fetchedAt: "asc" }, { id: "asc" }],
-    // Hour by hour the window moves on, so a backlog larger than one batch is still covered.
-    skip:
-      total > REMATCH_BATCH
-        ? (Math.floor(now.getTime() / 3_600_000) * REMATCH_BATCH) % total
-        : 0,
-    take: REMATCH_BATCH,
-    select: {
-      id: true,
-      entityId: true,
-      type: true,
-      amountPaise: true,
-      feePaise: true,
-      paymentId: true,
-      disputeId: true,
-      matchedKind: true,
-      matchedId: true,
-      status: true,
-      note: true,
+const UNRESOLVED_LINE_SELECT = {
+  id: true,
+  entityId: true,
+  type: true,
+  amountPaise: true,
+  feePaise: true,
+  paymentId: true,
+  disputeId: true,
+  matchedKind: true,
+  matchedId: true,
+  status: true,
+  note: true,
+} as const;
+
+/** The next batch of unresolved lines after `after`, in id order. */
+function unresolvedLinesAfter(after: string | null) {
+  return prisma.gatewaySettlementLine.findMany({
+    where: {
+      provider: "RAZORPAY",
+      status: { in: UNRESOLVED_STATUSES },
+      ...(after === null ? {} : { id: { gt: after } }),
     },
+    orderBy: { id: "asc" },
+    take: REMATCH_BATCH,
+    select: UNRESOLVED_LINE_SELECT,
   });
+}
+
+/**
+ * Matches again the next batch of lines no earlier pass resolved. Returns the
+ * line to go on after, or null once the last batch was reached.
+ */
+async function rematchUnresolved(
+  after: string | null,
+  result: SettlementReconResult,
+): Promise<string | null> {
+  let lines = await unresolvedLinesAfter(after);
+  if (lines.length === 0 && after !== null) {
+    lines = await unresolvedLinesAfter(null);
+  }
+  if (lines.length === 0) return null;
   const rows: ReconRow[] = lines.map((line) => ({
     entity_id: line.entityId,
     type: line.type,
@@ -657,6 +702,7 @@ async function rematchUnresolved(
     });
     result.rematched += moved.count;
   }
+  return lines.length < REMATCH_BATCH ? null : lines[lines.length - 1].id;
 }
 
 /** The settlement entity's amount in paise, or null when it cannot be read. */
@@ -684,16 +730,19 @@ async function fetchSettlementAmount(
 /**
  * Posts one `settlement:<id>` journal for each settlement in the window whose
  * stored lines add up to the settlement entity's amount; any other settlement
- * is held. A journal already posted is only compared with its lines.
- * Returns false when settlements were left unexamined.
+ * is held. Unposted settlements are examined in id order after `after`, a
+ * bounded number a run. A journal already posted is only compared with its
+ * lines. Returns whether the end of the order was reached, and otherwise the
+ * settlement to go on after.
  */
 async function postSettlementJournals(
   client: RazorpayClient,
   window: { gte: Date; lt: Date },
+  after: string | null,
   isPastDeadline: () => boolean,
   result: SettlementReconResult,
   findings: SettlementFindings,
-): Promise<boolean> {
+): Promise<{ finished: boolean; after: string | null }> {
   const groups = await prisma.gatewaySettlementLine.groupBy({
     by: ["settlementId"],
     where: {
@@ -703,21 +752,29 @@ async function postSettlementJournals(
     },
     _sum: { creditPaise: true, debitPaise: true },
   });
-  const nets = groups.flatMap((g) =>
-    g.settlementId
-      ? [
-          {
-            settlementId: g.settlementId,
-            net: sumPaise(g._sum.creditPaise) - sumPaise(g._sum.debitPaise),
-          },
-        ]
-      : [],
-  );
-  if (nets.length === 0) return true;
+  const nets = groups
+    .flatMap((g) =>
+      g.settlementId
+        ? [
+            {
+              settlementId: g.settlementId,
+              net: sumPaise(g._sum.creditPaise) - sumPaise(g._sum.debitPaise),
+            },
+          ]
+        : [],
+    )
+    // Code-unit order, so the cursor compares the same way in every run.
+    .sort(
+      (a, b) =>
+        Number(a.settlementId > b.settlementId) -
+        Number(a.settlementId < b.settlementId),
+    );
+  if (nets.length === 0) return { finished: true, after: null };
   const posted = await debitTotalsByKey(
     nets.map((n) => `settlement:${n.settlementId}`),
   );
   let fetched = 0;
+  let last = after;
   for (const { settlementId, net } of nets) {
     const key = `settlement:${settlementId}`;
     const postedPaise = posted.get(key);
@@ -732,8 +789,12 @@ async function postSettlementJournals(
       continue;
     }
     if (net === 0) continue;
-    if (fetched >= MAX_SETTLEMENTS_PER_RUN || isPastDeadline()) return false;
+    if (after !== null && settlementId <= after) continue;
+    if (fetched >= MAX_SETTLEMENTS_PER_RUN || isPastDeadline()) {
+      return { finished: false, after: last };
+    }
     fetched += 1;
+    last = settlementId;
     const settlementAmountPaise = await fetchSettlementAmount(
       client,
       settlementId,
@@ -766,15 +827,11 @@ async function postSettlementJournals(
     });
     result.settlementsPosted += 1;
   }
-  return true;
+  return { finished: true, after: null };
 }
 
-async function reconcileGatewaySettlements(
-  now: Date,
-  startedAt: number,
-  manualDay: IstDay | null,
-): Promise<{ result: SettlementReconResult; findings: SettlementFindings }> {
-  const result: SettlementReconResult = {
+function emptyResult(): SettlementReconResult {
+  return {
     success: true,
     fetched: 0,
     inserted: 0,
@@ -788,87 +845,157 @@ async function reconcileGatewaySettlements(
     done: false,
     byStatus: { MATCHED: 0, AMOUNT_MISMATCH: 0, FEE_MISMATCH: 0, UNMATCHED: 0 },
   };
+}
+
+interface RunOutput {
+  result: SettlementReconResult;
+  findings: SettlementFindings;
+}
+
+/** A manual run of one IST day: reads it from its first page and examines its settlements. */
+async function reconcileOneDay(
+  client: RazorpayClient,
+  day: IstDay,
+  isPastDeadline: () => boolean,
+): Promise<RunOutput> {
+  const result = emptyResult();
   const findings: SettlementFindings = { held: [], postedMismatches: [] };
-  const client = getRazorpayClient();
-  if (!client) {
-    return {
-      result: {
-        ...result,
-        skipped: "RAZORPAY_KEY_ID or RAZORPAY_SECRET not configured",
-        done: true,
-      },
-      findings,
-    };
-  }
-  const isPastDeadline = startDeadline(startedAt);
-  const yesterday = istDayOf(new Date(now.getTime() - DAY_MS));
-
-  const days: IstDay[] = [];
-  let readThrough: IstDay | null = null;
-  if (manualDay) {
-    days.push(manualDay);
-  } else {
-    const start = await firstDayToRead(yesterday);
-    readThrough = start.readThrough;
-    for (
-      let day = start.first;
-      day.start <= yesterday.start && days.length < MAX_DAYS_PER_RUN;
-      day = istDayFrom(day.end)
-    ) {
-      days.push(day);
-    }
-  }
-
-  let lastRead: IstDay | null = null;
-  for (const day of days) {
-    if (!(await readDay(client, day, isPastDeadline, result))) break;
-    lastRead = day;
-  }
-
-  let window: { gte: Date; lt: Date } | null = null;
-  if (manualDay) {
-    if (lastRead) window = { gte: manualDay.start, lt: manualDay.end };
-    result.done = lastRead !== null;
-  } else {
-    if (lastRead && (!readThrough || lastRead.start > readThrough.start)) {
-      readThrough = lastRead;
-    }
-    if (readThrough) {
-      result.checkpoint = dayKey(readThrough);
-      // The lookback, widened to the days this run read when it is catching up further back.
-      window = {
-        gte: new Date(
-          Math.min(
-            now.getTime() - SETTLEMENT_LOOKBACK_DAYS * DAY_MS,
-            days[0].start.getTime(),
-          ),
-        ),
-        lt: readThrough.end,
-      };
-    }
-    const firstUnread = readThrough ? readThrough.end : days[0].start;
-    result.daysBehind = Math.max(
-      0,
-      Math.round((yesterday.end.getTime() - firstUnread.getTime()) / DAY_MS),
-    );
-    result.done = result.daysBehind === 0;
-  }
-
-  if (isPastDeadline()) return { result: { ...result, done: false }, findings };
-  await rematchUnresolved(now, result);
-  if (window) {
+  const read = await readDay(client, day, 0, isPastDeadline, result);
+  if (isPastDeadline()) return { result, findings };
+  await rematchUnresolved(null, result);
+  if (read.complete) {
     const examined = await postSettlementJournals(
       client,
-      window,
+      { gte: day.start, lt: day.end },
+      null,
       isPastDeadline,
       result,
       findings,
     );
-    if (!examined) result.done = false;
+    result.done = examined.finished;
   }
   result.settlementsHeld = findings.held.length;
   result.postedMismatches = findings.postedMismatches.length;
   return { result, findings };
+}
+
+/** The scheduled walk: unread days first, then the last two days again, then the later passes. */
+async function reconcileFromContinuation(
+  client: RazorpayClient,
+  now: Date,
+  isPastDeadline: () => boolean,
+): Promise<RunOutput> {
+  const result = emptyResult();
+  const findings: SettlementFindings = { held: [], postedMismatches: [] };
+  const state = await readContinuation();
+  const yesterday = istDayOf(new Date(now.getTime() - DAY_MS));
+  const dayBefore = istDayFrom(new Date(yesterday.start.getTime() - DAY_MS));
+  const readBefore = state.read ? dayFromKey(state.read) : null;
+  const firstUnread = await firstUnreadDay(readBefore, dayBefore);
+
+  let read = readBefore;
+  let firstCompleted: IstDay | null = null;
+  let cut = false;
+  for (
+    let day = firstUnread, count = 0;
+    day.start <= yesterday.start && count < MAX_DAYS_PER_RUN;
+    day = istDayFrom(day.end), count++
+  ) {
+    const skip = state.day?.key === dayKey(day) ? state.day.skip : 0;
+    const outcome = await readDay(client, day, skip, isPastDeadline, result);
+    if (!outcome.complete) {
+      state.day = { key: dayKey(day), skip: outcome.nextSkip };
+      cut = true;
+      break;
+    }
+    read = day;
+    firstCompleted ??= day;
+    state.read = dayKey(day);
+    state.day = null;
+  }
+
+  const nextUnread = read ? read.end : firstUnread.start;
+  result.daysBehind = Math.max(
+    0,
+    Math.round((yesterday.end.getTime() - nextUnread.getTime()) / DAY_MS),
+  );
+
+  // Late rows: the last two days are read again once nothing older is unread.
+  if (!cut && result.daysBehind === 0 && readBefore) {
+    for (const day of [dayBefore, yesterday]) {
+      if (day.start > readBefore.start) continue;
+      const again = await readDay(client, day, 0, isPastDeadline, result);
+      if (!again.complete) break;
+    }
+  }
+
+  // A day read outside the lookback stays in the cohort until a full pass covers it.
+  const lookbackStart = now.getTime() - SETTLEMENT_LOOKBACK_DAYS * DAY_MS;
+  if (firstCompleted && firstCompleted.start.getTime() < lookbackStart) {
+    const from = state.settle.from ? dayFromKey(state.settle.from) : null;
+    if (!from || firstCompleted.start < from.start) {
+      state.settle.from = dayKey(firstCompleted);
+    }
+    if (state.settle.after !== null) state.settle.stale = true;
+  }
+
+  let examined = false;
+  if (!isPastDeadline()) {
+    state.rematchAfter = await rematchUnresolved(state.rematchAfter, result);
+    if (read) {
+      const from = state.settle.from ? dayFromKey(state.settle.from) : null;
+      const pass = await postSettlementJournals(
+        client,
+        {
+          gte: new Date(
+            Math.min(lookbackStart, from?.start.getTime() ?? lookbackStart),
+          ),
+          lt: read.end,
+        },
+        state.settle.after,
+        isPastDeadline,
+        result,
+        findings,
+      );
+      state.settle.after = pass.after;
+      if (pass.finished) {
+        // Days read while this pass was under way wait for the next one.
+        if (state.settle.stale) state.settle.stale = false;
+        else state.settle.from = null;
+      }
+      examined = pass.finished;
+    } else {
+      examined = true;
+    }
+  }
+
+  result.done = result.daysBehind === 0 && examined;
+  result.checkpoint = JSON.stringify(state);
+  result.settlementsHeld = findings.held.length;
+  result.postedMismatches = findings.postedMismatches.length;
+  return { result, findings };
+}
+
+async function reconcileGatewaySettlements(
+  now: Date,
+  startedAt: number,
+  manualDay: IstDay | null,
+): Promise<RunOutput> {
+  const client = getRazorpayClient();
+  if (!client) {
+    return {
+      result: {
+        ...emptyResult(),
+        skipped: "RAZORPAY_KEY_ID or RAZORPAY_SECRET not configured",
+        done: true,
+      },
+      findings: { held: [], postedMismatches: [] },
+    };
+  }
+  const isPastDeadline = startDeadline(startedAt);
+  return manualDay
+    ? reconcileOneDay(client, manualDay, isPastDeadline)
+    : reconcileFromContinuation(client, now, isPastDeadline);
 }
 
 /** Reports once per run, and only when a line disagrees with our books. */
@@ -942,7 +1069,7 @@ async function reportSettlementFindings(
 /**
  * `startedAt` is when the request reached the route, so the drain deadline
  * counts the cold boot. `date` (YYYY-MM-DD, an IST day before today) reads that
- * one day and leaves the walk's checkpoint alone.
+ * one day from its first page and leaves the continuation record alone.
  */
 export async function runReconcileGatewaySettlements(
   startedAt: number = Date.now(),

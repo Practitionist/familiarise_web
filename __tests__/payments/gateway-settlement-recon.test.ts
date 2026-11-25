@@ -29,6 +29,8 @@ type Line = {
 };
 
 const mockLines: Line[] = [];
+/** Line ids sort in insertion order. */
+const lineId = (n: number) => `line_${String(n).padStart(6, "0")}`;
 /** Report pages by IST day (`YYYY-M-D`), in page order. */
 const mockPagesByDay = new Map<string, unknown[][]>();
 const mockReportCalls: Array<{ day: string; skip: number }> = [];
@@ -99,11 +101,11 @@ type LineWhere = {
   settledAt?: { gte: Date; lt: Date } | { not: null };
   entityId?: { in: string[] };
   status?: string | { in: string[] };
-  id?: string;
+  id?: string | { gt: string };
 };
 const mockMatches = (l: Line, where: LineWhere): boolean => {
-  if (where.id !== undefined && l.id !== where.id) return false;
-  if (where.entityId && !where.entityId.in.includes(l.entityId)) return false;
+  if (typeof where.id === "string" && l.id !== where.id) return false;
+  if (typeof where.id === "object" && !(l.id > where.id.gt)) return false;
   if (typeof where.status === "string" && l.status !== where.status)
     return false;
   if (typeof where.status === "object" && !where.status.in.includes(l.status)) {
@@ -144,13 +146,21 @@ jest.mock("../../lib/prisma", () => ({
           skip?: number;
           take?: number;
         }) => {
-          const hits = mockLines.filter((l) => mockMatches(l, where));
-          return take === undefined ? hits : hits.slice(skip, skip + take);
+          const entityIds = where.entityId && new Set(where.entityId.in);
+          const hits = mockLines.filter(
+            (l) =>
+              (!entityIds || entityIds.has(l.entityId)) &&
+              mockMatches(l, { ...where, entityId: undefined }),
+          );
+          if (take === undefined) return hits;
+          return [...hits]
+            .sort((x, y) => Number(x.id > y.id) - Number(x.id < y.id))
+            .slice(skip, skip + take);
         },
       ),
       createMany: jest.fn(async ({ data }: { data: Omit<Line, "id">[] }) => {
         for (const row of data) {
-          mockLines.push({ ...row, id: `line_${mockLines.length + 1}` });
+          mockLines.push({ ...row, id: lineId(mockLines.length + 1) });
         }
         return { count: data.length };
       }),
@@ -212,6 +222,12 @@ jest.mock("../../lib/prisma", () => ({
     },
   },
 }));
+/** The run is past its deadline once this many report pages were requested. */
+const mockDeadline: { afterReports: number } = { afterReports: Infinity };
+jest.mock("../../lib/cron/run-deadline", () => ({
+  startDeadline: () => () =>
+    mockReportCalls.length >= mockDeadline.afterReports,
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_n: string, _o: unknown, fn: () => Promise<unknown>) => fn(),
   readJobCheckpoint: async () => mockCheckpoint.value,
@@ -254,8 +270,32 @@ jest.mock("../../lib/observability/standing-finding", () => ({
   },
 }));
 
+import prisma from "../../lib/prisma";
 import { InvalidDateParamError } from "../../lib/cron/date-param";
 import { runReconcileGatewaySettlements } from "../../jobs/reconcile/reconcile-gateway-settlements";
+
+type RunResult = Awaited<ReturnType<typeof runReconcileGatewaySettlements>>;
+/** The continuation record a run leaves as its checkpoint. */
+const continuation = (result: RunResult) =>
+  JSON.parse(result.checkpoint ?? "null") as {
+    read: string | null;
+    day: { key: string; skip: number } | null;
+    rematchAfter: string | null;
+    settle: { from: string | null; after: string | null; stale: boolean };
+  };
+/** A checkpoint that says every day up to `read` was read in full. */
+const readThrough = (read: string) =>
+  JSON.stringify({
+    read,
+    day: null,
+    rematchAfter: null,
+    settle: { from: null, after: null, stale: false },
+  });
+/** The next run starts from what this one left. */
+const carryOn = (result: RunResult) => {
+  mockCheckpoint.value = result.checkpoint ?? null;
+  mockReportCalls.length = 0;
+};
 
 /** Epoch seconds of 10:00 IST on an IST date. */
 const settledOn = (date: string) =>
@@ -267,6 +307,7 @@ beforeEach(() => {
   mockReportCalls.length = 0;
   mockSettlements.clear();
   mockCheckpoint.value = null;
+  mockDeadline.afterReports = Infinity;
   for (const key of [...mockJournals.keys()]) {
     if (key.startsWith("settlement:")) mockJournals.delete(key);
   }
@@ -311,10 +352,10 @@ it("books the missing fee, flags the mismatch once, and settles the net to CASH 
     feesPosted: 1,
     settlementsPosted: 1,
     settlementsHeld: 0,
-    checkpoint: "2026-10-19",
     daysBehind: 0,
     done: true,
   });
+  expect(continuation(first).read).toBe("2026-10-19");
   expect(first.byStatus).toMatchObject({ MATCHED: 1, AMOUNT_MISMATCH: 1 });
   expect(mockPost).toHaveBeenCalledWith(
     expect.anything(),
@@ -357,7 +398,7 @@ it("books the missing fee, flags the mismatch once, and settles the net to CASH 
 
   // A second run reads the same days again and neither stores nor posts anything.
   mockPost.mockClear();
-  mockCheckpoint.value = "2026-10-19";
+  mockCheckpoint.value = readThrough("2026-10-19");
   const second = await runReconcileGatewaySettlements(Date.now(), now);
   expect(second).toMatchObject({
     inserted: 0,
@@ -427,7 +468,7 @@ it("matches top-up and org-invoice refunds by their journal, keeping a missed on
     { ...refund("rfnd_t2", "pay_t", 2_000), settled_at: laterAt },
     { ...refund("rfnd_i2", "pay_i", 1_500), settled_at: laterAt },
   ];
-  mockCheckpoint.value = "2026-12-18";
+  mockCheckpoint.value = readThrough("2026-12-18");
   mockPagesByDay.set("2026-12-19", [partialPage()]);
   const partialRun = await runReconcileGatewaySettlements(Date.now(), later);
   expect(stored("rfnd_t2")).toEqual(["TOPUP", "tu1", "MATCHED", null]);
@@ -501,7 +542,7 @@ describe("the walk, the completeness check and the later passes", () => {
   const daysRead = () => [...new Set(mockReportCalls.map((c) => c.day))];
 
   it("catches up from its checkpoint day by day to yesterday, capped at ten days a run", async () => {
-    mockCheckpoint.value = "2026-10-10";
+    mockCheckpoint.value = readThrough("2026-10-10");
     mockPagesByDay.set("2026-10-12", [
       [payment("pay_missed", "2026-10-12", 40_000)],
     ]);
@@ -515,21 +556,18 @@ describe("the walk, the completeness check and the later passes", () => {
     expect(caughtUp).toMatchObject({
       inserted: 1,
       settlementsPosted: 1,
-      checkpoint: "2026-10-19",
       daysBehind: 0,
       done: true,
     });
+    expect(continuation(caughtUp).read).toBe("2026-10-19");
 
     mockReportCalls.length = 0;
-    mockCheckpoint.value = "2026-09-01";
+    mockCheckpoint.value = readThrough("2026-09-01");
     const capped = await runReconcileGatewaySettlements(Date.now(), now);
 
     expect(daysRead()).toHaveLength(10);
-    expect(capped).toMatchObject({
-      checkpoint: "2026-09-11",
-      daysBehind: 38,
-      done: false,
-    });
+    expect(capped).toMatchObject({ daysBehind: 38, done: false });
+    expect(continuation(capped).read).toBe("2026-09-11");
   });
 
   it("with no checkpoint, starts on the day of the last stored line", async () => {
@@ -547,7 +585,7 @@ describe("the walk, the completeness check and the later passes", () => {
   });
 
   it("reads a day from its first page until a short page", async () => {
-    mockCheckpoint.value = "2026-10-18";
+    mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-19", [
       Array.from({ length: 1000 }, (_, i) => ({
         entity_id: `trf_${i}`,
@@ -567,7 +605,7 @@ describe("the walk, the completeness check and the later passes", () => {
   });
 
   it("holds a settlement whose stored lines do not add up to its amount, and books it once they do", async () => {
-    mockCheckpoint.value = "2026-10-18";
+    mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-19", [
       [payment("pay_a", "2026-10-19", 60_000)],
     ]);
@@ -611,7 +649,7 @@ describe("the walk, the completeness check and the later passes", () => {
   });
 
   it("holds a settlement whose entity cannot be read", async () => {
-    mockCheckpoint.value = "2026-10-18";
+    mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-19", [
       [payment("pay_a", "2026-10-19", 60_000)],
     ]);
@@ -623,7 +661,7 @@ describe("the walk, the completeness check and the later passes", () => {
   });
 
   it("reports a posted journal that differs from its lines and posts nothing over it", async () => {
-    mockCheckpoint.value = "2026-10-18";
+    mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-19", [
       [payment("pay_a", "2026-10-19", 60_000)],
     ]);
@@ -642,7 +680,7 @@ describe("the walk, the completeness check and the later passes", () => {
   });
 
   it("stores the valid rows of a page, and counts and reports the rejected ones once", async () => {
-    mockCheckpoint.value = "2026-10-18";
+    mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-19", [
       [
         { entity_id: "trf_ok", type: "transfer", amount: 100 },
@@ -657,8 +695,8 @@ describe("the walk, the completeness check and the later passes", () => {
       fetched: 3,
       inserted: 1,
       rejectedRows: 2,
-      checkpoint: "2026-10-19",
     });
+    expect(continuation(result).read).toBe("2026-10-19");
     expect(mockLines.map((l) => l.entityId)).toEqual(["trf_ok"]);
     const rejects = mockReport.mock.calls.filter(([message]) =>
       String(message).includes("failed validation"),
@@ -668,7 +706,7 @@ describe("the walk, the completeness check and the later passes", () => {
   });
 
   it("matches again a line that was unresolved when the missing row arrives later", async () => {
-    mockCheckpoint.value = "2026-10-18";
+    mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-19", [
       [
         {
@@ -703,7 +741,7 @@ describe("the walk, the completeness check and the later passes", () => {
   });
 
   it("a manual run reads the one date it is given and leaves the checkpoint alone", async () => {
-    mockCheckpoint.value = "2026-10-18";
+    mockCheckpoint.value = readThrough("2026-10-18");
     mockPagesByDay.set("2026-10-5", [[payment("pay_m", "2026-10-05", 5_000)]]);
     mockSettlements.set("setl_2026-10-05", 5_000);
 
@@ -723,5 +761,178 @@ describe("the walk, the completeness check and the later passes", () => {
         runReconcileGatewaySettlements(Date.now(), now, { date }),
       ).rejects.toBeInstanceOf(InvalidDateParamError);
     }
+  });
+});
+
+describe("bounded work resumes from the job's one continuation record", () => {
+  // 2026-10-20 08:00 IST; "yesterday" is 2026-10-19 IST.
+  const now = new Date("2026-10-20T02:30:00Z");
+  const run = () => runReconcileGatewaySettlements(Date.now(), now);
+  /** The IST date `days` before 2026-10-20. */
+  const daysAgo = (days: number) =>
+    new Date(Date.parse("2026-10-20T00:00:00Z") - days * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+  /** The report mock's key for an IST date. */
+  const reportKey = (date: string) =>
+    date
+      .split("-")
+      .map((part) => String(Number(part)))
+      .join("-");
+  const transfer = (entity_id: string, date: string, settlement: string) => ({
+    entity_id,
+    type: "transfer",
+    amount: 1_000,
+    credit: 1_000,
+    debit: 0,
+    settlement_id: settlement,
+    settled_at: settledOn(date),
+  });
+
+  it("a day of exactly twenty full pages completes on the next run, from the page it stopped at", async () => {
+    mockCheckpoint.value = readThrough("2026-10-18");
+    mockPagesByDay.set(
+      "2026-10-19",
+      Array.from({ length: 20 }, (_, page) =>
+        Array.from({ length: 1000 }, (_, i) => ({
+          entity_id: `trf_${page}_${i}`,
+          type: "transfer",
+          amount: 1,
+        })),
+      ),
+    );
+
+    const first = await run();
+
+    expect(first).toMatchObject({ inserted: 20_000, daysBehind: 1 });
+    expect(continuation(first)).toMatchObject({
+      read: "2026-10-18",
+      day: { key: "2026-10-19", skip: 20_000 },
+    });
+
+    carryOn(first);
+    const second = await run();
+
+    expect(mockReportCalls.filter((c) => c.day === "2026-10-19")[0]).toEqual({
+      day: "2026-10-19",
+      skip: 20_000,
+    });
+    expect(second).toMatchObject({ inserted: 0, daysBehind: 0 });
+    expect(continuation(second)).toMatchObject({
+      read: "2026-10-19",
+      day: null,
+    });
+  });
+
+  it("the re-match reaches every unresolved line within a bounded number of runs", async () => {
+    mockCheckpoint.value = readThrough("2026-10-19");
+    for (let i = 1; i <= 450; i++) {
+      mockLines.push({
+        id: lineId(i),
+        entityId: `rfnd_open_${i}`,
+        type: "refund",
+        settlementId: null,
+        settledAt: null,
+        amountPaise: BigInt(100),
+        feePaise: BigInt(0),
+        creditPaise: BigInt(0),
+        debitPaise: BigInt(100),
+        paymentId: null,
+        disputeId: null,
+        status: "UNMATCHED",
+        matchedKind: "NONE",
+        matchedId: null,
+        note: null,
+      });
+    }
+    const refundLookups = jest.mocked(prisma.refund.findMany);
+    const examined = () =>
+      new Set(
+        refundLookups.mock.calls.flatMap(
+          ([query]) =>
+            (query as { where: { refundId: { in: string[] } } }).where.refundId
+              .in,
+        ),
+      );
+
+    const first = await run();
+    expect(examined().size).toBe(200);
+    expect(continuation(first).rematchAfter).toBe(lineId(200));
+
+    carryOn(first);
+    const second = await run();
+    carryOn(second);
+    const third = await run();
+
+    expect(examined().size).toBe(450);
+    expect(continuation(third).rematchAfter).toBeNull();
+  });
+
+  it("settlements held at the front of the order do not keep a complete one from being examined", async () => {
+    mockCheckpoint.value = readThrough("2026-10-18");
+    mockPagesByDay.set("2026-10-19", [
+      [
+        ...Array.from({ length: 60 }, (_, i) =>
+          transfer(
+            `trf_h${i}`,
+            "2026-10-19",
+            `setl_h${String(i).padStart(2, "0")}`,
+          ),
+        ),
+        transfer("trf_ok", "2026-10-19", "setl_zzz"),
+      ],
+    ]);
+    // Only the last settlement in the order can be read and adds up.
+    mockSettlements.set("setl_zzz", 1_000);
+
+    const first = await run();
+
+    expect(first).toMatchObject({
+      settlementsPosted: 0,
+      settlementsHeld: 50,
+      done: false,
+    });
+    expect(continuation(first).settle.after).toBe("setl_h49");
+
+    carryOn(first);
+    const second = await run();
+
+    expect(second).toMatchObject({ settlementsPosted: 1, settlementsHeld: 10 });
+    expect(mockJournals.get("settlement:setl_zzz")).toBe(1_000);
+    expect(continuation(second).settle.after).toBeNull();
+  });
+
+  it("days read while catching up beyond the lookback stay in the settlement cohort until they are examined", async () => {
+    mockCheckpoint.value = readThrough(daysAgo(101));
+    const settled = daysAgo(95);
+    mockPagesByDay.set(reportKey(settled), [
+      [transfer("trf_old", settled, "setl_old")],
+    ]);
+    mockSettlements.set("setl_old", 1_000);
+    // The deadline passes as the tenth day is read, before any settlement is examined.
+    mockDeadline.afterReports = 10;
+
+    const cut = await run();
+
+    expect(cut).toMatchObject({
+      inserted: 1,
+      settlementsPosted: 0,
+      done: false,
+    });
+    expect(continuation(cut)).toMatchObject({
+      read: daysAgo(91),
+      settle: { from: daysAgo(100) },
+    });
+
+    carryOn(cut);
+    mockDeadline.afterReports = Infinity;
+    const next = await run();
+
+    expect(next.settlementsPosted).toBe(1);
+    expect(mockJournals.get("settlement:setl_old")).toBe(1_000);
+    expect(continuation(next)).toMatchObject({
+      read: daysAgo(81),
+      settle: { from: null, after: null },
+    });
   });
 });
