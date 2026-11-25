@@ -78,9 +78,12 @@ stateDiagram-v2
   [*] --> AMOUNT_MISMATCH: row found, amount differs
   [*] --> UNMATCHED: no platform row for this entity
   MATCHED --> FEE_MISMATCH: booked fee differs from the report fee
+  UNMATCHED --> MATCHED: re-match finds the row booked later
+  AMOUNT_MISMATCH --> MATCHED: re-match finds the amounts agree
+  FEE_MISMATCH --> MATCHED: re-match finds the fee agrees
 ```
 
-A line is never edited after it is stored. A disagreement is reported once per run to Sentry as "Razorpay settlement lines disagree with the books", and a person resolves it by posting a correcting journal, not by changing the line.
+What the report said is never edited after a line is stored: its ids, amounts, fee, tax, debit, credit and settlement fields stay as Razorpay sent them. Only the match can change: when the missing refund, capture or fee is booked later, the re-match pass updates `status`, `matchedKind`, `matchedId` and `note` in place, so `UNMATCHED`, `AMOUNT_MISMATCH` and `FEE_MISMATCH` can each move to any other status. A disagreement is reported once per run to Sentry as "Razorpay settlement lines disagree with the books". A real difference between the report and the ledger is resolved by a person posting a correcting journal, never by changing the line's report fields.
 
 ## Parked captures
 
