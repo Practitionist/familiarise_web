@@ -171,6 +171,7 @@ function txStub() {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     organizationPayout: { update: jest.fn().mockResolvedValue({}) },
+    consultantPayout: { update: jest.fn().mockResolvedValue({}) },
     organizationInvoice: { findUnique: jest.fn().mockResolvedValue(null) },
     creditNote: { findUnique: jest.fn().mockResolvedValue(null) },
     // #1365 — the B2C sibling mint probes both of these and no-ops when the
@@ -341,6 +342,15 @@ describe("a refund of a LICENSE-funded booking whose consultant was already paid
         action: "INVOICE_REFUNDED",
         details: expect.objectContaining({ refundId: REFUND_ID }),
       }),
+    });
+    // The payout's own counter moves with the journal, by the same net figure.
+    expect(tx.consultantPayout.update).toHaveBeenCalledTimes(1);
+    expect(tx.consultantPayout.update).toHaveBeenCalledWith({
+      where: { id: "cpo-1" },
+      data: {
+        clawbackAmountPaise: { increment: 630_000 },
+        clawbackInitiatedAt: expect.any(Date),
+      },
     });
     const clawback = mockPostLedgerTxn.mock.calls
       .map((call) => call[1])
