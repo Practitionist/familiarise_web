@@ -7,7 +7,6 @@ import prisma from "@/lib/prisma";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { retimeWebinar } from "@/lib/booking/event-retime";
-import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -72,17 +71,7 @@ export async function POST(
         { status: 404 },
       );
     }
-    if (await hasActiveDisputeForAppointment(appointmentId)) {
-      return NextResponse.json(
-        {
-          error:
-            "This webinar has an open payment dispute and can't be re-timed until it resolves.",
-          code: "DISPUTE_ACTIVE",
-        },
-        { status: 409 },
-      );
-    }
-
+    // One seat's payment dispute never freezes the webinar for every seat.
     const result = await retimeWebinar({
       appointmentId,
       startsAt: new Date(body.data.startsAt),

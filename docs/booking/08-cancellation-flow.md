@@ -55,7 +55,7 @@ flowchart TD
     K -->|No| L[404 Appointment not found]
     K -->|Yes| AUTH{"Participant, privileged,\nor org admin of the funder?"}
     AUTH -->|No| AUTH403[403 Not authorized]
-    AUTH -->|Yes| DISP{Active payment dispute?}
+    AUTH -->|Yes| DISP{"1:1 booking with an\nactive payment dispute?"}
     DISP -->|Yes| DISP409["409 DISPUTE_ACTIVE"]
     DISP -->|No| M["Extract notification data\n(user IDs, names, plan title, dateTime)"]
     M --> CTX["resolveBookingRefundContext()\nfor consultation/subscription\n(MUST precede the cancel)"]
@@ -108,7 +108,7 @@ Cancellation is authorized at the API layer, not merely hidden in the UI. Here i
 | Is the user an admin of the funding org? | Yes        | `isOrgAdminOfAppointment()` admits an admin of the organization funding the booking (#1166)                                                                   |
 | Who may cancel a group event?            | Organiser  | Only the consultant who owns the webinar or class plan; attendees cannot cancel the event                                                                     |
 | Is the booking in a cancellable state?   | Yes        | The allowed-from set rides the `UPDATE`'s `WHERE`, so a lost race answers 409                                                                                 |
-| Is a payment dispute open?               | Yes        | An open dispute answers 409, because a refund now could pay the customer twice                                                                                |
+| Is a payment dispute open?               | Yes        | An open dispute on a 1:1 booking answers 409, because a refund now could pay the customer twice; one seat's dispute never blocks a class or webinar cancel    |
 
 **Expert cancellations and strikes.** An expert who cancels a confirmed booking, free or paid, records one `EXPERT_CANCEL` strike (`recordExpertStrike`) in the cancel's own transaction. The cancel route strikes when the expert themself cancels (`isExpertSideCancel`; an operator's or an admin's cancel strikes nobody) and the 1:1 booking has a paid payment or is `APPROVED` (a free request the expert approved has no payment at all), or the webinar or class has a confirmed seat or a seat held under a SUCCEEDED payment (`hasConfirmedSeat`). A strike on a session inside a declared incident is dropped when strikes are read. The expert's cancel dialog says so before the click (`EXPERT_CANCEL_RELIABILITY_LINE`), and a trial's expert cancel strikes too (see [the trials doc](./09-trials.md)). Strikes are never shown on public pages: the expert reads their own on Settings → Booking (`ReliabilityCard`, through the owner-only `GET /api/user/consultants/[id]/strikes`), and staff read them in `ExpertStrikesCard`. See [the trial and public booking surfaces record](../decisions/2026-11-13-trial-and-public-booking-surfaces.md), decisions 5 and 6.
 
@@ -243,11 +243,11 @@ A credit-funded booking reports `REFUNDED` with an `amountRefundedPaise` of zero
 | 400    | Zod validation fails on a valid JSON body | `{ "error": "Validation failed", "details": [<ZodIssue[]>] }`      | Body is valid JSON but fails schema validation                             |
 | 403    | Caller is not entitled to cancel          | `{ "error": "You are not authorized to cancel this appointment" }` | Not a participant, not privileged, not an org admin of the funder          |
 | 404    | Appointment not found in database         | `{ "error": "Appointment not found" }`                             | ID does not match any appointment row                                      |
-| 409    | Open payment dispute                      | `{ "error": "...", "code": "DISPUTE_ACTIVE" }`                     | A dispute is live on this appointment (#1008)                              |
+| 409    | Open payment dispute                      | `{ "error": "...", "code": "DISPUTE_ACTIVE" }`                     | A dispute is live on this consultation or plan                             |
 | 409    | Booking is no longer cancellable          | `{ "error": "...", "code": "NOT_CANCELLABLE" }`                    | The CAS update matched zero rows — already cancelled, completed or expired |
 | 500    | Transaction failure or unexpected error   | `{ "error": "Failed to cancel appointment" }`                      | Database error, connection timeout, or other                               |
 
-The two 409s are told apart by their `code`, not their message, and both are terminal for that request rather than retryable. `DISPUTE_ACTIVE` is checked before the transaction opens, because refunding while a chargeback is contested would pay the customer twice. Nothing is written on either path, so a refused cancellation leaves the booking exactly as it was.
+The two 409s are told apart by their `code`, not their message, and both are terminal for that request rather than retryable. `DISPUTE_ACTIVE` is checked before the transaction opens, because refunding while a chargeback is contested would pay the customer twice. Nothing is written on either path, so a refused cancellation leaves the booking exactly as it was. The refusal covers a 1:1 booking only. A class or a webinar is one appointment carrying every seat's payment, so one seat's dispute does not stop the host or staff cancelling it (or the host re-timing a webinar): every other seat is refunded as usual and the disputed seat's owed refund is stamped and waits for its dispute ([Chargebacks](../finance/30-refunds-disputes/02-chargebacks.md), section 2).
 
 ---
 
@@ -1339,7 +1339,7 @@ sequenceDiagram
         API->>DB: findUnique(appointmentId) with all relations
         DB-->>API: Full appointment tree
         Note over API: Extract into local variables:<br/>consultantUserId, consulteeUserId,<br/>consultantName, consulteeName,<br/>planTitle, appointmentType, dateTime
-        API->>DB: hasActiveDisputeForAppointment()
+        API->>DB: hasActiveDisputeForAppointment() (1:1 bookings only)
         DB-->>API: false (a true here answers 409 DISPUTE_ACTIVE)
         API->>DB: resolveBookingRefundContext()
         DB-->>API: payment, frozen policy, notice,<br/>sessionsRemaining, slotsTotal
