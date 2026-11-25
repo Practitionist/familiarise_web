@@ -103,6 +103,7 @@ const dayKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * `settle.from` is the earliest day read that no full pass has covered yet;
  * `stale` says such a day was read while a pass was under way.
  * `failedDays` are days at or before `read` whose report could not be read.
+ * `reread` is the page a re-read of one of the last two days stopped at.
  * `settle.held` are held settlements kept in the cohort by id once their lines
  * are at or beyond the lookback's far edge, until they are posted.
  */
@@ -119,6 +120,12 @@ const continuationSchema = z.object({
     held: z.array(z.string()).max(MAX_HELD_RETRIES).default([]),
   }),
   failedDays: z.array(dayKeySchema).max(MAX_FAILED_DAYS).default([]),
+  reread: z
+    .array(
+      z.object({ key: dayKeySchema, skip: z.number().int().nonnegative() }),
+    )
+    .max(2)
+    .default([]),
 });
 type Continuation = z.infer<typeof continuationSchema>;
 
@@ -128,6 +135,7 @@ const freshContinuation = (): Continuation => ({
   rematchAfter: null,
   settle: { from: null, after: null, stale: false, held: [] },
   failedDays: [],
+  reread: [],
 });
 
 /** The stored continuation; a missing or unreadable one starts the walk from the stored lines. */
@@ -1078,13 +1086,23 @@ async function reconcileFromContinuation(
   );
 
   // Late rows: the last two days are read again once nothing older is unread.
+  // A re-read cut short resumes at its page next run, and the other day is still read.
+  const recent = [dayBefore, yesterday];
+  const rereadFrom = new Map(
+    state.reread
+      .filter((r) => recent.some((day) => dayKey(day) === r.key))
+      .map((r) => [r.key, r.skip]),
+  );
   if (!cut && result.daysBehind === 0 && readBefore) {
-    for (const day of [dayBefore, yesterday]) {
+    for (const day of recent) {
       if (day.start > readBefore.start) continue;
-      const again = await readSafely(day, 0);
-      if (again && !again.complete) break;
+      const key = dayKey(day);
+      const again = await readSafely(day, rereadFrom.get(key) ?? 0);
+      if (again?.complete) rereadFrom.delete(key);
+      else if (again) rereadFrom.set(key, again.nextSkip);
     }
   }
+  state.reread = [...rereadFrom].map(([key, skip]) => ({ key, skip }));
   const firstCompleted = completed.reduce<IstDay | null>(
     (first, day) => (!first || day.start < first.start ? day : first),
     null,

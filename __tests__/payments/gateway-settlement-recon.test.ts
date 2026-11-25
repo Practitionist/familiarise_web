@@ -321,6 +321,7 @@ const continuation = (result: RunResult) =>
       held: string[];
     };
     failedDays: string[];
+    reread: Array<{ key: string; skip: number }>;
   };
 /** A checkpoint that says every day up to `read` was read in full. */
 const readThrough = (read: string) =>
@@ -1036,6 +1037,44 @@ describe("bounded work resumes from the job's one continuation record", () => {
 
     expect(next.settlementsPosted).toBe(1);
     expect(mockJournals.get("settlement:setl_edge")).toBe(1_000);
+  });
+  it("a re-read cut by the page bound resumes at its page, and the other recent day is still read again", async () => {
+    mockCheckpoint.value = readThrough("2026-10-19");
+    mockPagesByDay.set(
+      "2026-10-18",
+      Array.from({ length: 20 }, (_, page) =>
+        Array.from({ length: 1000 }, (_, i) => ({
+          entity_id: `trf_r_${page}_${i}`,
+          type: "transfer",
+          amount: 1,
+        })),
+      ),
+    );
+    mockPagesByDay.set("2026-10-19", [
+      [{ entity_id: "trf_late", type: "transfer", amount: 1 }],
+    ]);
+
+    const first = await run();
+
+    expect(mockLines.some((l) => l.entityId === "trf_late")).toBe(true);
+    expect(first.stoppedShort).toEqual([
+      {
+        bound: "report-pages",
+        stage: "report",
+        date: "2026-10-18",
+        reached: 20_000,
+      },
+    ]);
+    expect(continuation(first).reread).toEqual([
+      { key: "2026-10-18", skip: 20_000 },
+    ]);
+
+    carryOn(first);
+    const second = await run();
+
+    expect(mockReportCalls[0]).toEqual({ day: "2026-10-18", skip: 20_000 });
+    expect(second.stoppedShort).toEqual([]);
+    expect(continuation(second).reread).toEqual([]);
   });
 });
 
