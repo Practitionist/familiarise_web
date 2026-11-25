@@ -25,15 +25,15 @@ Each rule lists what happens today, the rule, a worked example, and the abuse th
 
 ### 1. A chargeback freezes the booking for the learner who raised it **(planned)**
 
-- **Today**: when a learner's bank opens a dispute, the expert's earnings on that payment are held, and cancel, reschedule and session return are refused for both sides (`hasActiveDisputeForAppointment` in `lib/payments/dispute-guard.ts`). Sessions already placed still run, and nothing stops new ones being placed. If the dispute is lost, the plan stays live.
+- **Today**: when a learner's bank opens a dispute, the expert's earnings on that payment are held. Cancel, reschedule and re-time are refused for both sides (`hasActiveDisputeForAppointment` in `lib/payments/dispute-guard.ts`), and a session return is refused by its own check (`lib/booking/session-return.ts`). Sessions already placed still run, and nothing stops new ones being placed. If the dispute is lost, the plan stays live.
 - **Rule**: while the dispute is open, no new session can be placed, and sessions already placed in the future are released back to the plan with no strike. Both sides are told. If the platform wins, the plan resumes and its end date moves out by the days it was frozen. If the platform loses, the plan ends with no further refund and no strike. For a class, only the disputing seat is suspended; the class runs on for everyone else.
 - **Example**: on the plan, 5 sessions are delivered and the learner disputes the payment in week 6. Under the old behaviour, a lost dispute left the learner with 19 sessions to use for nothing while the expert had to teach them unpaid or cancel and take a strike. Under the rule, sessions stop on the day the dispute opens.
 - **Abuse resisted**: taking the service and the money back at once. A dispute cannot be used as a free pause either, because only a dispute the learner _loses_ resumes the plan, and every dispute is visible to operations.
 
 ### 2. The expert bears a lost chargeback, delivered sessions included (existing behaviour, now stated)
 
-- **Today and rule**: a lost dispute reverses the expert's share for the whole payment; anything already paid out is recovered from later payouts (`settleLostDispute` in `app/api/webhooks/utils.ts`). The platform contests every dispute with attendance evidence. The terms an expert accepts must say this.
-- **Example**: on the plan above, the expert loses ₹6,000 for five sessions taught.
+- **Today and rule**: a lost dispute reverses the expert's share in proportion to the amount lost, all of it when the whole payment is lost (`settleLostDispute` in `app/api/webhooks/utils.ts`). A share not yet paid out is simply reversed. A share already paid in a completed payout becomes an amount the expert owes, net of the tax withheld on it (that tax is reversed separately); it is recovered from later payouts, or collected by operations when nothing was booked automatically. The platform contests every dispute with attendance evidence. The terms an expert accepts must say this.
+- **Example**: on the plan above, lost in full, the expert loses ₹6,000 for five sessions taught.
 - **Abuse resisted**: collusion. If the platform absorbed the loss for delivered sessions, a learner and an expert acting together could charge back and keep the payout, and the platform would pay twice.
 - **Alternative rejected**: the platform absorbs the loss for sessions with confirmed attendance. Kinder to experts, and one freelancing marketplace does this when its time-tracking rules were followed, but it opens the collusion route and needs a new ledger path.
 
@@ -89,7 +89,7 @@ Each rule lists what happens today, the rule, a worked example, and the abuse th
 These three extend the [session outcome report window](2026-11-23-session-outcome-report-window.md) record, which is updated by the work that builds them.
 
 - When an operator marks "expert absent" on a consultation and cancelling the whole booking does not fit (another session was held or is still to come, the booking already completed, or the session was already voided), that one session is voided: the strike is recorded at once, the expert has 14 days to deliver a make-up, and then the session's share is refunded.
-- While any session of a plan carries a "learner absent" verdict still inside its 48-hour window, no tranche of that plan is released. The longest extra wait is 48 hours.
+- While any session of a plan carries a "learner absent" verdict still inside its 48-hour window, no tranche of that plan is released. Each verdict holds the plan for at most 48 hours. Windows can overlap: a second absence 24 hours after the first keeps the plan held until the second window closes, 72 hours after the first opened. There is no cap across verdicts; the hold ends when the last open window closes.
 - When an operator relabels a void that was waiting for confirmation, the 14-day make-up window counts from the relabel, the date the learners were told.
 
 ### 12. Smaller rules decided without alternatives **(planned)**
