@@ -17,7 +17,9 @@ import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   derivePseudonym,
   eraseStreamPrincipalFootprint,
+  hasLiveBookings,
   hasMoneyInFlight,
+  liveBookingsForUser,
   moneyInFlightForUser,
   scrubUser,
   soleOwnerOrganizationsForUser,
@@ -292,49 +294,17 @@ export async function PATCH(
   }
 }
 
-async function checkConsulteeActiveBookingsBlock(
-  consulteeProfileId: string,
-): Promise<NextResponse | null> {
-  const activeBookingStatuses = [
-    "PENDING",
-    "APPROVED",
-    "APPROVED_PENDING_PAYMENT",
-  ] as const;
-  const [activeConsultations, activeSubscriptions, activeTrials] =
-    await Promise.all([
-      prisma.consultation.count({
-        where: {
-          requestedById: consulteeProfileId,
-          status: { in: [...activeBookingStatuses] },
-        },
-      }),
-      prisma.subscription.count({
-        where: {
-          requestedById: consulteeProfileId,
-          status: { in: [...activeBookingStatuses] },
-        },
-      }),
-      prisma.trial.count({
-        where: {
-          consulteeProfileId,
-          status: { in: ["SCHEDULED", "AWAITING_PAYMENT"] },
-        },
-      }),
-    ]);
-  const totalActiveBookings =
-    activeConsultations + activeSubscriptions + activeTrials;
-  if (totalActiveBookings === 0) return null;
+/** The 409 a learner who still holds a live booking gets; null when none is live. */
+async function liveBookingsBlock(userId: string): Promise<NextResponse | null> {
+  const counts = await liveBookingsForUser(prisma, userId);
+  if (!hasLiveBookings(counts)) return null;
 
   return NextResponse.json(
     {
       error:
-        "Cannot delete account while you have active or upcoming consultations, subscriptions, or trials. Please complete or cancel your active bookings first.",
+        "Cannot delete account while you have active or upcoming consultations, subscriptions, trials, or class and webinar seats. Please complete, cancel or leave them first.",
       code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
-      counts: {
-        activeConsultations,
-        activeSubscriptions,
-        activeTrials,
-      },
+      counts,
     },
     { status: 409 },
   );
@@ -354,7 +324,6 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     programAssignmentCount,
     erasureRequestCount,
     profile,
-    consulteeProfile,
     supportHistoryCount,
   ] = await Promise.all([
     soleOwnerOrganizationsForUser(prisma, id),
@@ -385,10 +354,6 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
           },
         },
       },
-    }),
-    prisma.consulteeProfile.findFirst({
-      where: { userId: id },
-      select: { id: true },
     }),
     supportRetainedHistoryCount(prisma, id),
   ]);
@@ -444,13 +409,9 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     }
   }
 
-  if (consulteeProfile?.id) {
-    const bookingBlocker = await checkConsulteeActiveBookingsBlock(
-      consulteeProfile.id,
-    );
-    if (bookingBlocker) {
-      return { blockerResponse: bookingBlocker, hasRetainedHistory: false };
-    }
+  const bookingBlocker = await liveBookingsBlock(id);
+  if (bookingBlocker) {
+    return { blockerResponse: bookingBlocker, hasRetainedHistory: false };
   }
 
   const consultantMoneyCount = profile

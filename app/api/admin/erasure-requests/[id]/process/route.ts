@@ -14,7 +14,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
+  describeLiveBookings,
+  hasLiveBookings,
   hasMoneyInFlight,
+  liveBookingsForUser,
   moneyInFlightForUser,
   scrubUser,
   soleOwnerOrganizationsForUser,
@@ -66,6 +69,21 @@ export async function POST(
           "Erasure is blocked while the user is the sole active owner of an organization. Transfer ownership or deactivate the organization first.",
         code: "ERASURE_BLOCKED_SOLE_ORG_OWNER",
         organizations: soleOwnedOrgs,
+      },
+      { status: 409 },
+    );
+  }
+
+  // A learner's live bookings are never cancelled by the scrub and would
+  // outlive an account that can no longer sign in, so the operator ends them
+  // through their own doors first.
+  const liveBookings = await liveBookingsForUser(prisma, request.userId);
+  if (hasLiveBookings(liveBookings)) {
+    return NextResponse.json(
+      {
+        error: `Erasure is blocked while this user still holds live bookings (${describeLiveBookings(liveBookings)}). Cancel each booking through its cancel door, and release a class or webinar seat from its roster, then process this request again. Erasure never cancels a booking itself.`,
+        code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
+        counts: liveBookings,
       },
       { status: 409 },
     );

@@ -10,10 +10,14 @@
  */
 
 const mockScrub = jest.fn(async () => ({ vendorFailures: [] as string[] }));
+const mockLiveBookings = jest.fn(async () => ({ activeEventSeats: 0 }));
 jest.mock("../../lib/compliance/erasure/scrub-user", () => ({
   derivePseudonym: () => "pseudo-1",
   eraseStreamPrincipalFootprint: jest.fn(async () => undefined),
+  hasLiveBookings: (counts: Record<string, number>) =>
+    Object.values(counts).some((n) => n > 0),
   hasMoneyInFlight: () => false,
+  liveBookingsForUser: () => mockLiveBookings(),
   moneyInFlightForUser: jest.fn(async () => ({})),
   scrubUser: () => mockScrub(),
   soleOwnerOrganizationsForUser: jest.fn(async () => []),
@@ -75,7 +79,6 @@ jest.mock("../../lib/prisma", () => {
         ),
       },
       consultantProfile: { findFirst: jest.fn(async () => null) },
-      consulteeProfile: { findFirst: jest.fn(async () => null) },
       $transaction: async (fn: (t: unknown) => unknown) => fn(tx),
     },
   };
@@ -120,4 +123,16 @@ it("still hard-deletes an account with nothing to keep", async () => {
     message: "User deleted successfully",
   });
   expect(mockUserDelete).toHaveBeenCalledTimes(1);
+});
+
+it("refuses a learner who still holds a class or webinar seat, with nothing erased", async () => {
+  mockLiveBookings.mockResolvedValueOnce({ activeEventSeats: 1 });
+  const res = await del();
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({
+    code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
+    counts: { activeEventSeats: 1 },
+  });
+  expect(mockScrub).not.toHaveBeenCalled();
+  expect(mockUserDelete).not.toHaveBeenCalled();
 });

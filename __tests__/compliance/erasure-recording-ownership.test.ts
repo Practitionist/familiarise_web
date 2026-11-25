@@ -33,6 +33,11 @@ jest.mock("../../lib/prisma", () => ({
     consultantPayout: { count: async () => 0 },
     consultantEarnings: { count: async () => 0 },
     dispute: { count: async () => 0 },
+    // The erased user holds no live booking.
+    consultation: { count: async () => 0 },
+    subscription: { count: async () => 0 },
+    trial: { count: async () => 0 },
+    appointment: { count: async () => 0 },
     erasureRequest: {
       findFirst: async () => null,
       findUnique: async () => ({

@@ -96,7 +96,7 @@ import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import { liveParticipant } from "@/lib/booking/participants";
+import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
 import {
   purgeErasedCreatorFiles,
@@ -203,6 +203,104 @@ export async function moneyInFlightForUser(
     orgInvoicesAsSoleOwner,
     liveDisputes,
   };
+}
+
+export interface LiveBookings {
+  /** Consultations still pending, approved or awaiting payment. */
+  activeConsultations: number;
+  /** Plans still pending, approved or awaiting payment. */
+  activeSubscriptions: number;
+  /** Trials scheduled or awaiting payment. */
+  activeTrials: number;
+  /** Class or webinar seats on an event that still has a session ahead. */
+  activeEventSeats: number;
+}
+
+const ACTIVE_BOOKING_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "APPROVED_PENDING_PAYMENT",
+] as const;
+
+/**
+ * Bookings the user still holds as a learner. Erasure never cancels a booking:
+ * the self-serve delete and the admin process route both refuse with
+ * ERASURE_BLOCKED_ACTIVE_BOOKINGS until each is cancelled or left through its
+ * own door, because a scrubbed learner cannot sign in to attend or cancel.
+ */
+export async function liveBookingsForUser(
+  db: Db,
+  userId: string,
+  now: Date = new Date(),
+): Promise<LiveBookings> {
+  const [
+    activeConsultations,
+    activeSubscriptions,
+    activeTrials,
+    activeEventSeats,
+  ] = await Promise.all([
+    db.consultation.count({
+      where: {
+        requestedBy: { userId },
+        status: { in: [...ACTIVE_BOOKING_STATUSES] },
+      },
+    }),
+    db.subscription.count({
+      where: {
+        requestedBy: { userId },
+        status: { in: [...ACTIVE_BOOKING_STATUSES] },
+      },
+    }),
+    db.trial.count({
+      where: {
+        consulteeProfile: { userId },
+        status: { in: ["SCHEDULED", "AWAITING_PAYMENT"] },
+      },
+    }),
+    db.appointment.count({
+      where: {
+        deletedAt: null,
+        OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
+        participants: {
+          some: { ...paidParticipant(userId), role: "CONSULTEE" },
+        },
+        occurrences: {
+          some: {
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+            startsAt: { gt: now },
+          },
+        },
+      },
+    }),
+  ]);
+  return {
+    activeConsultations,
+    activeSubscriptions,
+    activeTrials,
+    activeEventSeats,
+  };
+}
+
+/** True when the user still holds any live booking. */
+export function hasLiveBookings(counts: LiveBookings): boolean {
+  return Object.values(counts).some((n) => n > 0);
+}
+
+/** The live bookings in words, for a refusal: "1 plan, 2 class or webinar seats". */
+export function describeLiveBookings(counts: LiveBookings): string {
+  const part = (n: number, one: string, many: string) =>
+    n > 0 ? [`${n} ${n === 1 ? one : many}`] : [];
+  return [
+    ...part(counts.activeConsultations, "consultation", "consultations"),
+    ...part(counts.activeSubscriptions, "plan", "plans"),
+    ...part(counts.activeTrials, "trial", "trials"),
+    ...part(
+      counts.activeEventSeats,
+      "class or webinar seat",
+      "class or webinar seats",
+    ),
+  ].join(", ");
 }
 
 /**
