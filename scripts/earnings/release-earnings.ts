@@ -26,6 +26,7 @@ import {
   RefundStatus,
 } from "@prisma/client";
 import prisma, { type PrismaLike } from "@/lib/prisma";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -68,33 +69,46 @@ export const UNDELIVERED_OCCURRENCE = {
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /**
- * Release earnings that have passed their hold period
- *
- * Finds earnings with:
- * - Status: PENDING
- * - holdUntil: Past current time
- *
- * Updates them to READY status for payout processing.
- *
- * @returns ReleaseResult with counts and error details
+ * A cash refund that is PENDING, or SUCCEEDED with its cascade not yet applied.
+ * A zero-amount credit restoration never cascades and never gates.
  */
+const REFUND_IN_FLIGHT = {
+  amountPaise: { gt: 0 },
+  status: { notIn: [RefundStatus.FAILED, RefundStatus.CANCELLED] },
+  OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
+} satisfies Prisma.RefundWhereInput;
+
+const ACTIVE_DISPUTE = {
+  status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+} satisfies Prisma.DisputeWhereInput;
+
 /**
- * #1775 P-2 — an earning whose payment has a refund still in flight is not
- * released: the clawback cascade sizes itself when that refund settles, and a
- * READY (or paid-out) row would pay the consultant money that is leaving.
- * Repeated in the claim's WHERE so a refund opened mid-run keeps the row.
+ * Money owed back on a payment, one clause per reason. A payment matching any
+ * clause funds no payout: release, batching and both claim gates read these.
  */
+export const MONEY_OWED_PAYMENT = {
+  refundInFlight: { refunds: { some: REFUND_IN_FLIGHT } },
+  activeDispute: { disputes: { some: ACTIVE_DISPUTE } },
+  refundOwed: { refundOwedKey: { not: null } },
+} satisfies Record<string, Prisma.PaymentWhereInput>;
+
+/** The same three clauses negated: nothing is owed back on the payment. */
+export const NO_MONEY_OWED_PAYMENT = {
+  refunds: { none: REFUND_IN_FLIGHT },
+  disputes: { none: ACTIVE_DISPUTE },
+  refundOwedKey: null,
+} satisfies Prisma.PaymentWhereInput;
+
 /**
- * #1569 D10 — NO_UNSETTLED_MISS rides the same payment filter: a booking owing
- * a make-up or a refund for a host-cancelled or voided session, or holding a
- * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
- * A subscription's misses do not hold it (`EARNINGS_HOLDING_MISS`).
+ * A payment whose PENDING earnings may be released: no refund in flight or
+ * owed, every live session delivered, and no session owing a make-up, parked
+ * for a human or carrying an unconfirmed learner-absent verdict. A
+ * subscription's misses do not hold it (`EARNINGS_HOLDING_MISS`). The claim's
+ * WHERE repeats it, so a gate that appears mid-run keeps the row.
  */
 export const RELEASABLE_PAYMENT = {
-  refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
-  // A refund some door still owes (retrying, or spent and waiting on support)
-  // holds every earning on the payment until the marker clears.
-  refundOwedKey: null,
+  refunds: NO_MONEY_OWED_PAYMENT.refunds,
+  refundOwedKey: NO_MONEY_OWED_PAYMENT.refundOwedKey,
   NOT: {
     appointment: {
       occurrences: { some: UNDELIVERED_OCCURRENCE },
