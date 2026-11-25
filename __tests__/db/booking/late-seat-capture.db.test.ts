@@ -176,13 +176,20 @@ describe("a capture on a HELD class seat after enrolment has closed", () => {
 
   it("still releases a seat paid inside its hold once every session is over", async () => {
     const { cls, buyer, seatId } = await heldSeatOnClassUnderWay();
-    await prisma.appointmentOccurrence.updateMany({
+    // Every session moves into the past, each to its own hour: one host's sessions may not overlap.
+    const sessions = await prisma.appointmentOccurrence.findMany({
       where: { appointmentId: cls.appointmentId },
-      data: {
-        startsAt: new Date(Date.now() - 3 * HOUR_MS),
-        endsAt: new Date(Date.now() - 2 * HOUR_MS),
-      },
+      select: { id: true },
+      orderBy: { startsAt: "asc" },
     });
+    const firstStart = Date.now() - 30 * 24 * HOUR_MS;
+    for (const [i, session] of sessions.entries()) {
+      const startsAt = new Date(firstStart + i * 2 * HOUR_MS);
+      await prisma.appointmentOccurrence.update({
+        where: { id: session.id },
+        data: { startsAt, endsAt: new Date(startsAt.getTime() + HOUR_MS) },
+      });
+    }
 
     const result = await capture(cls.appointmentId, buyer.userId, {
       paidInsideHold: true,
