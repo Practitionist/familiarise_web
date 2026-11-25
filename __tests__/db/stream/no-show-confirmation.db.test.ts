@@ -6,6 +6,11 @@
  */
 import prisma from "../../../lib/prisma";
 import { confirmClosedOutcomes } from "../../../lib/booking/session-outcome-sweep";
+import {
+  claimNoShowTx,
+  readNoShowClaim,
+} from "../../../lib/booking/consultant-no-show";
+import { IllegalTransitionError } from "../../../lib/enterprise/transitions";
 import { detectConsultantNoShows } from "../../../scripts/appointments/detect-consultant-no-shows";
 import { createOrReuseSupportCase } from "../../../lib/support/case-service";
 import { intakeFor } from "../seed";
@@ -210,6 +215,47 @@ it("the consultant's dispute leaves no refund and no strike, even after the wind
     strikes: 0,
     session: { completionStatus: "UNVERIFIED", outcomeConfirmedAt: null },
   });
+});
+
+it("a sibling session parked as nobody joined vetoes the claim in its compare-and-set and at the pass's read: nothing is cancelled, refunded or struck", async () => {
+  const room = await seedNoShow(11);
+  const proposed = await propose(room);
+  // Read while every session is expert-absent; the sibling is parked before the claim writes.
+  const claim = await readNoShowClaim(prisma, room.occurrenceId);
+  expect(claim).not.toBeNull();
+  await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: room.appointmentId,
+      ordinal: 2,
+      startsAt: new Date(room.startsAt.getTime() - 24 * HOUR),
+      endsAt: new Date(room.endsAt.getTime() - 24 * HOUR),
+      isTentative: false,
+      consultantProfileId: proposed.consultantProfileId,
+      completionStatus: "UNVERIFIED",
+      outcome: "NOBODY_JOINED",
+      outcomeAt: proposed.outcomeAt,
+    },
+  });
+  const untouched = {
+    status: "APPROVED",
+    refunds: [],
+    strikes: 0,
+    refundOwedKey: null,
+    session: { completionStatus: "UNVERIFIED", outcomeConfirmedAt: null },
+  };
+
+  await expect(
+    prisma.$transaction((tx) =>
+      claimNoShowTx(tx, claim!, { now: new Date(), actorUserId: null }),
+    ),
+  ).rejects.toBeInstanceOf(IllegalTransitionError);
+  expect(await moneyOf(room)).toMatchObject(untouched);
+
+  await confirmClosedOutcomes(
+    new Date(proposed.outcomeAt!.getTime() + 49 * HOUR),
+    () => false,
+  );
+  expect(await moneyOf(room)).toMatchObject(untouched);
 });
 
 /** A declared incident over the room's booked hour, removed with its remedies afterwards so no other suite sees it. */

@@ -478,6 +478,48 @@ describe("consultant no-show refunds", () => {
     },
   );
 
+  it("does not propose when a sibling session was joined by nobody: only a booking whose every session is expert-absent is automatic", async () => {
+    const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
+    candidate.appointment.occurrences = [
+      noShowOccurrence(),
+      noShowOccurrence({
+        id: "occ-empty",
+        startsAt: new Date("2026-09-02T10:00:00Z"),
+        endsAt: new Date("2026-09-02T11:00:00Z"),
+        meeting: {
+          id: "meeting-2",
+          endedAt: new Date("2026-09-02T11:00:00Z"),
+          stays: [],
+        },
+      }),
+    ];
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([candidate]);
+
+    const result = await detectConsultantNoShows();
+
+    expect(result.detected).toBe(0);
+    expectNoShowSkipped(result);
+  });
+
+  it.each(["NOBODY_JOINED", "OFFLINE"])(
+    "declines a proposal whose sibling is parked %s, writing nothing",
+    async (outcome) => {
+      const row = proposedClaimRow({ id: "pay-1" });
+      row.appointment.occurrences.push({
+        ...row.appointment.occurrences[0],
+        id: "occ-empty",
+        outcome,
+        meeting: { presences: [] },
+      });
+      (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(row);
+
+      expect(await confirmOcc1()).toEqual({ kind: "declined" });
+      expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+      expect(prisma.systemEvent.create).not.toHaveBeenCalled();
+      expect(refundBookingPayment).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not filter the candidate query on a positive amount", async () => {
     await detectConsultantNoShows();
 

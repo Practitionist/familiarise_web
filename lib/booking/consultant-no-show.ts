@@ -44,13 +44,6 @@ import {
 import { recordExpertStrike } from "./expert-reliability";
 import { readOverlappingOutages } from "./outage-windows";
 
-/** Outcomes in which the consultant never appeared; a no-show booking holds only these. */
-export const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
-  "HOST_ABSENT",
-  "NOBODY_JOINED",
-  "OFFLINE",
-]);
-
 // A decided, held or parked sibling makes the booking ops-owned. A settled incident void is history, not a decision on its rebook.
 export const DECIDED_OR_PARKED = {
   deletedAt: null,
@@ -88,11 +81,14 @@ export function isOpsOwnedSibling(occurrence: {
   );
 }
 
-/** A session of the proposal still standing: parked UNVERIFIED as one the consultant never joined, unconfirmed. */
+/**
+ * A session of the proposal still standing: parked UNVERIFIED as expert-absent, unconfirmed.
+ * A sibling nobody joined, or with no room, is not one: that booking is an operator's to decide.
+ */
 const STANDING_PROPOSAL = {
   deletedAt: null,
   completionStatus: OccurrenceCompletionStatus.UNVERIFIED,
-  outcome: { in: [...HOST_NEVER_PRESENT] },
+  outcome: "HOST_ABSENT",
   outcomeConfirmedAt: null,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
@@ -101,8 +97,7 @@ function isStanding(o: ClaimOccurrence): boolean {
   return (
     o.deletedAt === null &&
     o.completionStatus === OccurrenceCompletionStatus.UNVERIFIED &&
-    o.outcome !== null &&
-    HOST_NEVER_PRESENT.has(o.outcome) &&
+    o.outcome === "HOST_ABSENT" &&
     o.outcomeConfirmedAt === null
   );
 }
@@ -207,7 +202,7 @@ export interface NoShowClaim {
 
 /**
  * The claim the detector's rules allow on this booking now, or null: a live paid
- * consultation whose every live session is a standing proposal the consultant has no stay in.
+ * consultation whose every live session is a standing expert-absent proposal the consultant has no stay in.
  */
 export function noShowClaimOf(
   row: ClaimRow,
@@ -229,14 +224,7 @@ export function noShowClaimOf(
   const strike = appointment.occurrences.find(
     (o) => o.id === strikeOccurrenceId,
   );
-  if (
-    !strike ||
-    strike.isTentative ||
-    strike.outcome !== "HOST_ABSENT" ||
-    !isStanding(strike)
-  ) {
-    return null;
-  }
+  if (!strike || strike.isTentative || !isStanding(strike)) return null;
   if (appointment.occurrences.some(vetoesClaim)) return null;
   const proposal = appointment.occurrences.filter(isStanding);
   // Any stay of the consultant on a proposed session, even after the booked end, is not a no-show.
@@ -320,7 +308,6 @@ export async function claimNoShowTx(
   const strike = {
     id: claim.strikeOccurrenceId,
     ...STANDING_PROPOSAL,
-    outcome: "HOST_ABSENT",
   } satisfies Prisma.AppointmentOccurrenceWhereInput;
   await transitionConsultationRequest(tx, {
     where: {

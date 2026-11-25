@@ -38,7 +38,6 @@ import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import {
   DECIDED_OR_PARKED,
-  HOST_NEVER_PRESENT,
   isOpsOwnedSibling,
 } from "@/lib/booking/consultant-no-show";
 
@@ -249,9 +248,9 @@ export async function settledJudgedAttendance(
 // Returns the judged sessions' verdicts when `consultation` is a CONSULTANT no-show,
 // or null to skip. The verdict is `classifySessionOutcome` over Stream's settled
 // record, the same one the end + 1 h sweep writes, so the two jobs cannot
-// disagree: some session is HOST_ABSENT and the consultant was present in none.
-// Neither-showed and consultee-no-show cases are excluded — no consultant-fault
-// refund there.
+// disagree: every judged session is HOST_ABSENT and the consultant was present in none.
+// A booking with a neither-showed, no-room or consultee-no-show session is excluded:
+// no automatic consultant-fault refund there.
 export function evaluateConsultantNoShow(
   consultation: NoShowCandidate,
   outages: OutageWindow[],
@@ -295,9 +294,8 @@ export function evaluateConsultantNoShow(
       maintenanceWindows: outages,
     }),
   }));
-  const outcomes = verdicts.map((v) => v.verdict.outcome);
-  const hostNeverPresent = outcomes.every((o) => HOST_NEVER_PRESENT.has(o));
-  if (!outcomes.includes("HOST_ABSENT") || !hostNeverPresent) return null;
+  // Automatic only when every judged session is expert-absent; any other sibling leaves the booking to the slot pass and ops.
+  if (!verdicts.every((v) => v.verdict.outcome === "HOST_ABSENT")) return null;
   return { verdicts };
 }
 
