@@ -100,8 +100,8 @@ const dayKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /**
  * Where the next run resumes: the last day read in full, the page a capped day
  * stopped at, the last line re-matched, and the settlement examination pass.
- * `settle.from` is the earliest day read outside the lookback that no full pass
- * has covered yet; `stale` says such a day was read while a pass was under way.
+ * `settle.from` is the earliest day read that no full pass has covered yet;
+ * `stale` says such a day was read while a pass was under way.
  * `failedDays` are days at or before `read` whose report could not be read.
  * `settle.held` are held settlements kept in the cohort by id once their lines
  * are at or beyond the lookback's far edge, until they are posted.
@@ -1090,9 +1090,10 @@ async function reconcileFromContinuation(
     null,
   );
 
-  // A day read outside the lookback stays in the cohort until a full pass covers it.
+  // A day read in this run stays in the cohort until a full pass has covered
+  // it, whatever its age: the lookback moves on between runs.
   const lookbackStart = now.getTime() - SETTLEMENT_LOOKBACK_DAYS * DAY_MS;
-  if (firstCompleted && firstCompleted.start.getTime() < lookbackStart) {
+  if (firstCompleted) {
     const from = state.settle.from ? dayFromKey(state.settle.from) : null;
     if (!from || firstCompleted.start < from.start) {
       state.settle.from = dayKey(firstCompleted);

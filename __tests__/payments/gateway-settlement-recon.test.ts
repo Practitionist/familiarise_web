@@ -1004,6 +1004,39 @@ describe("bounded work resumes from the job's one continuation record", () => {
     expect(mockJournals.get("settlement:setl_80")).toBe(1_000);
     expect(continuation(resolved).settle.held).toEqual([]);
   });
+  it("a day read just inside the lookback is still examined when its first run was cut before the examination", async () => {
+    // At 08:00 IST on 20 October the lookback starts at 08:00 IST on 21 August;
+    // 22 August starts after that, and its settlement settles at 07:00 IST.
+    mockCheckpoint.value = readThrough("2026-08-21");
+    mockPagesByDay.set("2026-8-22", [
+      [
+        {
+          ...transfer("trf_edge", "2026-08-22", "setl_edge"),
+          settled_at: Math.floor(
+            Date.parse("2026-08-22T07:00:00+05:30") / 1000,
+          ),
+        },
+      ],
+    ]);
+    mockSettlements.set("setl_edge", 1_000);
+    mockDeadline.afterReports = 1;
+
+    const cut = await run();
+
+    expect(cut).toMatchObject({ inserted: 1, settlementsPosted: 0 });
+    expect(continuation(cut).settle.from).toBe("2026-08-22");
+
+    carryOn(cut);
+    mockDeadline.afterReports = Infinity;
+    // A day later the lookback starts at 08:00 IST on 22 August, after that settlement.
+    const next = await runReconcileGatewaySettlements(
+      Date.now(),
+      new Date("2026-10-21T02:30:00Z"),
+    );
+
+    expect(next.settlementsPosted).toBe(1);
+    expect(mockJournals.get("settlement:setl_edge")).toBe(1_000);
+  });
 });
 
 describe("a bound that stops a run is never silent", () => {
