@@ -33,6 +33,12 @@ jest.mock("../../app/api/webhooks/utils", () => ({
     handleRazorpayPayoutWebhook(...args),
 }));
 
+// Routing reads the app's rows; in this suite handlers are mocked and every order is a booking payment's.
+jest.mock("../../lib/payments/webhooks/capture-rail", () => ({
+  ...jest.requireActual("../../lib/payments/webhooks/capture-rail"),
+  resolveCaptureRail: jest.fn(async () => ({ rail: "booking" })),
+}));
+
 jest.mock("../../lib/payments/webhooks/overage-handlers", () => ({
   __esModule: true,
   handleOverageMemberSuccess: jest.fn(),

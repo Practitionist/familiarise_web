@@ -421,6 +421,88 @@ describe("reconcile-payment-status — SUCCEEDED routes through routeCapturedPay
   });
 });
 
+// The rail comes from the row and the order, and only an answer naming the id means "unknown order".
+describe("reconcile-payment-status — rows decide, and a bare 400 is not an unknown order", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.CRON_SECRET = SECRET;
+    setRazorpayEnv();
+  });
+
+  it("never retires a 10-day-old PENDING row on a 400 that does not name the id", async () => {
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          ...pendingRow,
+          id: "pay-old",
+          createdAt: new Date(Date.now() - 10 * DAY),
+        },
+      ]);
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: {
+          code: "BAD_REQUEST_ERROR",
+          description: "Request failed. Please try after sometime.",
+        },
+      }),
+    });
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body.errors[0]).toContain("pay-old");
+    expect(body.retiredCount).toBe(0);
+    expect(body.unresolvableCount).toBe(0);
+    expect(retireOrphanPendingPayment).not.toHaveBeenCalled();
+  });
+
+  it("drives an overage side payment whose captured payment carries no notes, with the order's notes", async () => {
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([
+        {
+          ...pendingRow,
+          id: "pay-side",
+          paymentIntent: "order_side",
+          parentPaymentId: "pay-parent",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: "paid",
+          notes: { type: "overage_member" },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        // Razorpay answers an empty notes map as an array.
+        json: async () => ({
+          items: [
+            { status: "captured", id: "pay_side_1", amount: 12950, notes: [] },
+          ],
+        }),
+      });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(207);
+    expect(routeCapturedPayment).toHaveBeenCalledWith({
+      orderId: "order_side",
+      gatewayPaymentId: "pay_side_1",
+      notes: { type: "overage_member" },
+      amountPaise: 12950,
+    });
+  });
+});
+
 // A gateway no sweep can read is stamped out of the cohort once; pre-mint rows are never reconciled.
 describe("reconcile-payment-status — permanent rows and pre-mint rows", () => {
   const DAY = 24 * 60 * 60 * 1000;

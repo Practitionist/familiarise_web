@@ -43,6 +43,7 @@ import {
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { razorpayNotesSchema } from "@/schemas/webhooks/razorpay";
+import { isUnknownIdAnswer } from "@/lib/payments/core/razorpay-unknown-id";
 import {
   razorpayErrorDescription,
   razorpayGet,
@@ -253,7 +254,7 @@ type GatewayLookup =
       status: string;
       failureMessage?: string;
       paymentId?: string;
-      /** `notes` off the captured payment — selects the handler in routeCapturedPayment. */
+      /** The order's notes (the payment's when the order has none); the rail is decided from the app's rows. */
       notes?: Record<string, string>;
       /** Captured amount in paise, for the parity check. */
       amountPaise?: number;
@@ -299,11 +300,12 @@ async function getRazorpayPaymentStatus(
     );
 
     if (!orderResponse.ok) {
-      // Razorpay answers 400 BAD_REQUEST_ERROR, not 404, for an order id it
-      // has no record of; 401/403 is our key, anything else is their side.
+      // Razorpay answers 400 BAD_REQUEST_ERROR naming the id, not 404, for an
+      // order it has no record of. Any other 400 refuses the request and says
+      // nothing about the order; 401/403 is our key, the rest is their side.
       const { status } = orderResponse;
       const description = await razorpayErrorDescription(orderResponse);
-      if (status === 400 || status === 404) {
+      if (isUnknownIdAnswer(status, description)) {
         return { kind: "unknown_id", detail: `${status} ${description}` };
       }
       console.error(`Razorpay order API error: ${status} ${description}`);
@@ -331,16 +333,16 @@ async function getRazorpayPaymentStatus(
           (p: { status: string }) => p.status === "captured",
         );
         if (capturedPayment) {
+          // The app writes its notes on the order; a payment may carry none.
+          const orderNotes = razorpayNotesSchema.parse(order.notes);
           return {
             kind: "status",
             status: "captured",
             paymentId: capturedPayment.id,
-            notes: Object.fromEntries(
-              Object.entries(capturedPayment.notes ?? {}).map(([k, v]) => [
-                k,
-                String(v),
-              ]),
-            ),
+            notes:
+              Object.keys(orderNotes).length > 0
+                ? orderNotes
+                : razorpayNotesSchema.parse(capturedPayment.notes),
             amountPaise: Number(capturedPayment.amount),
           };
         }
@@ -418,7 +420,7 @@ async function readClosedOrder(
   }
 }
 
-// Captures these notes route to settle rows other than a booking's Payment; a closed order never carries them.
+// Notes naming a rail that settles rows other than a booking's Payment contradict a closed booking order: nothing is refunded on them here.
 const NON_BOOKING_CAPTURE_TYPES: ReadonlySet<string> = new Set([
   "credit_purchase",
   "invoice_payment",
@@ -654,27 +656,19 @@ async function reconcilePaymentStatusUnlocked(
           skippedCount++;
           continue;
         }
+        // The row decides: a side payment still linked to its booking payment is
+        // not refunded here. A parentless row (a booking order, or the tombstone
+        // of a replaced order) is, whatever the capture's notes say.
         const flow = held.notes.type;
-        if (
-          (flow && NON_BOOKING_CAPTURE_TYPES.has(flow)) ||
-          (flow === "overage_member" && payment.parentPaymentId !== null)
-        ) {
+        const isSidePayment = Boolean(payment.parentPaymentId);
+        if ((flow && NON_BOOKING_CAPTURE_TYPES.has(flow)) || isSidePayment) {
           errors.push(
-            `Payment ${payment.id}: closed order ${payment.paymentIntent} holds a ${flow} capture no handler refunds here; refund by hand`,
+            `Payment ${payment.id}: closed order ${payment.paymentIntent} holds a ${isSidePayment ? "overage side payment" : flow} capture no handler refunds here; refund by hand`,
           );
           continue;
         }
         try {
-          if (flow === "overage_member") {
-            // A replaced overage order's tombstone: its handler parks the capture and refunds it.
-            await routeCapturedPayment({
-              orderId: payment.paymentIntent,
-              notes: held.notes,
-              amountPaise: held.amountPaise,
-              gatewayPaymentId: held.paymentId,
-            });
-            reconciledCount++;
-          } else if (
+          if (
             await refundClosedOrderCapture(payment, held, gatewayDeadlineAt)
           ) {
             lateCaptures.push(payment.id);
@@ -840,13 +834,10 @@ async function reconcilePaymentStatusUnlocked(
               notes.appointmentType = payment.appointment.appointmentType;
             }
           }
-          const isStandaloneFlow =
-            notes.type === "credit_purchase" ||
-            notes.type === "invoice_payment" ||
-            notes.type === "overage_member" ||
-            notes.type === "recording_purchase";
+          // Only a booking the capture must create needs its notes; a side
+          // payment settles on its own rows.
           if (
-            !isStandaloneFlow &&
+            !payment.parentPaymentId &&
             !payment.appointment?.id &&
             !notes.appointmentType
           ) {

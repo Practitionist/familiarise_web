@@ -39,7 +39,10 @@ import { mintInvoiceRefundCreditNote } from "@/lib/payments/operations/refund";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { postUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
-import { autoRefundPendingDescription } from "@/lib/payments/webhooks/auto-refund-marker";
+import {
+  autoRefundPendingDescription,
+  unreturnedCaptureWhere,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 import { prorate } from "@/lib/payments/utils/money";
 
 type OverageTxOutcome =
@@ -52,6 +55,47 @@ type OverageTxOutcome =
       reason: string;
     }
   | null;
+
+/** A side payment is settled only when every overage event it pays is CHARGED. */
+function overageCharged(events: { chargeStatus: string }[]): boolean {
+  return events.length > 0 && events.every((e) => e.chargeStatus === "CHARGED");
+}
+
+/**
+ * A captured side payment whose overage is not CHARGED is not settled. One
+ * operator event says so, unless the capture is already being returned (the
+ * refund path owns that row). Nothing is charged or posted from here.
+ */
+async function reportCapturedUncharged(
+  tx: Tx,
+  side: { id: string; organizationId: string | null },
+  paymentIntentId: string,
+  events: { chargeStatus: string }[],
+): Promise<void> {
+  const kept = await tx.payment.count({
+    where: { id: side.id, ...unreturnedCaptureWhere },
+  });
+  if (kept === 0) return;
+  const correlationId = `overage-captured-uncharged:${side.id}`;
+  const alreadyRecorded = await tx.systemEvent.findFirst({
+    where: { correlationId, category: "OVERAGE" },
+    select: { id: true },
+  });
+  if (alreadyRecorded) return;
+  await recordSystemErrorSafe({
+    db: tx,
+    organizationId: side.organizationId,
+    category: "OVERAGE",
+    summary: `Overage side-payment ${side.id} is captured but its overage is not charged; settle or refund it by hand`,
+    err: new Error("OVERAGE_CAPTURED_NOT_CHARGED"),
+    context: {
+      sidePaymentId: side.id,
+      paymentIntentId,
+      chargeStatuses: events.map((e) => e.chargeStatus),
+    },
+    correlationId,
+  });
+}
 
 /**
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
@@ -70,12 +114,14 @@ async function checkFastPathSettledOverage(
       paymentStatus: true,
       amount: true,
       gatewayPaymentId: true,
+      overageEvents: { select: { chargeStatus: true } },
     },
   });
   if (
     !existingSide ||
     existingSide.paymentStatus !== PaymentStatus.SUCCEEDED ||
-    (capturedPaise !== undefined && capturedPaise !== existingSide.amount)
+    (capturedPaise !== undefined && capturedPaise !== existingSide.amount) ||
+    !overageCharged(existingSide.overageEvents)
   ) {
     return false;
   }
@@ -222,7 +268,16 @@ async function settleOverageSidePaymentInTx(
         "Capture on a replaced overage order; auto-refunding gateway truth",
     };
   }
-  if (side.paymentStatus === PaymentStatus.SUCCEEDED) return null;
+  if (side.paymentStatus === PaymentStatus.SUCCEEDED) {
+    const events = await tx.overageEvent.findMany({
+      where: { paymentId: side.id },
+      select: { chargeStatus: true },
+    });
+    if (!overageCharged(events)) {
+      await reportCapturedUncharged(tx, side, paymentIntentId, events);
+    }
+    return null;
+  }
   if (capturedPaise !== side.amount) {
     const stamped = await tx.payment.updateMany({
       where: {
