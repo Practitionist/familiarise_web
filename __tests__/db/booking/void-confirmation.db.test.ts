@@ -21,9 +21,15 @@ refundOnRowsEachTest();
 
 const DAY_MS = 24 * HOUR_MS;
 
-/** A paid consultation whose one session was voided 15 days ago with `outcome`. */
-async function seedVoid(outcome: OccurrenceOutcome | null, confirmed: boolean) {
-  const endsAt = new Date(Date.now() - 16 * DAY_MS);
+/** A paid consultation whose one session was voided `voidedDaysAgo` days ago with `outcome`, confirmed then or `confirmedDaysAgo` days ago. */
+async function seedVoid(
+  outcome: OccurrenceOutcome | null,
+  confirmed: boolean,
+  days: { voidedDaysAgo?: number; confirmedDaysAgo?: number } = {},
+) {
+  const voidedDaysAgo = days.voidedDaysAgo ?? 15;
+  const confirmedDaysAgo = days.confirmedDaysAgo ?? voidedDaysAgo;
+  const endsAt = new Date(Date.now() - (voidedDaysAgo + 1) * DAY_MS);
   const booking = await seedOneToOne(
     "consultation",
     await seedHost(),
@@ -46,14 +52,16 @@ async function seedVoid(outcome: OccurrenceOutcome | null, confirmed: boolean) {
     where: { id: booking.payment!.id },
     data: { createdAt: bought },
   });
-  const voidedAt = new Date(Date.now() - 15 * DAY_MS);
+  const voidedAt = new Date(Date.now() - voidedDaysAgo * DAY_MS);
   await prisma.appointmentOccurrence.update({
     where: { id: booking.occurrenceId },
     data: {
       outcome,
       outcomeAt: voidedAt,
       voidedAt,
-      outcomeConfirmedAt: confirmed ? voidedAt : null,
+      outcomeConfirmedAt: confirmed
+        ? new Date(Date.now() - confirmedDaysAgo * DAY_MS)
+        : null,
     },
   });
   return booking;
@@ -100,4 +108,36 @@ it("leaves an unconfirmed host-attributed void out, and settles a confirmed one,
   expect(
     await prisma.refund.count({ where: { paymentId: weak.payment!.id } }),
   ).toBe(0);
+});
+
+it("a void confirmed on day 19 is not refunded until 14 days after that confirmation; an outage void counts from the void", async () => {
+  const late = await seedVoid("HOST_ABSENT", true, {
+    voidedDaysAgo: 20,
+    confirmedDaysAgo: 1,
+  });
+  const recentOutage = await seedVoid("PLATFORM_OUTAGE", false, {
+    voidedDaysAgo: 13,
+  });
+
+  expect(await settledOne(late.occurrenceId)).toEqual({
+    scanned: 0,
+    settled: false,
+  });
+  expect(await settledOne(recentOutage.occurrenceId)).toEqual({
+    scanned: 0,
+    settled: false,
+  });
+  expect(
+    await prisma.refund.count({ where: { paymentId: late.payment!.id } }),
+  ).toBe(0);
+
+  // Fourteen days after the confirmation the window is over.
+  await prisma.appointmentOccurrence.update({
+    where: { id: late.occurrenceId },
+    data: { outcomeConfirmedAt: new Date(Date.now() - 15 * DAY_MS) },
+  });
+  expect(await settledOne(late.occurrenceId)).toEqual({
+    scanned: 1,
+    settled: true,
+  });
 });

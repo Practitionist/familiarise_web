@@ -202,7 +202,7 @@ describe("the delayed refund notice of a host-cancelled session", () => {
   });
 });
 
-it("leaves an unconfirmed negative void out of the 14-day cohort until it is confirmed; an outage void or a confirmed one is refunded", async () => {
+it("leaves an unconfirmed negative void out of the 14-day cohort, counts a confirmed one's 14 days from its confirmation and an outage void's from the void", async () => {
   await settleCancelledSessions();
   const cohort = occurrenceReads[0] as Where;
   const voided = (over: Record<string, unknown>) => ({
@@ -217,16 +217,34 @@ it("leaves an unconfirmed negative void out of the 14-day cohort until it is con
   // Weak, disputed or not yet judged: the window-close pass never stamped it.
   expect(matchesWhere(voided({ outcome: "HOST_ABSENT" }), cohort)).toBe(false);
   expect(matchesWhere(voided({ outcome: "CUT_SHORT" }), cohort)).toBe(false);
-  // Strong and confirmed by the pass, or written by ops, which confirms at once.
+  // Confirmed 14 days ago or more, by the pass or by ops writing it: the make-up window ran from that confirmation.
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
   expect(
     matchesWhere(
-      voided({ outcome: "CUT_SHORT", outcomeConfirmedAt: new Date() }),
+      voided({ outcome: "CUT_SHORT", outcomeConfirmedAt: daysAgo(15) }),
       cohort,
     ),
   ).toBe(true);
-  // An outage attributes nothing to anyone and needs no confirmation.
+  // Voided 20 days ago and confirmed yesterday: 13 days of the make-up window are left.
+  expect(
+    matchesWhere(
+      voided({
+        outcome: "CUT_SHORT",
+        voidedAt: daysAgo(20),
+        outcomeConfirmedAt: daysAgo(1),
+      }),
+      cohort,
+    ),
+  ).toBe(false);
+  // An outage attributes nothing to anyone and needs no confirmation: 14 days from the void.
   expect(matchesWhere(voided({ outcome: "PLATFORM_OUTAGE" }), cohort)).toBe(
     true,
   );
+  expect(
+    matchesWhere(
+      voided({ outcome: "PLATFORM_OUTAGE", voidedAt: daysAgo(13) }),
+      cohort,
+    ),
+  ).toBe(false);
   expect(matchesWhere(voided({ outcome: null }), cohort)).toBe(true);
 });

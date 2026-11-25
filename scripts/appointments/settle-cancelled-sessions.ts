@@ -74,6 +74,7 @@ import {
   isNegativeMoneyOutcome,
   SETTLEABLE_VOID_VERDICT,
   UNCONFIRMED_NEGATIVE_VOID,
+  voidWindowStartedBefore,
 } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import type { StagedTrigger } from "@/lib/novu/outbox";
@@ -208,8 +209,8 @@ async function settleUnlocked(
 /**
  * The cohort: a host-cancelled class session or a voided class, webinar or
  * consultation session whose make-up window is over; not yet settled.
- * A void whose negative verdict is unconfirmed waits for it.
- * Subscription voids settle with their plan instead.
+ * A void whose negative verdict is unconfirmed waits for it, and its 14 days
+ * then run from the confirmation. Subscription voids settle with their plan instead.
  */
 function dueWhere(now: Date): Prisma.AppointmentOccurrenceWhereInput {
   const windowOver = new Date(now.getTime() - MAKEUP_WINDOW_DAYS * DAY_MS);
@@ -224,8 +225,7 @@ function dueWhere(now: Date): Prisma.AppointmentOccurrenceWhereInput {
       },
       {
         completionStatus: OccurrenceCompletionStatus.VOIDED,
-        voidedAt: { lt: windowOver },
-        AND: [SETTLEABLE_VOID_VERDICT],
+        AND: [SETTLEABLE_VOID_VERDICT, voidWindowStartedBefore(windowOver)],
         appointment: {
           OR: [
             { classId: { not: null } },

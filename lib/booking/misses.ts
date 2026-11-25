@@ -38,7 +38,7 @@ export const EARNINGS_HOLDING_MISS = {
   appointment: { subscriptionId: null },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
-/** When the session was lost; the make-up window runs from here. */
+/** When the session was lost: the host's cancellation or the void. */
 export const missedAt = (o: {
   hostCancelledAt?: Date | null;
   voidedAt?: Date | null;
@@ -87,6 +87,45 @@ export const isNegativeMoneyOutcome = (
   outcome: OccurrenceOutcome | null,
 ): outcome is NegativeMoneyOutcome =>
   outcome !== null && NEGATIVE_SET.has(outcome);
+
+/**
+ * When a miss's 14-day make-up window starts: the host's cancellation, or the void. A void whose
+ * negative verdict waits for a confirmation starts at that confirmation, and has not started (null) before it.
+ */
+export const makeUpWindowStart = (o: {
+  hostCancelledAt?: Date | null;
+  voidedAt?: Date | null;
+  outcome?: OccurrenceOutcome | null;
+  outcomeConfirmedAt?: Date | null;
+}): Date | null => {
+  if (o.hostCancelledAt) return o.hostCancelledAt;
+  if (!o.voidedAt) return null;
+  return isNegativeMoneyOutcome(o.outcome ?? null)
+    ? (o.outcomeConfirmedAt ?? null)
+    : o.voidedAt;
+};
+
+/** The database twin of {@link makeUpWindowStart} for a void: its window started before `before`. Change both together. */
+export function voidWindowStartedBefore(
+  before: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    voidedAt: { not: null },
+    OR: [
+      {
+        outcome: { in: [...NEGATIVE_MONEY_OUTCOMES] },
+        outcomeConfirmedAt: { lt: before },
+      },
+      {
+        voidedAt: { lt: before },
+        OR: [
+          { outcome: null },
+          { outcome: { notIn: [...NEGATIVE_MONEY_OUTCOMES] } },
+        ],
+      },
+    ],
+  };
+}
 
 /** Hours from a negative verdict (`outcomeAt`) to its window's close; must stay <= HOLD_PERIOD_HOURS.CONSULTATION. */
 export const OUTCOME_REPORT_WINDOW_HOURS = 48;

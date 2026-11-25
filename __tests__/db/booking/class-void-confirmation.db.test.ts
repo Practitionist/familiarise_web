@@ -81,6 +81,8 @@ it("raises neither the flag nor the exit bells on an unconfirmed host void, and 
 
   const swept = await sweepVoids(cls, third);
   expect(swept.exitEmailArgs).toBeNull();
+  // No make-up window has started, so the seats are promised no date yet.
+  expect(swept.cancelEmailArgs).toBeNull();
   expect(await flags(cls.classId)).toBe(0);
   expect(await seriesLedger(prisma, cls.appointmentId)).toMatchObject({
     misses: 2,

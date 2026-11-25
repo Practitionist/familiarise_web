@@ -9,7 +9,11 @@
  * all) give the learners the right to leave with every undelivered session refunded.
  */
 
-import { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
+import {
+  OccurrenceCompletionStatus,
+  Prisma,
+  type OccurrenceOutcome,
+} from "@prisma/client";
 import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
 
 import prisma, { type Tx } from "@/lib/prisma";
@@ -77,9 +81,9 @@ import {
 } from "./retime-leave";
 import {
   isNegativeMoneyOutcome,
+  makeUpWindowStart,
   MAKEUP_WINDOW_DAYS,
   MISS_WHERE,
-  missedAt,
 } from "./misses";
 import {
   formatForViewer,
@@ -478,10 +482,63 @@ export async function cancelClassSession(
 }
 
 /**
+ * The seat holders' notice of a void's make-up window (the cancel bell's voided
+ * variant and its email), naming 14 days from `windowStart`.
+ */
+async function stageVoidMakeUpNotice(
+  tx: Tx,
+  args: {
+    appointmentId: string;
+    occurrenceId: string;
+    startsAt: Date;
+    windowStart: Date;
+    seatUserIds: string[];
+    planTitle: string;
+    hostName: string;
+  },
+): Promise<{
+  bells: StagedTrigger[];
+  cancelEmailArgs: AppointmentCancelledEmailArgs | null;
+}> {
+  if (args.seatUserIds.length === 0)
+    return { bells: [], cancelEmailArgs: null };
+  const dashboardUrl = goHref("client", "appointments");
+  const bells = await stageBellsByZone(
+    tx,
+    NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+    args.seatUserIds,
+    (zone) => ({
+      voided: true,
+      planTitle: args.planTitle,
+      consultantName: args.hostName,
+      dateTime: zoned(args.startsAt, zone),
+      makeUpBy: zoned(
+        new Date(args.windowStart.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
+        zone,
+      ),
+      // Every seat holder here is a consultee.
+      dashboardUrl,
+    }),
+    `occ-void:${args.occurrenceId}`,
+  );
+  return {
+    bells,
+    cancelEmailArgs: {
+      appointmentId: args.appointmentId,
+      userIds: args.seatUserIds,
+      startsAt: args.startsAt,
+      cancelledBy: args.hostName,
+      dashboardUrl,
+    },
+  };
+}
+
+/**
  * #1569 — the outcome sweep voided one class session, inside its transaction:
  * the seats hear their make-up window (the cancel bell's voided variant), and
  * the exit right is re-checked because a void is a miss. A void whose negative
- * verdict is unconfirmed re-checks nothing until `onClassVoidConfirmed`.
+ * verdict is unconfirmed has no make-up window yet: the seats hear it, and the
+ * exit right is re-checked, in `onClassVoidConfirmed`.
  */
 export async function onClassSessionVoided(
   tx: Tx,
@@ -517,42 +574,36 @@ export async function onClassSessionVoided(
     select: { userId: true },
   });
   const seatUserIds = seats.map((s) => s.userId);
-  const hostName = cls.classPlan.consultantProfile?.user.name ?? "Your host";
-  const dashboardUrl = goHref("client", "appointments");
+  const voided = await tx.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: { outcome: true, outcomeConfirmedAt: true },
+  });
+  const awaitsConfirmation =
+    isNegativeMoneyOutcome(voided?.outcome ?? null) &&
+    !voided?.outcomeConfirmedAt;
   const bells: StagedTrigger[] = [];
   let cancelEmailArgs: AppointmentCancelledEmailArgs | null = null;
   let exitEmailArgs: ClassExitAvailableEmailArgs | null = null;
-  if (seatUserIds.length > 0) {
-    bells.push(
-      ...(await stageBellsByZone(
-        tx,
-        NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
-        seatUserIds,
-        (zone) => ({
-          voided: true,
-          planTitle: cls.classPlan.title,
-          consultantName: hostName,
-          dateTime: zoned(args.startsAt, zone),
-          makeUpBy: zoned(
-            new Date(args.voidedAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
-            zone,
-          ),
-          // #1527 — every seat holder here is a consultee.
-          dashboardUrl,
-        }),
-        `occ-void:${args.occurrenceId}`,
-      )),
-    );
-    cancelEmailArgs = {
+  if (!awaitsConfirmation) {
+    const notice = await stageVoidMakeUpNotice(tx, {
       appointmentId: args.appointmentId,
-      userIds: seatUserIds,
+      occurrenceId: args.occurrenceId,
       startsAt: args.startsAt,
-      cancelledBy: hostName,
-      dashboardUrl,
-    };
+      windowStart: args.voidedAt,
+      seatUserIds,
+      planTitle: cls.classPlan.title,
+      hostName: cls.classPlan.consultantProfile?.user.name ?? "Your host",
+    });
+    bells.push(...notice.bells);
+    cancelEmailArgs = notice.cancelEmailArgs;
   }
   // The plan's team hears that the session did not count; their switches apply.
-  const team = await teamToTell(tx, cls.classPlan.id, seatUserIds);
+  // A team member who also holds a seat hears the team's sentence while the seats' notice waits.
+  const team = await teamToTell(
+    tx,
+    cls.classPlan.id,
+    awaitsConfirmation ? [] : seatUserIds,
+  );
   if (team.length > 0) {
     bells.push(
       ...(await stageBellsByZone(
@@ -573,13 +624,6 @@ export async function onClassSessionVoided(
       )),
     );
   }
-  const voided = await tx.appointmentOccurrence.findUnique({
-    where: { id: args.occurrenceId },
-    select: { outcome: true, outcomeConfirmedAt: true },
-  });
-  const awaitsConfirmation =
-    isNegativeMoneyOutcome(voided?.outcome ?? null) &&
-    !voided?.outcomeConfirmedAt;
   if (!awaitsConfirmation) {
     const exit = await exitRightAfterMiss(tx, hosted, seatUserIds, {
       landed: { occurrenceId: args.occurrenceId, relabelled: args.relabelled },
@@ -622,15 +666,16 @@ async function exitRightAfterMiss(
 
 /**
  * A class void's host-attributed verdict was just confirmed, in the caller's
- * transaction: the miss now counts, so the flag and the exit right are
- * re-checked as `onClassSessionVoided` would have at the void.
+ * transaction: its make-up window starts now, so the seats hear it with that
+ * date, and the miss now counts, so the flag and the exit right are re-checked
+ * as `onClassSessionVoided` would have at the void.
  */
 export async function onClassVoidConfirmed(
   tx: Tx,
   args: { appointmentId: string; occurrenceId: string; confirmedAt: Date },
 ): Promise<{
   bells: StagedTrigger[];
-  cancelEmailArgs: null;
+  cancelEmailArgs: AppointmentCancelledEmailArgs | null;
   exitEmailArgs: ClassExitAvailableEmailArgs | null;
 }> {
   const appointment = await tx.appointment.findUnique({
@@ -645,10 +690,26 @@ export async function onClassVoidConfirmed(
     where: { appointmentId: args.appointmentId, ...SEATED },
     select: { userId: true },
   });
+  const seatUserIds = seats.map((s) => s.userId);
+  const session = await tx.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: { startsAt: true },
+  });
+  const notice = session
+    ? await stageVoidMakeUpNotice(tx, {
+        appointmentId: args.appointmentId,
+        occurrenceId: args.occurrenceId,
+        startsAt: session.startsAt,
+        windowStart: args.confirmedAt,
+        seatUserIds,
+        planTitle: cls.classPlan.title,
+        hostName: cls.classPlan.consultantProfile?.user.name ?? "Your host",
+      })
+    : { bells: [], cancelEmailArgs: null };
   const exit = await exitRightAfterMiss(
     tx,
     { found: true, appointment, cls },
-    seats.map((s) => s.userId),
+    seatUserIds,
     {
       landed: { occurrenceId: args.occurrenceId },
       // Counted from its confirmation, so a flag ops cleared before it is raised again.
@@ -656,7 +717,11 @@ export async function onClassVoidConfirmed(
       hostAttributed: true,
     },
   );
-  return { ...exit, cancelEmailArgs: null };
+  return {
+    bells: [...notice.bells, ...exit.bells],
+    cancelEmailArgs: notice.cancelEmailArgs,
+    exitEmailArgs: exit.exitEmailArgs,
+  };
 }
 
 /**
@@ -777,13 +842,17 @@ const UTC_VIEWER: ViewerZone = { zone: UTC_ZONE, own: false };
 
 /**
  * Why a make-up cannot go at `startsAt`, one sentence per condition, or null.
- * The window closes 14 days after the session was cancelled or voided.
+ * The window closes 14 days after the session was cancelled or voided, or after
+ * the confirmation of a void whose verdict waited for one; before that confirmation
+ * it has not started, so the 14 days are counted from now.
  */
 export function makeUpWindowRefusal(args: {
   source: {
     completionStatus: OccurrenceCompletionStatus;
     hostCancelledAt: Date | null;
     voidedAt: Date | null;
+    outcome: OccurrenceOutcome | null;
+    outcomeConfirmedAt: Date | null;
     seatsSettledAt: Date | null;
   } | null;
   startsAt: Date;
@@ -799,9 +868,9 @@ export function makeUpWindowRefusal(args: {
   if (source.seatsSettledAt) {
     return "This session was already refunded, so it can no longer have a make-up.";
   }
-  const lostAt = missedAt(source);
+  const windowStart = makeUpWindowStart(source);
   const deadline = new Date(
-    (lostAt ?? now).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
+    (windowStart ?? now).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
   );
   if (!bypass && startsAt.getTime() > deadline.getTime()) {
     const by = formatForViewer(deadline, viewer, "EEE d MMM, h:mm a");
@@ -881,6 +950,8 @@ export async function scheduleClassMakeUp(
                 completionStatus: true,
                 hostCancelledAt: true,
                 voidedAt: true,
+                outcome: true,
+                outcomeConfirmedAt: true,
                 seatsSettledAt: true,
                 consultantProfileId: true,
               },
