@@ -251,6 +251,46 @@ it.each([
   },
 );
 
+it("a room too fresh to ask Stream is never parked, however old the session; a too-early answer after a read still ages into the park", async () => {
+  const now = hoursPastEnd(80);
+  const base = slot(60);
+  // Rejoined an hour before this run: Stream is not asked yet, so nothing is known.
+  const fresh = {
+    ...base,
+    meeting: {
+      ...base.meeting,
+      lastJoinedAt: new Date(now.getTime() - 3_600_000),
+    },
+  } as unknown as OutcomeSlot;
+  settle.mockResolvedValue({ kind: "too-early" });
+  expect(await decideSlotOutcome(fresh, { now, outages: [] })).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(transition).not.toHaveBeenCalled();
+
+  // The room was readable, so this too-early is Stream's own answer about a late session.
+  const asked = await decideSlotOutcome(base, { now, outages: [] });
+  expect(asked).not.toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+});
+
+it("a stored record answered after this run's own read was throttled still stops the run's Stream reads", async () => {
+  const stream = { throttled: false, deferred: 0 };
+  const ctx = { now: hoursPastEnd(80), outages: [], stream };
+  const first = slot(60);
+  settle.mockResolvedValueOnce({
+    kind: "settled",
+    intervals: stays(60),
+    throttled: true,
+  } as Settlement);
+  const decided = await decideSlotOutcome(first, ctx);
+  expect(decided.kind).not.toBe("deferred");
+  expect(stream).toEqual({ throttled: true, deferred: 0 });
+});
+
 it("after the first throttled read the run asks Stream nothing more: unsettled sessions wait, a stored record is still judged", async () => {
   const stream = { throttled: false, deferred: 0 };
   const ctx = { now: hoursPastEnd(80), outages: [], stream };

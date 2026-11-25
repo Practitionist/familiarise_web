@@ -38,9 +38,10 @@ export interface SettleTarget {
  * caller treats the session as undecided. `too-early`: the room's last known
  * activity is less than `ATTENDANCE_SETTLE_DELAY_MS` old, so a read now could miss a session.
  * `unavailable`: the Stream request failed, so nothing is known; `throttled` says Stream refused it for rate.
+ * `settled` carries `throttled` when this call's own read was refused for rate and another settler's snapshot answered.
  */
 export type AttendanceSettlement =
-  | { kind: "settled"; intervals: PresenceInterval[] }
+  | { kind: "settled"; intervals: PresenceInterval[]; throttled?: true }
   | { kind: "too-early" }
   | { kind: "not-final" }
   | { kind: "expired" }
@@ -100,7 +101,13 @@ export async function settleOccurrenceAttendance(
     deadlineAt: opts.deadlineAt,
   });
   if (read.kind !== "read" && read.kind !== "no-session") {
-    return settledMeanwhile(meeting.id, read);
+    const answer = await settledMeanwhile(meeting.id, read);
+    // Another settler's snapshot does not undo Stream's refusal of this read.
+    return answer.kind === "settled" &&
+      read.kind === "unavailable" &&
+      read.throttled
+      ? { ...answer, throttled: true }
+      : answer;
   }
   // A session Stream ended more recently than the room knew of gets the same wait.
   if (

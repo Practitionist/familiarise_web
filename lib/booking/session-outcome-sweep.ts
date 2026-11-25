@@ -244,8 +244,11 @@ async function slotEvidence(
     deadlineAt: ctx.settleDeadlineAt,
   });
   if (settled.kind === "settled") {
+    if (settled.throttled && ctx.stream) ctx.stream.throttled = true;
     return { kind: "intervals", intervals: settled.intervals };
   }
+  // A room too fresh to read was never asked, so it says nothing either.
+  if (settled.kind === "too-early" && !wouldReadStream) return { kind: "wait" };
   // A failed request, or a read cut short by this run's deadline, says nothing about the session: always try again.
   if (settled.kind === "unavailable") {
     if (settled.throttled && ctx.stream) {
