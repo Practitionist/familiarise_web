@@ -139,6 +139,14 @@ const SETTLED_OWED = {
   note: "settled by hand",
 };
 
+/** A failed hand refund's metadata after its settled ₹100 went back onto the live marker. */
+const GIVEN_BACK = {
+  settledOwed: SETTLED_OWED,
+  settledOwedRestored: true,
+  settledOwedRestoredPaise: 10_000,
+  settledOwedRestoredKey: "owed:pay_1",
+};
+
 /** A system event as the handler records it. */
 interface EventRow {
   severity?: string;
@@ -146,17 +154,39 @@ interface EventRow {
   context?: Record<string, unknown> | null;
 }
 
-const store: { refunds: RefundRow[]; events: EventRow[] } = {
-  refunds: [],
-  events: [],
+/** The payment's owed-refund marker columns. */
+type OwedMarker = Record<string, unknown> & {
+  refundOwedKey: string | null;
+  refundOwedPaise: number | null;
 };
+
+const store: { refunds: RefundRow[]; events: EventRow[]; marker: OwedMarker } =
+  {
+    refunds: [],
+    events: [],
+    marker: { refundOwedKey: null, refundOwedPaise: null },
+  };
 
 function resetStore() {
   store.refunds = [];
   store.events = [];
+  store.marker = { refundOwedKey: null, refundOwedPaise: null };
   PAYMENT_ROW.gatewayPaymentId = "pay_gateway_1";
   PAYMENT_ROW.paymentStatus = "SUCCEEDED";
 }
+
+const mockMoveMarker = jest.fn(
+  async ({ where, data }: { where: OwedMarker; data: Partial<OwedMarker> }) => {
+    if (
+      where.refundOwedKey !== store.marker.refundOwedKey ||
+      where.refundOwedPaise !== store.marker.refundOwedPaise
+    ) {
+      return { count: 0 };
+    }
+    Object.assign(store.marker, data);
+    return { count: 1 };
+  },
+);
 
 function txStub() {
   return {
@@ -182,6 +212,9 @@ function txStub() {
           return matches ? PAYMENT_ROW : null;
         },
       ),
+      // The owed-refund marker, read and moved by compare-and-set on what was read.
+      findUnique: jest.fn(async () => ({ ...store.marker })),
+      updateMany: mockMoveMarker,
     },
     creditNote: {
       findUnique: jest.fn(async () => null),
@@ -463,32 +496,39 @@ describe("handleRefundCreated status transition guard", () => {
       status: "FAILED",
       paymentId: "pay_1",
       amountPaise: 10_000,
-      // A hand refund whose settled owed amount was given back when it failed.
-      metadata: {
-        settledOwed: SETTLED_OWED,
-        settledOwedRestored: true,
-      },
+      // A hand refund whose settled ₹100 was given back to the marker when it failed.
+      metadata: GIVEN_BACK,
     });
+    // The marker owes exactly what was given back.
+    store.marker = { refundOwedKey: "owed:pay_1", refundOwedPaise: 10_000 };
+    const deliver = () =>
+      handleRefundCreated(
+        "rfnd_late",
+        "order_1",
+        10_000,
+        "INR",
+        "processed",
+        "pay_gateway_1",
+        { reservationId: "row_1" },
+      );
 
-    await handleRefundCreated(
-      "rfnd_late",
-      "order_1",
-      10_000,
-      "INR",
-      "processed",
-      "pay_gateway_1",
-      { reservationId: "row_1" },
-    );
+    await deliver();
+    await deliver();
 
     expect(store.refunds).toEqual([
       expect.objectContaining({
         id: "row_1",
         refundId: "rfnd_late",
         status: "SUCCEEDED",
-        // The late success takes the given-back owed refund off again, once.
         metadata: expect.objectContaining({ settledOwedResettled: true }),
       }),
     ]);
+    // The late success clears the marker it had refilled, once; the replay moves nothing.
+    expect(store.marker).toMatchObject({
+      refundOwedKey: null,
+      refundOwedPaise: null,
+    });
+    expect(mockMoveMarker).toHaveBeenCalledTimes(1);
     expect(applyRefundCascade).toHaveBeenCalledTimes(1);
     expect(applyRefundCascade).toHaveBeenCalledWith(
       expect.anything(),
@@ -503,8 +543,10 @@ describe("handleRefundCreated status transition guard", () => {
       status: "FAILED",
       paymentId: "pay_1",
       amountPaise: 10_000,
-      metadata: { settledOwed: SETTLED_OWED, settledOwedRestored: true },
+      metadata: GIVEN_BACK,
     });
+    // The marker owes ₹250, of which this refund's ₹100 was given back.
+    store.marker = { refundOwedKey: "owed:pay_1", refundOwedPaise: 25_000 };
     const deliver = (status: string) =>
       handleRefundCreated(
         "rfnd_late",
@@ -526,9 +568,18 @@ describe("handleRefundCreated status transition guard", () => {
       }),
     ]);
     expect(applyRefundCascade).not.toHaveBeenCalled();
+    // Still in flight: the owed refund is untouched.
+    expect(store.marker.refundOwedPaise).toBe(25_000);
 
     await deliver("processed");
     await deliver("processed");
+
+    // The success takes the ₹100 off, once; the replay moves nothing.
+    expect(store.marker).toEqual({
+      refundOwedKey: "owed:pay_1",
+      refundOwedPaise: 15_000,
+    });
+    expect(mockMoveMarker).toHaveBeenCalledTimes(1);
 
     expect(store.refunds).toEqual([
       expect.objectContaining({
