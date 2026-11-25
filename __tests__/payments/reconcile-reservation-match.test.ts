@@ -356,6 +356,34 @@ describe("reconcilePendingRefunds placeholder matching", () => {
     );
   });
 
+  test("a same-amount gateway refund whose reservation note is empty names no reservation and is never failed over", async () => {
+    for (const reservationId of ["", "  "]) {
+      jest.clearAllMocks();
+      refundTable.findMany
+        .mockResolvedValueOnce([placeholderRow({ ageHours: 30 })])
+        .mockResolvedValueOnce([]);
+      mockList.mockResolvedValueOnce([
+        {
+          refundId: "rfnd_a",
+          amount: 10_000,
+          status: "processed",
+          metadata: { reservationId },
+        },
+      ]);
+
+      const result = await reconcilePendingRefunds();
+
+      expect(refundTable.updateMany).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ reconciledCount: 0, failedCount: 0 });
+      expect(mockStanding).toHaveBeenCalledWith(
+        expect.objectContaining({
+          key: "reconcile-pending-refunds:ambiguous",
+          ids: ["res_1"],
+        }),
+      );
+    }
+  });
+
   test("the search pages past a full first page and binds the reservation on the second", async () => {
     refundTable.findMany
       .mockResolvedValueOnce([placeholderRow({ ageHours: 30 })])

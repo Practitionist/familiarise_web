@@ -186,11 +186,14 @@ async function searchReservedRefund(refund: {
     );
     const match = items.find((gr) => gr.metadata?.reservationId === refund.id);
     if (match) return { match, unclaimedSameAmount, complete: false };
-    unclaimedSameAmount += items.filter(
-      (gr) =>
+    // An absent, empty or blank note names no reservation, so it claims nothing.
+    unclaimedSameAmount += items.filter((gr) => {
+      const noted = gr.metadata?.reservationId;
+      return (
         gr.amount === refund.amountPaise &&
-        typeof gr.metadata?.reservationId !== "string",
-    ).length;
+        (typeof noted !== "string" || noted.trim() === "")
+      );
+    }).length;
     if (items.length < REFUND_LIST_PAGE_SIZE) {
       return { match: null, unclaimedSameAmount, complete: true };
     }
