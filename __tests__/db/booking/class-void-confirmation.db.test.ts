@@ -170,12 +170,23 @@ it("ops relabelling an unconfirmed host void to an outage counts the miss and se
     },
   });
   mockFlush.mockClear();
+  const relabelledFrom = new Date();
 
   await overturnSessionOutcome({
     occurrenceId: third,
     outcome: "PLATFORM_OUTAGE",
     actorUserId: (await seedConsultee()).userId,
   });
+
+  // The void waited for a confirmation, so its 14 days now count from the relabel: the sweep leaves it.
+  const relabelled = await prisma.appointmentOccurrence.findUniqueOrThrow({
+    where: { id: third },
+    select: { voidedAt: true, outcomeConfirmedAt: true },
+  });
+  expect(relabelled.outcomeConfirmedAt).toBeNull();
+  expect(relabelled.voidedAt!.getTime()).toBeGreaterThanOrEqual(
+    relabelledFrom.getTime(),
+  );
 
   expect(await seriesLedger(prisma, cls.appointmentId)).toMatchObject({
     misses: 3,

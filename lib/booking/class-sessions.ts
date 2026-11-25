@@ -576,7 +576,7 @@ export async function onClassSessionVoided(
   const seatUserIds = seats.map((s) => s.userId);
   const voided = await tx.appointmentOccurrence.findUnique({
     where: { id: args.occurrenceId },
-    select: { outcome: true, outcomeConfirmedAt: true },
+    select: { outcome: true, outcomeConfirmedAt: true, voidedAt: true },
   });
   const awaitsConfirmation =
     isNegativeMoneyOutcome(voided?.outcome ?? null) &&
@@ -589,7 +589,8 @@ export async function onClassSessionVoided(
       appointmentId: args.appointmentId,
       occurrenceId: args.occurrenceId,
       startsAt: args.startsAt,
-      windowStart: args.voidedAt,
+      // The row's own window start, which a relabel of an already confirmed void keeps.
+      windowStart: (voided && makeUpWindowStart(voided)) ?? args.voidedAt,
       seatUserIds,
       planTitle: cls.classPlan.title,
       hostName: cls.classPlan.consultantProfile?.user.name ?? "Your host",

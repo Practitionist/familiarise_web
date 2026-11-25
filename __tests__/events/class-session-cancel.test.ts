@@ -80,6 +80,8 @@ const db = {
   lastMissVoid: null as string | null,
   /** The voided session's verdict still waits for its confirmation. */
   voidUnconfirmed: false,
+  /** When the voided session's verdict was confirmed; null is "as written". */
+  voidConfirmedAt: null as Date | null,
   flagged: null as Record<string, unknown> | null,
   /** The plan's team, as the recipients helper reads it. */
   team: [] as string[],
@@ -97,8 +99,11 @@ jest.mock("../../lib/prisma", () => {
       // The voided session as written: an ops verdict, confirmed when written, unless the case says otherwise.
       findUnique: async () => ({
         startsAt: new Date("2026-11-01T04:30:00Z"),
+        voidedAt: new Date("2026-11-01T12:00:00Z"),
         outcome: db.lastMissVoid,
-        outcomeConfirmedAt: db.voidUnconfirmed ? null : new Date(),
+        outcomeConfirmedAt: db.voidUnconfirmed
+          ? null
+          : (db.voidConfirmedAt ?? new Date()),
       }),
       findMany: async () => occurrences(db.misses),
       findFirst: async () => ({
@@ -188,6 +193,7 @@ beforeEach(() => {
   db.missGapDays = 0;
   db.lastMissVoid = null;
   db.voidUnconfirmed = false;
+  db.voidConfirmedAt = null;
   db.flagged = null;
   db.team = [];
   db.sourceProfile = null;
@@ -466,6 +472,31 @@ it("a void awaiting its confirmation promises seat holders no make-up date; the 
     appointmentId: "apt-1",
     userIds: ["u-1"],
   });
+});
+
+it("a relabel of a void confirmed earlier names the make-up date its window already had, not 14 days from the relabel", async () => {
+  db.lastMissVoid = "CUT_SHORT";
+  db.voidConfirmedAt = new Date("2026-11-21T04:30:00Z");
+  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell") as {
+    stageBell: jest.Mock;
+  };
+
+  await prisma.$transaction((tx) =>
+    onClassSessionVoided(tx, {
+      appointmentId: "apt-1",
+      occurrenceId: "occ-3",
+      startsAt: new Date("2026-11-01T04:30:00Z"),
+      voidedAt: new Date("2026-11-28T04:30:00Z"),
+      hostAttributed: true,
+      relabelled: true,
+    }),
+  );
+
+  const toSeats = stageBell.mock.calls
+    .map(([, bell]) => bell)
+    .filter((bell) => bell.dedupeKey === "occ-void:occ-3");
+  // 21 Nov plus 14 days, not 28 Nov plus 14.
+  expect(toSeats[0].payload.makeUpBy).toContain("5 Dec");
 });
 
 it("refuses a make-up onto host time any other booking holds, and takes the host's atoms first", async () => {

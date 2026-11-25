@@ -57,10 +57,12 @@ jest.mock("../../lib/booking/consultant-no-show", () => ({
 import prisma, { type Tx } from "@/lib/prisma";
 import { matchesWhere, type memTable, type Row } from "../fixtures/mem-db";
 import {
+  makeUpWindowStart,
   needsHumanWhere,
   OUTCOME_REPORT_WINDOW_HOURS,
   UNCONFIRMED_LEARNER_ABSENT,
   unconfirmedClosedVerdictWhere,
+  voidWindowStartedBefore,
 } from "@/lib/booking/misses";
 import { confirmClosedOutcomes } from "@/lib/booking/session-outcome-sweep";
 import {
@@ -813,6 +815,108 @@ describe("ops set-outcome", () => {
       }),
     ).rejects.toMatchObject({ code: "SESSION_MOVED" });
     expect(row("a").outcome).toBe("HOST_ABSENT");
+  });
+
+  const relabelVoid = async (
+    from: Row,
+    outcome: "PLATFORM_OUTAGE" | "CUT_SHORT",
+  ) => {
+    occurrences.rows.push(
+      verdict("a", { completionStatus: "VOIDED", ordinal: 1, ...from }),
+    );
+    await setSessionOutcome(tx, {
+      occurrenceId: "a",
+      outcome,
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    return row("a");
+  };
+
+  it("relabelling a void that waited for its confirmation to an outage starts its 14 days at the relabel", async () => {
+    // Voided 4 days ago as expert absent, never confirmed.
+    const relabelled = await relabelVoid(
+      {
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+        outcomeAt: hoursAgo(96),
+      },
+      "PLATFORM_OUTAGE",
+    );
+    expect(relabelled).toMatchObject({
+      outcome: "PLATFORM_OUTAGE",
+      outcomeConfirmedAt: null,
+      voidedAt: NOW,
+    });
+    expect(makeUpWindowStart(relabelled)).toEqual(NOW);
+    // The settle sweep's own test of the window agrees: not over until 14 days after the relabel.
+    expect(matchesWhere(relabelled, voidWindowStartedBefore(NOW))).toBe(false);
+    expect(
+      matchesWhere(relabelled, voidWindowStartedBefore(hoursAgo(-1))),
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      "a confirmed void relabelled to an outage",
+      {
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+        outcomeConfirmedAt: hoursAgo(48),
+      },
+      "PLATFORM_OUTAGE",
+      hoursAgo(48),
+    ],
+    [
+      "a confirmed void relabelled to another host-attributed outcome",
+      {
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+        outcomeConfirmedAt: hoursAgo(48),
+      },
+      "CUT_SHORT",
+      hoursAgo(48),
+    ],
+    [
+      "an outage void, which never waited, relabelled to a host-attributed outcome",
+      { outcome: "PLATFORM_OUTAGE", voidedAt: hoursAgo(96) },
+      "CUT_SHORT",
+      hoursAgo(96),
+    ],
+  ] as const)(
+    "%s keeps its make-up window",
+    async (_label, from, to, start) => {
+      const relabelled = await relabelVoid(from, to);
+      expect(relabelled.outcome).toBe(to);
+      expect(makeUpWindowStart(relabelled)).toEqual(start);
+    },
+  );
+
+  it("refuses a relabel when another relabel changed the outcome between its read and its write, whatever the stamp", async () => {
+    occurrences.rows.push(
+      verdict("a", {
+        completionStatus: "VOIDED",
+        ordinal: 1,
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+      }),
+    );
+    const read = occurrences.findUnique.getMockImplementation()!;
+    occurrences.findUnique.mockImplementationOnce(async (args) => {
+      const stale = await read(args);
+      // Another operator relabels it to an outage, which leaves the stamp null.
+      row("a").outcome = "PLATFORM_OUTAGE";
+      return stale;
+    });
+    await expect(
+      setSessionOutcome(tx, {
+        occurrenceId: "a",
+        outcome: "CUT_SHORT",
+        actorUserId: "ops-1",
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_MOVED" });
+    expect(row("a").outcome).toBe("PLATFORM_OUTAGE");
   });
 
   const expertAbsent = (occurrenceId = "a") =>

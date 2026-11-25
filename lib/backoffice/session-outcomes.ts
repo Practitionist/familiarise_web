@@ -54,6 +54,7 @@ import { INCIDENT_REFUND_KEY_PREFIX } from "@/lib/booking/incident-keys";
 import {
   isAgedNeedsHuman,
   isNegativeMoneyOutcome,
+  makeUpWindowStart,
   needsHumanWhere,
   PROPOSED_CONSULTANT_NO_SHOW,
   reportWindowClosesAt,
@@ -129,6 +130,7 @@ const OVERTURN_SELECT = {
   completionStatus: true,
   outcome: true,
   outcomeConfirmedAt: true,
+  voidedAt: true,
   seatsSettledAt: true,
   deletedAt: true,
   isTentative: true,
@@ -200,7 +202,26 @@ const confirmedByOps = (outcome: OccurrenceOutcome, now: Date) =>
 
 type ClassVoidNotices = Awaited<ReturnType<typeof onClassSessionVoided>>;
 
-/** A relabel inside one status is not a status write; CAS on the status and the stamp read. */
+/**
+ * What a relabel writes besides the outcome. A void keeps the start of its 14-day make-up window:
+ * only one whose verdict was still waiting for a confirmation starts it now. The start lives in
+ * `outcomeConfirmedAt` for a negative outcome and in `voidedAt` for any other (`makeUpWindowStart`).
+ */
+function relabelStamps(
+  occ: OverturnRow,
+  outcome: OccurrenceOutcome,
+  now: Date,
+): { outcomeConfirmedAt: Date | null; voidedAt?: Date } {
+  if (occ.completionStatus !== "VOIDED") {
+    return { outcomeConfirmedAt: confirmedByOps(outcome, now) };
+  }
+  const windowStart = makeUpWindowStart(occ) ?? now;
+  return isNegativeMoneyOutcome(outcome)
+    ? { outcomeConfirmedAt: windowStart }
+    : { outcomeConfirmedAt: null, voidedAt: windowStart };
+}
+
+/** A relabel inside one status is not a status write; CAS on the status, the outcome and the stamp read. */
 async function relabel(
   tx: Tx,
   occ: OverturnRow,
@@ -208,16 +229,17 @@ async function relabel(
   now: Date,
 ): Promise<ClassVoidNotices | null> {
   const { count } = await tx.appointmentOccurrence.updateMany({
-    // A confirmation stamped since the read moves the session, so the miss is not counted twice.
+    // A confirmation or another relabel since the read moves the session, so the miss is not counted twice.
     where: {
       id: occ.id,
       completionStatus: occ.completionStatus,
+      outcome: occ.outcome,
       outcomeConfirmedAt: occ.outcomeConfirmedAt,
     },
     data: {
       outcome: args.outcome,
       outcomeAt: now,
-      outcomeConfirmedAt: confirmedByOps(args.outcome, now),
+      ...relabelStamps(occ, args.outcome, now),
     },
   });
   if (count === 0) {
