@@ -79,6 +79,7 @@ function makeTx(
 ) {
   const updateMany = jest.fn().mockResolvedValue({ count: 1 });
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     appointment: {
       findUnique: jest
         .fn()
@@ -119,6 +120,31 @@ function stampCall(updateMany: jest.Mock) {
     data: { holdUntil: Date };
   };
 }
+
+it.each([
+  ["a completion", settleSubscriptionCycle],
+  ["a void", unstampUndeliveredTranches],
+])(
+  "%s takes the plan's advisory lock as its first statement, then reads the sessions",
+  async (_label, write) => {
+    const { tx } = makeTx(completed(4));
+    const organizationEarnings = {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    await write({ ...tx, organizationEarnings } as never, {
+      appointmentId: "apt-1",
+      now: NOW,
+    });
+
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, key] = tx.$executeRaw.mock.calls[0] as [string[], string];
+    expect(sql.join("?")).toContain("pg_advisory_xact_lock(");
+    expect(key).toBe("plan-tranches:apt-1");
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.appointment.findUnique.mock.invocationCallOrder[0],
+    );
+  },
+);
 
 it("the 4th completion stamps tranche 0 only, anchored on that session's end plus the hold", async () => {
   const { tx, updateMany } = makeTx(completed(4));

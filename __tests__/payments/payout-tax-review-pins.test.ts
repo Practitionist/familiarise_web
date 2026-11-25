@@ -70,7 +70,7 @@ jest.mock("../../lib/storage/private-finance-object", () => ({
 }));
 
 import { RefundStatus } from "@prisma/client";
-import { REFUND_GATED_PAYMENT_WHERE } from "@/lib/payments/payouts/shared-lifecycle";
+import { MONEY_OWED_PAYMENT } from "@/scripts/earnings/release-earnings";
 import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import { runGstOutwardRegisterExport } from "@/jobs/compliance/gst-outward-register-export";
 import { txDouble } from "../fixtures/tx-double";
@@ -82,7 +82,7 @@ beforeEach(() => {
 });
 
 it("gates both payout rails on cash refunds only, never a credit restoration", () => {
-  const some = REFUND_GATED_PAYMENT_WHERE.refunds.some;
+  const some = MONEY_OWED_PAYMENT.refundInFlight.refunds.some;
   expect(some.amountPaise).toEqual({ gt: 0 });
   expect(some.status.notIn).toEqual([
     RefundStatus.FAILED,

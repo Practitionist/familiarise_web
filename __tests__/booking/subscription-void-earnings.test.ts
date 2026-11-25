@@ -73,6 +73,8 @@ describe("ops overturn to VOIDED on a plan", () => {
   });
   function txFor(planStatus: string) {
     return {
+      // The plan's advisory lock, taken before the void re-reads its sessions.
+      $executeRaw: async () => 1,
       appointment: {
         findUnique: async () => ({
           payment: [{ id: "pay-1" }],

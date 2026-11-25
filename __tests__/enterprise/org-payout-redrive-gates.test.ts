@@ -17,6 +17,7 @@ import {
 import { PAYOUT_ACCOUNT_COOLING_OFF_MS } from "../../lib/payments/payouts/payout-requirements";
 import { sanitizePayoutFailure } from "../../lib/dashboard/earnings-state";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
+import { matchesWhere } from "../fixtures/mem-db";
 
 type Row = Record<string, unknown>;
 type Where = Record<string, unknown>;
@@ -52,6 +53,8 @@ function strict<T extends object>(name: string, target: T): T {
 let mockPayouts: Row[];
 let mockEarnings: Row[];
 let mockDisputedPayments: Set<string>;
+/** Payments carrying an owed-refund marker and no refund row. */
+let mockOwedRefundPayments: Set<string>;
 /** Every status each payout has held, in order. */
 let mockStatusTrail: Record<string, string[]>;
 
@@ -130,7 +133,19 @@ const mockDb = strict("prisma", {
             ) ?? null
           );
         }
-        if (where.payment === REFUND_GATED_PAYMENT_WHERE) return null;
+        if (where.payment === REFUND_GATED_PAYMENT_WHERE) {
+          const paymentOf = (e: Row) => ({
+            refunds: [],
+            refundOwedKey: mockOwedRefundPayments.has(e.paymentId as string)
+              ? "cancel:appt_1"
+              : null,
+          });
+          return (
+            batch.find((e) =>
+              matchesWhere(paymentOf(e), REFUND_GATED_PAYMENT_WHERE),
+            ) ?? null
+          );
+        }
         throw new Error("organizationEarnings.findFirst: unmodelled predicate");
       },
     ),
@@ -278,6 +293,7 @@ beforeEach(() => {
   mockEarnings = [];
   mockStatusTrail = {};
   mockDisputedPayments = new Set();
+  mockOwedRefundPayments = new Set();
   getAccountBalance.mockResolvedValue(100_000_000);
   listPayouts.mockResolvedValue({ entity: "collection", items: [] });
   createPayout.mockResolvedValue({ id: "pout_1", status: "queued" });
@@ -325,6 +341,13 @@ describe("the re-drive reconciles and never sends", () => {
       "an open dispute on one of its payments",
       () => {
         mockDisputedPayments.add("op_1_pay_2");
+      },
+      "APPROVED",
+    ],
+    [
+      "an owed refund on one of its payments",
+      () => {
+        mockOwedRefundPayments.add("op_1_pay_2");
       },
       "APPROVED",
     ],

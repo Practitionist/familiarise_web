@@ -253,6 +253,9 @@ function fakeTx(opts: {
   const executeRaw = jest.fn(async () => opts.stampedRows ?? opts.seats.length);
   const systemEvent = jest.fn(async () => ({ id: "se" }));
   const tx = {
+    // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+    consultantEarnings: { findMany: jest.fn(async () => []) },
+    organizationEarnings: { findMany: jest.fn(async () => []) },
     payment: {
       findMany: jest.fn(async () =>
         opts.seats.map((s) => ({
