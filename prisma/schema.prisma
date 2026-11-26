@@ -382,6 +382,10 @@ model SupportCase {
   category        String?           @db.VarChar(64)
   flowKey         String?           @db.VarChar(64)
   currentNodeId   String?           @db.VarChar(64)
+  /// The no-show flow terminal's reason (SupportFlowReasonEnum); a reason that counts for a verdict is never replaced.
+  flowReason      String?           @db.VarChar(64)
+  /// When `flowReason` was answered; it moves only with the reason, and the report window is judged on it.
+  flowReasonAt    DateTime?         @db.Timestamptz
   activeChannel   SupportChannel    @default(SELF_SERVE)
   issueType       SupportIssueType?
   priority        SupportPriority   @default(MEDIUM)
@@ -467,6 +471,7 @@ model SupportCase {
   @@index([requesterUserId, status])
   @@index([submitterUserId])
   @@index([appointmentId, requesterUserId])
+  @@index([appointmentOccurrenceId])
   @@index([organizationId, status])
   @@index([assignedToId, status])
   @@index([status, lastMessageAt])
@@ -2315,7 +2320,7 @@ model OrganizationPayout {
   tdsRateAppliedBps Int?
   tdsFinancialYear  String?
   tdsAmountPaise    BigInt?
-  /// When this payout's TDS was fixed, at its first submission; the TDS record is filed under this date's financial year and quarter.
+  /// When this payout's TDS was fixed, at its first submission. Reserved: nothing writes or reads it yet.
   tdsDeductedAt     DateTime?           @db.Timestamptz
   mustPayByDate     DateTime?           @db.Timestamptz // derived from MSME 15/45-day rule
   // #781 §A — rail the batch was (or will be) submitted on.
@@ -2334,7 +2339,7 @@ model OrganizationPayout {
 
   payoutReference            String?
   failureReason              String?
-  /// Sends attempted after the first; the stuck-payout ceiling reads it, as on ConsultantPayout.
+  /// Sends attempted after the first. Reserved: nothing writes or reads it yet.
   retryCount                 Int       @default(0)
   processedAt                DateTime? @db.Timestamptz
   failedAt                   DateTime? @db.Timestamptz
@@ -6661,7 +6666,7 @@ model ConsultantPayout {
   netAmount         BigInt? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
   tdsRateAppliedBps Int? // #781 §C — bps; rate reserved for this payout, stamped into the final audit record
   tdsFinancialYear  String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
-  /// When this payout's TDS was fixed, at its first submission; the TDS record is filed under this date's financial year and quarter.
+  /// When this payout's TDS was fixed, at its first submission. Reserved: nothing writes or reads it yet.
   tdsDeductedAt     DateTime? @db.Timestamptz
   // 194-O threshold: the FY whose catch-up this payout took (one per expert per FY,
   // `consultant_payout_one_tds_catch_up_per_fy`), TDS carried to later payouts (+) or
@@ -7062,8 +7067,8 @@ model IdempotencyRecord {
   /// means a request is in flight; a concurrent duplicate gets a 409 rather
   /// than racing it.
   completedAt DateTime? @db.Timestamptz
-  /// Lease on an in-flight key: past this instant a retry may take the key over
-  /// by compare-and-set, so a killed request does not pin it until expiresAt.
+  /// Lease on an in-flight key. Reserved: nothing writes or reads it yet; the
+  /// claim still uses expiresAt.
   lockedUntil DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
