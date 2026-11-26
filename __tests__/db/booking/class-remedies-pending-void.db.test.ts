@@ -7,6 +7,22 @@
  * ops relabel it held, the leave and the cancel leave it out.
  */
 import "./harness-cancel-route";
+
+/** Delays the skip's next seat-ledger read, once: the last read before it judges the make-up's start. */
+const mockSlowLedger = { ms: 0 };
+jest.mock("../../../lib/booking/class-series", () => {
+  const actual = jest.requireActual("../../../lib/booking/class-series");
+  return {
+    ...actual,
+    seatLedger: async (...args: unknown[]) => {
+      const { ms } = mockSlowLedger;
+      mockSlowLedger.ms = 0;
+      if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+      return actual.seatLedger(...args);
+    },
+  };
+});
+
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import { leaveEventSeat } from "../../../lib/booking/seat-leave";
@@ -352,6 +368,25 @@ describe("a skip whose lock wait crosses the make-up's start", () => {
     await expect(skipped).rejects.toMatchObject({
       code: "MAKEUP_NOT_SKIPPABLE",
     });
+    expect(await refundedPaise(buyer.paymentId)).toBe(0);
+  });
+});
+
+describe("a skip whose own reads under the lock cross the make-up's start", () => {
+  it("refuses with MAKEUP_NOT_SKIPPABLE and refunds nothing", async () => {
+    const { host, cls, buyer, voidId } = await seedPendingVoid();
+    await confirmVoid(voidId);
+    await offerMakeUp(host, cls, voidId, 1_500);
+    // The lock is free; a read the skip awaits before it judges the make-up answers after the make-up began.
+    mockSlowLedger.ms = 2_500;
+
+    await expect(
+      skipClassMakeUp({
+        appointmentId: cls.appointmentId,
+        sourceOccurrenceId: voidId,
+        userId: buyer.userId,
+      }),
+    ).rejects.toMatchObject({ code: "MAKEUP_NOT_SKIPPABLE" });
     expect(await refundedPaise(buyer.paymentId)).toBe(0);
   });
 });

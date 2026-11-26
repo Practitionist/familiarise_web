@@ -1214,7 +1214,7 @@ export async function skipClassMakeUp(args: {
   /** #1771 — an ops door refunds on the learner's seat but names the operator. */
   initiatedByUserId?: string;
 }) {
-  // Every read, and the make-up's start against the time now, under the lock ops' outcome door takes.
+  // Every read under the lock ops' outcome door takes; the make-up's start is judged last, at its own read.
   return withAppointmentLock(args.appointmentId, () => skipUnderLock(args));
 }
 
@@ -1224,7 +1224,11 @@ async function skipUnderLock(args: {
   userId: string;
   initiatedByUserId?: string;
 }) {
-  const now = new Date();
+  const notSkippable = () =>
+    new BookingRuleError(
+      "MAKEUP_NOT_SKIPPABLE",
+      "This session has no upcoming make-up to skip, or you do not hold it.",
+    );
   const source = await prisma.appointmentOccurrence.findFirst({
     where: {
       id: args.sourceOccurrenceId,
@@ -1234,18 +1238,6 @@ async function skipUnderLock(args: {
     },
     select: { ordinal: true, startsAt: true },
   });
-  const makeUp = source
-    ? await prisma.appointmentOccurrence.findFirst({
-        where: {
-          appointmentId: args.appointmentId,
-          ordinal: source.ordinal,
-          deletedAt: null,
-          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
-          startsAt: { gt: now },
-        },
-        select: { id: true },
-      })
-    : null;
   const seat = await prisma.appointmentParticipant.findFirst({
     where: {
       appointmentId: args.appointmentId,
@@ -1273,12 +1265,7 @@ async function skipUnderLock(args: {
         },
       })
     : null;
-  if (!source || !makeUp || !seat || !payment) {
-    throw new BookingRuleError(
-      "MAKEUP_NOT_SKIPPABLE",
-      "This session has no upcoming make-up to skip, or you do not hold it.",
-    );
-  }
+  if (!source || !seat || !payment) throw notSkippable();
   const joinedAt = new Date(
     Math.max(payment.createdAt.getTime(), seat.createdAt.getTime()),
   );
@@ -1297,6 +1284,24 @@ async function skipUnderLock(args: {
     },
     payment.amount,
   );
+  const pending = await pendingVoidRefusal(prisma, {
+    appointmentId: args.appointmentId,
+    occurrenceId: args.sourceOccurrenceId,
+    readerUserId: args.userId,
+    action: "skip",
+  });
+  // The last read before the refund, against the time at this read: time moves while the lock is held and the reads above answer.
+  const makeUp = await prisma.appointmentOccurrence.findFirst({
+    where: {
+      appointmentId: args.appointmentId,
+      ordinal: source.ordinal,
+      deletedAt: null,
+      completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+      startsAt: { gt: new Date() },
+    },
+    select: { id: true },
+  });
+  if (!makeUp) throw notSkippable();
   if (ledger.unitPaise <= BigInt(0)) {
     // A credit-funded seat: the credits rail restores whole or not at all.
     await recordSystemErrorSafe({
@@ -1308,12 +1313,6 @@ async function skipUnderLock(args: {
     return { refundId: null, amountRefundedPaise: 0, rail: "CREDITS" as const };
   }
   const dedupeKey = occurrenceRefundKey(args.sourceOccurrenceId, payment.id);
-  const pending = await pendingVoidRefusal(prisma, {
-    appointmentId: args.appointmentId,
-    occurrenceId: args.sourceOccurrenceId,
-    readerUserId: args.userId,
-    action: "skip",
-  });
   if (pending) {
     throw new BookingRuleError("MAKEUP_SKIP_WAITS_FOR_VERDICT", pending);
   }
