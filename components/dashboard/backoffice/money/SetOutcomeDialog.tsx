@@ -37,7 +37,7 @@ export function SetOutcomeDialog({
       open
       onOpenChange={(o) => !o && onClose()}
       title="Set this session's outcome"
-      description={`A voided outcome owes the learner a make-up or a refund; a held or forfeit one does not. On a 1:1 consultation, "${SESSION_OUTCOME_LABEL.HOST_ABSENT}" records a strike for the expert and does one of two things. When every live session of the booking is expert absent, the booking is cancelled and refunded in full now. Otherwise this one session is voided: the expert has 14 days to make it up, and its share is refunded after that. Where neither fits, the door refuses and says why.`}
+      description={`A voided outcome owes the learner a make-up or a refund; a held or forfeit one does not. On a 1:1 consultation, "${SESSION_OUTCOME_LABEL.HOST_ABSENT}" records a strike for the expert and refunds the booking in full now. A booking still running, whose every live session is expert absent, is cancelled with that refund. A consultation that already completed, or whose session was already voided, is not cancelled: the session is voided and the booking is refunded in full now. An unpaid booking has nothing to refund, and a cancelled one keeps what its cancellation paid. Where none of these fits, the door refuses and says why.`}
       confirmLabel="Set outcome"
       pending={door.isPending}
       onConfirm={(reason) =>

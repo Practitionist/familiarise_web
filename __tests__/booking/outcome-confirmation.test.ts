@@ -51,6 +51,10 @@ jest.mock("../../lib/booking/consultant-no-show", () => ({
   readOperatorNoShowClaim: jest.fn(async () => ({
     claim: { consultationId: "cons-a" },
   })),
+  // No payment on record unless a case says so.
+  readSessionNoShow: jest.fn(async () => null),
+  oweSessionNoShowRefundTx: jest.fn(async () => ({ held: null })),
+  settleSessionNoShowRefund: jest.fn(async () => ({ refunded: true })),
   claimNoShowTx: jest.fn(async () => ({ held: null })),
   settleClaimedNoShow: jest.fn(async () => ({ refunded: true })),
 }));
@@ -60,6 +64,7 @@ import { matchesWhere, type memTable, type Row } from "../fixtures/mem-db";
 import {
   makeUpWindowStart,
   needsHumanWhere,
+  UNSETTLED_MISS,
   OUTCOME_REPORT_WINDOW_HOURS,
   UNCONFIRMED_LEARNER_ABSENT,
   unconfirmedClosedVerdictWhere,
@@ -76,9 +81,12 @@ import { onClassVoidConfirmed } from "@/lib/booking/class-sessions";
 import {
   claimNoShowTx,
   confirmConsultantNoShow,
+  oweSessionNoShowRefundTx,
   readNoShowClaim,
   readOperatorNoShowClaim,
+  readSessionNoShow,
   settleClaimedNoShow,
+  settleSessionNoShowRefund,
 } from "@/lib/booking/consultant-no-show";
 
 type Table = ReturnType<typeof memTable>;
@@ -979,18 +987,97 @@ describe("ops set-outcome", () => {
       ...overrides,
     });
 
+  const REFUND = {
+    consultationId: "cons-a",
+    occurrenceId: "a",
+    payment: { id: "pay-a", currency: "INR" },
+  };
+  const paidSingleSession = (status: "COMPLETED" | "APPROVED" | "CANCELLED") =>
+    jest.mocked(readSessionNoShow).mockResolvedValueOnce({
+      status,
+      otherSessions: 0,
+      refund: REFUND,
+    } as never);
+
   it.each([
-    ["an unpaid booking", { reason: "UNPAID" }],
     [
-      "a paid booking no longer approved whose only session this is",
+      "a completed, paid, single-session consultation",
+      parked({ completionStatus: "COMPLETED", outcome: "HELD" }),
       {
         reason: "NOT_APPROVED",
         status: "COMPLETED",
         paid: true,
         otherSessions: 0,
       },
+      "COMPLETED",
+    ],
+    [
+      "a consultation session already voided as cut short",
+      parked({
+        completionStatus: "VOIDED",
+        outcome: "CUT_SHORT",
+        voidedAt: hoursAgo(50),
+        outcomeConfirmedAt: hoursAgo(2),
+      }),
+      null,
+      "APPROVED",
     ],
   ] as const)(
+    "expert absent on %s owes the full refund in the door's transaction, settles the session so the day-14 sweep never refunds it, and drives the refund after the commit",
+    async (_label, session, bar, status) => {
+      occurrences.rows.push(session);
+      if (bar) {
+        jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({ bar });
+      }
+      paidSingleSession(status);
+
+      const result = await expertAbsent();
+
+      expect(row("a")).toMatchObject({
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+        // Settled with the owed refund: the sweep's cohort and the earnings-holding miss both need this null.
+        seatsSettledAt: NOW,
+      });
+      expect(matchesWhere(row("a"), UNSETTLED_MISS)).toBe(false);
+      expect(oweSessionNoShowRefundTx).toHaveBeenCalledWith(tx, REFUND);
+      expect(strikes.rows).toHaveLength(1);
+      // The booking is not cancelled: the whole-booking claim did not run.
+      expect(claimNoShowTx).not.toHaveBeenCalled();
+      expect(settleSessionNoShowRefund).not.toHaveBeenCalled();
+      await result.afterCommit?.();
+      expect(settleSessionNoShowRefund).toHaveBeenCalledWith(
+        REFUND,
+        null,
+        expect.anything(),
+      );
+    },
+  );
+
+  it("expert absent on a session of a cancelled booking records the strike and owes nothing more: what the cancel paid stands", async () => {
+    occurrences.rows.push(parked());
+    jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({
+      bar: {
+        reason: "NOT_APPROVED",
+        status: "CANCELLED",
+        paid: true,
+        otherSessions: 0,
+      },
+    });
+    paidSingleSession("CANCELLED");
+
+    const result = await expertAbsent();
+
+    expect(row("a")).toMatchObject({
+      completionStatus: "VOIDED",
+      seatsSettledAt: null,
+    });
+    expect(strikes.rows).toHaveLength(1);
+    expect(oweSessionNoShowRefundTx).not.toHaveBeenCalled();
+    expect(result.afterCommit).toBeUndefined();
+  });
+
+  it.each([["an unpaid booking", { reason: "UNPAID" }]] as const)(
     "expert absent on %s voids this one session, confirmed as written, with one strike and no claim",
     async (_label, bar) => {
       occurrences.rows.push(parked());

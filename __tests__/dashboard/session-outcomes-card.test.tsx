@@ -134,7 +134,7 @@ it("sends whitelisted sorts and pages, names the people and the door, and opens 
   expect(onOpenBooking).toHaveBeenCalledWith("apt-1");
 });
 
-it("the Set outcome dialog names both expert-absent remedies on a 1:1 consultation: the whole booking cancelled and refunded, or this one session voided", async () => {
+it("the Set outcome dialog says expert absent on a 1:1 consultation refunds in full now, a completed consultation included", async () => {
   renderCard();
   fireEvent.click(
     (
@@ -145,7 +145,7 @@ it("the Set outcome dialog names both expert-absent remedies on a 1:1 consultati
   );
   expect(
     await screen.findByText(
-      /On a 1:1 consultation, "Host never joined" records a strike for the expert.*every live session of the booking is expert absent, the booking is cancelled and refunded in full now\. Otherwise this one session is voided: the expert has 14 days to make it up, and its share is refunded after that/,
+      /On a 1:1 consultation, "Host never joined" records a strike for the expert and refunds the booking in full now\..*A consultation that already completed, or whose session was already voided, is not cancelled: the session is voided and the booking is refunded in full now/,
     ),
   ).toBeTruthy();
 });

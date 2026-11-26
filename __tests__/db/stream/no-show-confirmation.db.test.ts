@@ -12,6 +12,7 @@ import {
 } from "../../../lib/booking/consultant-no-show";
 import { IllegalTransitionError } from "../../../lib/enterprise/transitions";
 import { overturnSessionOutcome } from "../../../lib/backoffice/session-outcomes";
+import { settleCancelledSessionForOne } from "../../../scripts/appointments/settle-cancelled-sessions";
 import { detectConsultantNoShows } from "../../../scripts/appointments/detect-consultant-no-shows";
 import { createOrReuseSupportCase } from "../../../lib/support/case-service";
 import { intakeFor } from "../seed";
@@ -364,6 +365,59 @@ it("ops Set outcome expert absent on an unpaid consultation voids the one sessio
       where: { payment: { appointmentId: room.appointmentId } },
     }),
   ).toBe(0);
+});
+
+it("ops Set outcome expert absent on a completed, paid consultation refunds it in full at once under its own key, strikes once, and the day-14 sweep then finds nothing to refund", async () => {
+  const room = await seedConsultationRoom(14, { paid: true });
+  // The session was written held and the booking auto-completed; the learner then reports the expert never came.
+  await prisma.appointmentOccurrence.update({
+    where: { id: room.occurrenceId },
+    data: {
+      completionStatus: "COMPLETED",
+      outcome: "HELD",
+      outcomeAt: new Date(),
+    },
+  });
+  await prisma.consultation.update({
+    where: { id: room.consultationId! },
+    data: { status: "COMPLETED" },
+  });
+
+  const result = await overturnSessionOutcome({
+    occurrenceId: room.occurrenceId,
+    outcome: "HOST_ABSENT",
+    actorUserId: room.learnerId,
+  });
+
+  expect(result.after).toEqual({
+    completionStatus: "VOIDED",
+    outcome: "HOST_ABSENT",
+  });
+  const key = `expert-absent:${room.occurrenceId}:pay:${room.payment!.id}`;
+  expect(await moneyOf(room)).toMatchObject({
+    // Refunded, not cancelled.
+    status: "COMPLETED",
+    refunds: [{ dedupeKey: key, amountPaise: 100_000 }],
+    strikes: 1,
+    session: { completionStatus: "VOIDED" },
+    refundOwedKey: null,
+  });
+  const settled = await prisma.appointmentOccurrence.findUniqueOrThrow({
+    where: { id: room.occurrenceId },
+    select: { seatsSettledAt: true },
+  });
+  expect(settled.seatsSettledAt).not.toBeNull();
+
+  // Fifteen days on, the session is outside the sweep's cohort and no second refund is written.
+  const longAgo = new Date(Date.now() - 15 * 24 * HOUR);
+  await prisma.appointmentOccurrence.update({
+    where: { id: room.occurrenceId },
+    data: { voidedAt: longAgo, outcomeConfirmedAt: longAgo },
+  });
+  expect((await settleCancelledSessionForOne(room.occurrenceId)).scanned).toBe(
+    0,
+  );
+  expect((await moneyOf(room)).refunds).toHaveLength(1);
 });
 
 /** A declared incident over the room's booked hour, removed with its remedies afterwards so no other suite sees it. */

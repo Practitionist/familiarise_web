@@ -65,11 +65,15 @@ import {
   claimNoShowTx,
   NoShowDuringOutageError,
   readNoShowClaim,
+  oweSessionNoShowRefundTx,
   readOperatorNoShowClaim,
+  readSessionNoShow,
   settleClaimedNoShow,
+  settleSessionNoShowRefund,
   type NoShowClaim,
   type NoShowClaimBar,
   type NoShowSibling,
+  type SessionNoShowRefund,
 } from "@/lib/booking/consultant-no-show";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import { readOverlappingOutages } from "@/lib/booking/outage-windows";
@@ -477,11 +481,30 @@ async function parkAsNoShowProposal(
 type SessionStrike = Parameters<typeof recordExpertStrike>[1];
 
 /**
+ * Who is refunded in full now for this one session, or null. A paid consultation whose only session
+ * this is, completed or still approved, has no make-up to wait for. A cancelled booking keeps what
+ * its cancel paid, and a void whose refund already moved owes nothing more.
+ */
+async function sessionRefundNow(
+  tx: Tx,
+  occ: OverturnRow,
+): Promise<SessionNoShowRefund | null> {
+  if (occ.seatsSettledAt) return null;
+  const session = await readSessionNoShow(tx, occ.id);
+  return session &&
+    session.otherSessions === 0 &&
+    (session.status === "COMPLETED" || session.status === "APPROVED")
+    ? session.refund
+    : null;
+}
+
+/**
  * Expert absent on a consultation, decided by an operator. Where every live session is expert
  * absent the no-show claim cancels the booking, owes the full refund and writes the strike in this
  * transaction (`claimed`). Otherwise this one session is voided by the door's own void path with a
- * strike (`session`): unpaid, a booking no longer approved, or a session already voided. The strike
- * is null for a session already confirmed expert absent, whose strike that write recorded.
+ * strike (`session`): unpaid, a booking no longer approved, or a session already voided; `refund`
+ * names who is then refunded in full at once. The strike is null for a session already confirmed
+ * expert absent, whose strike that write recorded.
  */
 async function decideConsultationNoShow(
   tx: Tx,
@@ -500,7 +523,11 @@ async function decideConsultationNoShow(
         afterCommit: () => Promise<void>;
       };
     }
-  | { kind: "session"; strike: SessionStrike | null }
+  | {
+      kind: "session";
+      strike: SessionStrike | null;
+      refund: SessionNoShowRefund | null;
+    }
 > {
   const consultantProfileId =
     occ.appointment.consultation?.consultationPlan.consultantProfileId;
@@ -516,17 +543,17 @@ async function decideConsultationNoShow(
   };
   if (occ.completionStatus === "VOIDED") {
     if (occ.outcome === "HOST_ABSENT" && occ.outcomeConfirmedAt !== null) {
-      return { kind: "session", strike: null };
+      return { kind: "session", strike: null, refund: null };
     }
     await refuseDuringOutage(tx, occ);
-    return { kind: "session", strike };
+    return { kind: "session", strike, refund: await sessionRefundNow(tx, occ) };
   }
   const judged = await readOperatorNoShowClaim(tx, occ.id);
   if ("bar" in judged) {
     const refusal = sessionVoidRefusal(judged.bar, now);
     if (refusal) throw refusal;
     await refuseDuringOutage(tx, occ);
-    return { kind: "session", strike };
+    return { kind: "session", strike, refund: await sessionRefundNow(tx, occ) };
   }
   await parkAsNoShowProposal(tx, occ, args, now);
   const afterCommit = await runNoShowClaim(
@@ -548,6 +575,35 @@ async function decideConsultationNoShow(
   };
 }
 
+/**
+ * Owes the booking's full refund in the door's transaction and settles the voided session with it,
+ * so the day-14 sweep's cohort (`seatsSettledAt: null`) never holds it. Answers the drive to run
+ * after the commit; the owed marker is durable, so the owed-refund sweep retries a lost drive.
+ */
+async function oweSessionRefund(
+  tx: Tx,
+  occ: OverturnRow,
+  refund: SessionNoShowRefund,
+  now: Date,
+): Promise<() => Promise<void>> {
+  const { held } = await oweSessionNoShowRefundTx(tx, refund);
+  const { count } = await tx.appointmentOccurrence.updateMany({
+    where: { id: occ.id, completionStatus: "VOIDED", seatsSettledAt: null },
+    data: { seatsSettledAt: now },
+  });
+  if (count === 0) {
+    throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+  }
+  return async () => {
+    const failures = createRunFailureReporter("admin");
+    try {
+      await settleSessionNoShowRefund(refund, held, { errors: [], failures });
+    } finally {
+      failures.flush();
+    }
+  };
+}
+
 /** Overturn one past session's outcome; the status follows the outcome. */
 export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   const now = args.now ?? new Date();
@@ -557,10 +613,11 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   });
   assertDecided(occ, now);
   let strike: SessionStrike | null = null;
+  let refund: SessionNoShowRefund | null = null;
   if (args.outcome === "HOST_ABSENT" && occ.appointment.consultation) {
     const decided = await decideConsultationNoShow(tx, occ, args, now);
     if (decided.kind === "claimed") return decided.result;
-    ({ strike } = decided);
+    ({ strike, refund } = decided);
   }
   const to = COMPLETION_FOR_OUTCOME[args.outcome];
   // #1834 — the door's fromIn is the row's own status, so the map is asked here.
@@ -609,12 +666,15 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   // Once per session: the write above is a compare-and-set on the status, outcome and stamp read,
   // and a session read as already confirmed expert absent carries no strike to write.
   if (strike) await recordExpertStrike(tx, strike);
+  const driveRefund = refund
+    ? await oweSessionRefund(tx, occ, refund, now)
+    : null;
   return {
     before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
     after: { completionStatus: to, outcome: args.outcome },
-    // The class void's and the cancelled make-up's notices, sent once the caller's transaction commits.
+    // The class void's and the cancelled make-up's notices and the owed refund's drive, once the caller's transaction commits.
     afterCommit:
-      voided || makeUp?.bells.length
+      voided || makeUp?.bells.length || driveRefund
         ? async () => {
             if (voided) await flushClassVoidNotices(voided);
             if (makeUp?.bells.length) {
@@ -623,6 +683,7 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
                 "session.set-outcome.make-up-cancelled",
               );
             }
+            await driveRefund?.();
           }
         : undefined,
   };

@@ -127,8 +127,12 @@ import prisma from "../../lib/prisma";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
 import {
   confirmConsultantNoShow,
+  noShowRefundOwed,
+  oweSessionNoShowRefundTx,
   readNoShowClaim,
   readOperatorNoShowClaim,
+  readSessionNoShow,
+  settleSessionNoShowRefund,
 } from "../../lib/booking/consultant-no-show";
 import { createRunFailureReporter } from "../../lib/observability/run-failures";
 import { SWEEP_START_DEADLINE_MS } from "../../lib/cron/run-deadline";
@@ -639,6 +643,70 @@ describe("consultant no-show refunds", () => {
       held.status = "COMPLETED";
       expect(await judge(held)).toMatchObject({
         bar: { reason: "NOT_APPROVED", paid: true, otherSessions: 1 },
+      });
+    });
+  });
+
+  describe("a booking refunded in full for one session's expert absence, without being cancelled", () => {
+    const completed = () => {
+      const row = proposedClaimRow({ id: "pay-1" });
+      row.status = "COMPLETED";
+      Object.assign(row.appointment.occurrences[0], {
+        completionStatus: "COMPLETED",
+        outcome: "HELD",
+      });
+      (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(row);
+      return row;
+    };
+
+    it("owes the full balance under a key of its own, drives it through the front door and tells the learner, cancelling nothing", async () => {
+      completed();
+      const session = await readSessionNoShow(prisma, "occ-1");
+      expect(session).toMatchObject({
+        status: "COMPLETED",
+        otherSessions: 0,
+        refund: { occurrenceId: "occ-1", payment: { id: "pay-1" } },
+      });
+
+      const { held } = await oweSessionNoShowRefundTx(
+        prisma as never,
+        session!.refund!,
+      );
+
+      const key = "expert-absent:occ-1:pay:pay-1";
+      // Neither the whole-booking claim's key nor the day-14 sweep's per-session key.
+      expect(key).not.toBe(noShowRefundOwed("pay-1").key);
+      expect(key.startsWith("occ:")).toBe(false);
+      expect(prisma.payment.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            refundOwedKey: key,
+            refundOwedPaise: null,
+          }),
+        }),
+      );
+      expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+
+      const settled = await settleSessionNoShowRefund(session!.refund!, held, {
+        errors: [],
+        failures: createRunFailureReporter("admin"),
+      });
+      expect(settled).toEqual({ refunded: true });
+      expect(refundBookingPayment).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentId: "pay-1", dedupeKey: key }),
+      );
+    });
+
+    it("counts the booking's other standing sessions and answers no refund party for an unpaid booking", async () => {
+      const row = completed();
+      row.appointment.payment = [];
+      row.appointment.occurrences.push({
+        ...row.appointment.occurrences[0],
+        id: "occ-2",
+      });
+      expect(await readSessionNoShow(prisma, "occ-1")).toMatchObject({
+        otherSessions: 1,
+        refund: null,
       });
     });
   });

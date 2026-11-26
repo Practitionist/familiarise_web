@@ -372,6 +372,94 @@ export async function readOperatorNoShowClaim(
     : { bar: { reason: "BOOKING_MISSING" } };
 }
 
+/** A booking refunded in full for one session's expert absence without being cancelled: who is paid back and told. */
+export interface SessionNoShowRefund {
+  consultationId: string;
+  occurrenceId: string;
+  organizationId: string | null;
+  consulteeUserId: string;
+  consultantName: string;
+  planTitle: string;
+  payment: { id: string; currency: string };
+}
+
+/**
+ * The booking behind one session, as the ops door's session-level remedy reads it: its status, how
+ * many other sessions stand, and who a full refund goes to (null when nothing was paid).
+ */
+export async function readSessionNoShow(
+  db: Pick<Tx, "consultation">,
+  occurrenceId: string,
+): Promise<{
+  status: AppointmentStatus;
+  otherSessions: number;
+  refund: SessionNoShowRefund | null;
+} | null> {
+  const row = await db.consultation.findFirst({
+    where: { appointment: { occurrences: { some: { id: occurrenceId } } } },
+    select: CLAIM_SELECT,
+  });
+  const appointment = row?.appointment;
+  const consulteeUserId = row?.requestedBy?.userId;
+  if (!row || !appointment || !consulteeUserId) return null;
+  const payment = appointment.payment[0];
+  return {
+    status: row.status,
+    otherSessions: appointment.occurrences.filter(
+      (o) => o.id !== occurrenceId && standsOnBooking(o),
+    ).length,
+    refund: payment
+      ? {
+          consultationId: row.id,
+          occurrenceId,
+          organizationId: appointment.organizationId,
+          consulteeUserId,
+          consultantName:
+            row.consultationPlan?.consultantProfile?.user?.name ?? "Consultant",
+          planTitle: row.consultationPlan?.title ?? "Consultation",
+          payment,
+        }
+      : null,
+  };
+}
+
+/** The full refund one session's expert absence owes on a booking that is not cancelled, under a key no other door uses. */
+function sessionNoShowRefundOwed(
+  refund: SessionNoShowRefund,
+): RefundOwedMarker {
+  return {
+    paymentId: refund.payment.id,
+    amountPaise: null,
+    // Neither the whole-booking claim's key nor the day-14 sweep's per-session `occ:` key.
+    key: `expert-absent:${refund.occurrenceId}:pay:${refund.payment.id}`,
+    reason: "expert absent, decided by an operator",
+  };
+}
+
+/** Stamps that refund owed on the caller's transaction; one another door already owes is reported instead. */
+export async function oweSessionNoShowRefundTx(
+  tx: Tx,
+  refund: SessionNoShowRefund,
+): Promise<{ held: OwedRefundAlreadyHeld | null }> {
+  return { held: await stampOwedOrHeld(tx, sessionNoShowRefundOwed(refund)) };
+}
+
+/** After that commit: drive the refund unless another door's owes it, then tell the learner. */
+export async function settleSessionNoShowRefund(
+  refund: SessionNoShowRefund,
+  held: OwedRefundAlreadyHeld | null,
+  report: { errors: string[]; failures: RunFailureReporter },
+): Promise<{ refunded: boolean }> {
+  if (held) return { refunded: false };
+  const { refundedPaise, succeeded } = await driveNoShowRefund(
+    sessionNoShowRefundOwed(refund),
+    refund.consultationId,
+    report,
+  );
+  await notifyNoShowRefund(refund, refundedPaise);
+  return { refunded: succeeded };
+}
+
 /** An outage now overlaps a proposed session: the claim rolls back and the next pass judges it weak. */
 export class NoShowDuringOutageError extends Error {
   constructor(readonly consultationId: string) {
@@ -480,16 +568,18 @@ export async function claimNoShowTx(
 }
 
 /**
- * Drives the full refund the claim stamped, through the booking front door so
+ * Drives a full refund a no-show stamped, through the booking front door so
  * gateway, org-funded and credit rails each settle correctly. The key makes a
  * replay and the retry sweep one refund with this one; a failure stays on the
  * marker and is surfaced for ops.
  */
-async function refundNoShow(
-  claim: NoShowClaim,
+async function driveNoShowRefund(
+  marker: RefundOwedMarker,
+  consultationId: string,
   report: { errors: string[]; failures: RunFailureReporter },
 ): Promise<{ refundedPaise: number; succeeded: boolean }> {
-  const outcome = await driveRefundOwed(noShowRefundOwed(claim.payment.id));
+  const claim = { consultationId, payment: { id: marker.paymentId } };
+  const outcome = await driveRefundOwed(marker);
   if (outcome.kind === "refunded" || outcome.kind === "replayed") {
     return {
       refundedPaise: outcome.refund.amountRefundedPaise,
@@ -559,27 +649,41 @@ async function notifyNoShowParties(
     EMAIL_BUDGET_MS.JOB,
   ).catch((e) => console.error(`[no-show] cancellation email failed:`, e));
 
-  if (refundedPaise > 0) {
-    await notifyRefundProcessed(claim.consulteeUserId, {
-      ...notificationScope(claim.organizationId),
-      amount: refundedPaise,
-      currency: claim.payment.currency,
-      reason: "consultant no-show",
-      appointmentType: "consultation",
-      consultantName: claim.consultantName,
-      dashboardUrl,
-    }).catch((e) => console.error(`[no-show] refund notify failed:`, e));
-    await sendRefundProcessedEmail(
-      {
-        userId: claim.consulteeUserId,
-        paymentId: claim.payment.id,
-        amountPaise: refundedPaise,
-        currency: claim.payment.currency,
-        planTitle: claim.planTitle,
-      },
-      { budgetMs: EMAIL_BUDGET_MS.JOB },
-    );
-  }
+  await notifyNoShowRefund(claim, refundedPaise);
+}
+
+/** The refund's bell and email to the learner, once money went back. */
+async function notifyNoShowRefund(
+  party: Pick<
+    SessionNoShowRefund,
+    | "organizationId"
+    | "consulteeUserId"
+    | "consultantName"
+    | "planTitle"
+    | "payment"
+  >,
+  refundedPaise: number,
+): Promise<void> {
+  if (refundedPaise <= 0) return;
+  await notifyRefundProcessed(party.consulteeUserId, {
+    ...notificationScope(party.organizationId),
+    amount: refundedPaise,
+    currency: party.payment.currency,
+    reason: "consultant no-show",
+    appointmentType: "consultation",
+    consultantName: party.consultantName,
+    dashboardUrl: notificationHref(party.organizationId, "appointments"),
+  }).catch((e) => console.error(`[no-show] refund notify failed:`, e));
+  await sendRefundProcessedEmail(
+    {
+      userId: party.consulteeUserId,
+      paymentId: party.payment.id,
+      amountPaise: refundedPaise,
+      currency: party.payment.currency,
+      planTitle: party.planTitle,
+    },
+    { budgetMs: EMAIL_BUDGET_MS.JOB },
+  );
 }
 
 /** After the claim commits: drive the refund unless another door's owes it, then tell both sides. */
@@ -592,7 +696,11 @@ export async function settleClaimedNoShow(
     await notifyNoShowParties(claim, 0);
     return { refunded: false };
   }
-  const { refundedPaise, succeeded } = await refundNoShow(claim, report);
+  const { refundedPaise, succeeded } = await driveNoShowRefund(
+    noShowRefundOwed(claim.payment.id),
+    claim.consultationId,
+    report,
+  );
   await notifyNoShowParties(claim, refundedPaise);
   return { refunded: succeeded };
 }
