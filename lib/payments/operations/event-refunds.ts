@@ -623,7 +623,6 @@ export async function releasedSeatOwedTx(
       disputes: { amountPaise: number; status: string }[];
     };
     releasedAt: Date;
-    now: Date;
     /** Why the seat was released, for the operator's queue row. */
     cause: string;
   },
@@ -651,7 +650,6 @@ export async function releasedSeatOwedTx(
         : payment.createdAt,
     sessionsPurchased: seat?.sessionsPurchased,
     releasedAt: args.releasedAt,
-    now: args.now,
   });
   if (isFreeCreditIntent(payment.paymentIntent)) {
     if (deliveredHeld === 0) return { amountPaise: null };

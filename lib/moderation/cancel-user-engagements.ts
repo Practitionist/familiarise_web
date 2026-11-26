@@ -1090,7 +1090,6 @@ async function removeAttendee(
             userId: targetUserId,
             payment: paid,
             releasedAt: now,
-            now,
             cause: "moderation",
           })
         : null;

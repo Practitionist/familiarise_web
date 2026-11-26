@@ -629,7 +629,6 @@ async function stampRemovalRefundTx(
   caseId: string,
   target: RemovalTarget,
   reason: string,
-  now: Date,
 ): Promise<RefundOwedMarker | null> {
   const where = await removalPaymentWhere(tx, caseId, target);
   if (!where) return null;
@@ -662,7 +661,6 @@ async function stampRemovalRefundTx(
     userId: target.userId,
     payment,
     releasedAt: target.removedAt,
-    now,
     cause: "conduct-removal-lapse",
   });
   if (!owed) return null;
@@ -952,7 +950,6 @@ async function lapseRemovalTx(
     caseId,
     target,
     "conduct removal review lapsed",
-    now,
   );
   if (marker) {
     await postCaseMessageTx(
