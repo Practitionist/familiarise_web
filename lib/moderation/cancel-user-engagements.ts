@@ -1054,23 +1054,34 @@ async function removeAttendee(
         userId: targetUserId,
       });
       if (released === 0) return null;
-      const paid = await tx.payment.findFirst({
+      // No amount floor: a seat paid entirely in credits is owed its restoration.
+      const seatPayment = await tx.payment.findFirst({
         where: {
           userId: targetUserId,
           appointment: eventFilter,
           paymentStatus: "SUCCEEDED",
-          amount: { gt: 0 },
           // A retired row is refused by the front door.
           deletedAt: null,
         },
         select: {
           id: true,
           amount: true,
+          originalAmount: true,
           paymentIntent: true,
           createdAt: true,
           ...REFUNDABLE_BALANCE_SELECT,
         },
       });
+      // A seat that was free to begin with owes nothing and writes no refund.
+      const paid =
+        seatPayment &&
+        !isPriceFreePayment({
+          paymentIntent: seatPayment.paymentIntent,
+          amountPaise: Number(seatPayment.amount),
+          listPricePaise: Number(seatPayment.originalAmount),
+        })
+          ? seatPayment
+          : null;
       // The seat's undelivered sessions as of the ban; a delivered one keeps
       // its pay, and a session under way is not delivered.
       const share = paid

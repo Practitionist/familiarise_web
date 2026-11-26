@@ -41,6 +41,9 @@ const mockSeat = {
   events: [] as { webinarId: string | null; classId: string | null }[],
   upcoming: 0,
   amount: 800_000,
+  /** The seat's price before credits and discounts. */
+  listPaise: 800_000,
+  paymentIntent: "order_seat",
   totalSessions: 8 as number | null,
   sessionsPurchased: 8 as number | null,
   occurrences: [] as Record<string, unknown>[],
@@ -68,14 +71,21 @@ const mockTx = {
     ]),
   },
   payment: {
-    findFirst: jest.fn(async () => ({
-      id: "pay-seat",
-      amount: mockSeat.amount,
-      paymentIntent: "order_seat",
-      createdAt: new Date(0),
-      refunds: [],
-      disputes: [],
-    })),
+    // Answers the lookup's own filter, as the database would.
+    findFirst: jest.fn(
+      async ({ where }: { where: { amount?: { gt: number } } }) =>
+        where.amount && mockSeat.amount <= where.amount.gt
+          ? null
+          : {
+              id: "pay-seat",
+              amount: mockSeat.amount,
+              originalAmount: mockSeat.listPaise,
+              paymentIntent: mockSeat.paymentIntent,
+              createdAt: new Date(0),
+              refunds: [],
+              disputes: [],
+            },
+    ),
   },
   refund: { findMany: jest.fn(async () => []) },
   subscription: { findUnique: (...a: unknown[]) => mockPlanNow(...a) },
@@ -192,6 +202,7 @@ jest.mock("@/lib/observability/report", () => ({
 
 import { cancelFutureEngagementsForUser } from "@/lib/moderation/cancel-user-engagements";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 
 const HOUR = 3_600_000;
 const NOW = Date.now();
@@ -447,6 +458,8 @@ describe("a ban on a learner who holds a class or webinar seat", () => {
       events: [{ webinarId: null, classId: "cls-1" }],
       upcoming: 1,
       amount: 800_000,
+      listPaise: 800_000,
+      paymentIntent: "order_seat",
       totalSessions: 8,
       sessionsPurchased: 8,
       ...seat,
@@ -493,6 +506,55 @@ describe("a ban on a learner who holds a class or webinar seat", () => {
       expect.objectContaining({ paymentId: "pay-seat", amountPaise: 100_000 }),
     );
     expect(summary.refundedPaise).toBe(100_000);
+  });
+
+  describe("on a seat paid entirely in credits", () => {
+    const credits = { amount: 0, paymentIntent: "free_seat" };
+
+    it("with nothing delivered: the credit is restored whole", async () => {
+      learnerIsBanned({ ...credits, occurrences: daily(8, 2 * DAY) });
+
+      const summary = await ban("learner-user");
+
+      expect(summary.attendeeRemovals).toBe(1);
+      expect(mockStampOwedOrHeld).toHaveBeenCalledWith(mockTx, {
+        paymentId: "pay-seat",
+        amountPaise: null,
+        key: "moderation:appt-1:pay-seat",
+        reason: STAFF_CANCEL_REFUND_REASON.MODERATION,
+      });
+    });
+
+    it("after 3 of 8 sessions: the credits rail cannot split, so a person returns the rest", async () => {
+      learnerIsBanned({
+        ...credits,
+        occurrences: daily(8, -3 * DAY + 2 * HOUR),
+      });
+
+      await ban("learner-user");
+
+      expect(mockStampOwedOrHeld).not.toHaveBeenCalled();
+      expect(recordSystemEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          correlationId: "partial-credit:pay-seat",
+          db: mockTx,
+        }),
+      );
+    });
+
+    it("a seat that was free to begin with owes nothing and writes no refund", async () => {
+      learnerIsBanned({
+        ...credits,
+        listPaise: 0,
+        occurrences: daily(8, 2 * DAY),
+      });
+
+      const summary = await ban("learner-user");
+
+      expect(summary.attendeeRemovals).toBe(1);
+      expect(mockStampOwedOrHeld).not.toHaveBeenCalled();
+      expect(recordSystemEvent).not.toHaveBeenCalled();
+    });
   });
 
   it("banned mid-webinar: the session has not ended, so the seat is still refunded in full", async () => {

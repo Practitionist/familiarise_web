@@ -18,7 +18,8 @@ import {
 import { seedCardPayment } from "./harness-plans";
 import { refundedPaise, refundOnRowsEachTest } from "./harness-refunds";
 import { seatClassBuyer, seedClassUnderWay } from "./harness-class-series";
-import { seedHeldSeat, seedWebinar } from "./harness-seats";
+import { seedHeldSeat, seedSeatBuyer, seedWebinar } from "./harness-seats";
+import { refundBookingPayment } from "../../../lib/payments/operations/booking-refund";
 
 import { cancelFutureEngagementsForUser } from "../../../lib/moderation/cancel-user-engagements";
 
@@ -29,6 +30,7 @@ const SESSIONS = 24;
 const UNIT = PRICE / SESSIONS;
 
 refundOnRowsEachTest();
+const refundDoor = refundBookingPayment as jest.Mock;
 
 /** A live plan with `delivered` sessions held on separate past days and `placedAhead` on separate future days. */
 async function seedPlan(shape: {
@@ -395,5 +397,53 @@ describe("a ban on a learner who holds a class or webinar seat", () => {
       Number(liveSeat.payment.amount),
     );
     expect(await refundedPaise(overPayment.id)).toBe(0);
+  });
+
+  it("a seat paid entirely in credits is restored whole, under the ban's key", async () => {
+    const webinar = await seedWebinar({ capacity: 10, price: 100_000 });
+    const buyer = await seedSeatBuyer();
+    const payment = await prisma.payment.create({
+      data: {
+        amount: BigInt(0),
+        originalAmount: BigInt(100_000),
+        paymentMethod: "credits",
+        paymentIntent: `free_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+        paymentStatus: "SUCCEEDED",
+        userId: buyer.userId,
+        appointmentId: webinar.appointmentId,
+        isMockPayment: true,
+        expiresAt: null,
+      },
+    });
+    await prisma.appointmentParticipant.create({
+      data: {
+        appointmentId: webinar.appointmentId,
+        userId: buyer.userId,
+        role: "CONSULTEE",
+        status: "CONFIRMED",
+        paymentId: payment.id,
+      },
+    });
+    refundDoor.mockImplementation(async () => ({
+      refundId: `rf_${randomUUID()}`,
+      amountRefundedPaise: 0,
+      rail: "CREDITS",
+      status: "SUCCEEDED",
+    }));
+
+    const summary = await ban(buyer.userId);
+
+    expect(summary.attendeeRemovals).toBe(1);
+    const ours = refundDoor.mock.calls
+      .map(([args]) => args as Record<string, unknown>)
+      .filter((args) => args.paymentId === payment.id);
+    expect(ours.length).toBeGreaterThan(0);
+    for (const args of ours) {
+      expect(args.dedupeKey).toBe(
+        `moderation:${webinar.appointmentId}:${payment.id}`,
+      );
+      expect(args).not.toHaveProperty("amountPaise");
+    }
   });
 });
