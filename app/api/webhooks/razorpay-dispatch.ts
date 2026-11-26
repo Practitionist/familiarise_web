@@ -86,6 +86,11 @@ const refundEntitySchema = z.object({
   notes: razorpayNotesSchema,
 });
 
+/** The payment entity a refund event may embed; `captured` is read only when it is there. */
+const refundedPaymentEntitySchema = z
+  .object({ captured: z.boolean().optional() })
+  .passthrough();
+
 const disputeEntitySchema = z.object({
   id: z.string(),
   payment_id: z.string(),
@@ -379,6 +384,9 @@ export async function processRazorpayWebhookEvent(
         );
         const embeddedOrderId =
           event.payload?.payment?.entity?.order_id ?? undefined;
+        const embeddedPayment = refundedPaymentEntitySchema.safeParse(
+          event.payload?.payment?.entity,
+        );
         let paymentIntentId = embeddedOrderId ?? refundEvent.payment_id;
 
         const knownPayment = embeddedOrderId
@@ -427,6 +435,7 @@ export async function processRazorpayWebhookEvent(
           refundEvent.status,
           refundEvent.payment_id,
           refundEvent.notes,
+          embeddedPayment.success ? embeddedPayment.data.captured : undefined,
         );
         if (refundResult instanceof DeferSignal) {
           deferred = true;

@@ -280,6 +280,8 @@ describe("dispatch parses each event's entity itself", () => {
       "processed",
       "pay_1",
       {},
+      // The embedded payment says nothing about its capture.
+      undefined,
     );
     expect(markWebhookEventProcessed).toHaveBeenCalledWith(
       "evt-refund",
