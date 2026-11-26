@@ -292,10 +292,11 @@ export async function POST(request: NextRequest) {
     const result = await withHostSlotBatch(
       hostBatchEntries([consultantProfileId], hostWindows),
       (renewHostBatch) =>
-        withSerializableRetry(() =>
-          prisma.$transaction(
+        withSerializableRetry(async () => {
+          // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+          await renewHostBatch();
+          return prisma.$transaction(
             async (tx) => {
-              await renewHostBatch();
               await lockHostBatchInTx(
                 tx,
                 hostBatchEntries([consultantProfileId], hostWindows),
@@ -450,8 +451,8 @@ export async function POST(request: NextRequest) {
               maxWait: 5000, // 5 second max wait
               isolationLevel: "Serializable", // Highest isolation level
             },
-          ),
-        ),
+          );
+        }),
     );
 
     console.log("Transaction completed successfully. Returning webinar data.");
@@ -817,11 +818,12 @@ export async function PATCH(request: NextRequest) {
         withHostSlotBatch(
           hostBatchEntries(batchProfiles, batchWindows),
           (renewHostBatch) =>
-            withSerializableRetry(() =>
-              prisma.$transaction(
+            withSerializableRetry(async () => {
+              // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+              await renewEventLock();
+              await renewHostBatch();
+              return prisma.$transaction(
                 async (tx) => {
-                  await renewEventLock();
-                  await renewHostBatch();
                   await lockHostBatchInTx(
                     tx,
                     hostBatchEntries(batchProfiles, batchWindows),
@@ -1308,8 +1310,8 @@ export async function PATCH(request: NextRequest) {
                   maxWait: 5000, // 5 second max wait
                   isolationLevel: "Serializable", // Highest isolation level
                 },
-              ),
-            ),
+              );
+            }),
         ),
     );
 

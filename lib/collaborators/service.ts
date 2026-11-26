@@ -735,10 +735,11 @@ async function acceptInvitation(
   const committed = await withHostSlotBatch(
     hostBatchEntries([args.consultantProfileId], heldWindows),
     (renewHostBatch) =>
-      withSerializableRetry(() =>
-        prisma.$transaction(
+      withSerializableRetry(async () => {
+        // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+        await renewHostBatch();
+        return prisma.$transaction(
           async (tx) => {
-            await renewHostBatch();
             await lockHostBatchInTx(
               tx,
               hostBatchEntries([args.consultantProfileId], heldWindows),
@@ -749,8 +750,8 @@ async function acceptInvitation(
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             timeout: 10000,
           },
-        ),
-      ),
+        );
+      }),
   ).catch((error: unknown) => {
     if (error instanceof CollaborationError) throw error;
     // Only a held atom is transient; a standing clash was answered inside the transaction.

@@ -139,7 +139,9 @@ decides. Every writer above calls `lockHostTimeInTx`
 (`lib/booking/allocation/host-time-locks.ts`), or its door's wrapper
 (`lockAllocationTimesInTx`, `lockHostBatchInTx`, `lockTrialPickInTx`), as the
 **first statement of its write transaction**, before the event's advisory lock
-and every row lock, then runs its conflict re-check. It takes one
+and every row lock, then runs its conflict re-check. No Redis call runs inside
+that transaction: renew a grant ahead of each attempt, outside it
+(`beforeAttempt`, or the body of the Serializable retry loop). It takes one
 `pg_try_advisory_xact_lock` per slot key (`hashtextextended(key, 42)`), walks
 the sorted keys and stops at the first held one, never waits, and throws the
 door's existing slot-taken 409. The locks end with the transaction. A new

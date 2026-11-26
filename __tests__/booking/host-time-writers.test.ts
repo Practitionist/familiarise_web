@@ -100,9 +100,12 @@ describe("host-time writers take the database's locks first", () => {
         before.lastIndexOf("(tx): Promise<"),
       );
       expect(opened).toBeGreaterThan(-1);
-      // Nothing between the transaction opening and the lock call touches the transaction.
-      const lead = before.slice(before.indexOf("{", opened) + 1);
-      expect(lead).not.toMatch(/\btx\b/);
+      // The lock call is the callback's first statement: no read, no row lock
+      // and no Redis round trip runs inside the transaction ahead of it.
+      const lead = before
+        .slice(before.indexOf("{", opened) + 1)
+        .replace(/^\s*\/\/.*$/gm, "");
+      expect(lead.trim()).toBe("");
     }
   });
 
