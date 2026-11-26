@@ -15,14 +15,37 @@ import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   describeLiveBookings,
-  hasLiveBookings,
+  erasureBookingBlock,
+  ErasureBlockedByBookingsError,
   hasMoneyInFlight,
-  hostedBookingsForUser,
-  liveBookingsForUser,
   moneyInFlightForUser,
   scrubUser,
   soleOwnerOrganizationsForUser,
+  type ErasureBookingBlock,
 } from "@/lib/compliance/erasure/scrub-user";
+
+/** The operator's 409 for a user who still hosts or holds a live booking: what is live, and what to do. */
+function bookingBlockResponse(block: ErasureBookingBlock): NextResponse {
+  if (block.kind === "hosted") {
+    const { hosted } = block;
+    return NextResponse.json(
+      {
+        error: `Erasure is blocked while this user still hosts live bookings (${hosted.details ?? `${hosted.total} open`}). Cancel each one through its cancel door, or wait for it to finish, then process this request again. Erasure never cancels a booking itself.`,
+        code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+        breakdown: hosted.breakdown,
+      },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json(
+    {
+      error: `Erasure is blocked while this user still holds live bookings (${describeLiveBookings(block.held)}). Cancel each booking through its cancel door, and release a class or webinar seat from its roster, then process this request again. Erasure never cancels a booking itself.`,
+      code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
+      counts: block.held,
+    },
+    { status: 409 },
+  );
+}
 
 export async function POST(
   _req: NextRequest,
@@ -75,34 +98,10 @@ export async function POST(
     );
   }
 
-  // An expert's open bookings need a host who can sign in to deliver or
-  // cancel them, so the operator ends them first.
-  const hosted = await hostedBookingsForUser(prisma, request.userId);
-  if (hosted?.hasActive) {
-    return NextResponse.json(
-      {
-        error: `Erasure is blocked while this user still hosts live bookings (${hosted.details ?? `${hosted.total} open`}). Cancel each one through its cancel door, or wait for it to finish, then process this request again. Erasure never cancels a booking itself.`,
-        code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
-        breakdown: hosted.breakdown,
-      },
-      { status: 409 },
-    );
-  }
-
-  // A learner's live bookings are never cancelled by the scrub and would
-  // outlive an account that can no longer sign in, so the operator ends them
-  // through their own doors first.
-  const liveBookings = await liveBookingsForUser(prisma, request.userId);
-  if (hasLiveBookings(liveBookings)) {
-    return NextResponse.json(
-      {
-        error: `Erasure is blocked while this user still holds live bookings (${describeLiveBookings(liveBookings)}). Cancel each booking through its cancel door, and release a class or webinar seat from its roster, then process this request again. Erasure never cancels a booking itself.`,
-        code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
-        counts: liveBookings,
-      },
-      { status: 409 },
-    );
-  }
+  // Erasure never cancels a booking: what the user still hosts or holds would
+  // outlive an account that can no longer sign in, so the operator ends it first.
+  const block = await erasureBookingBlock(prisma, request.userId);
+  if (block) return bookingBlockResponse(block);
 
   // Move PENDING → IN_PROGRESS so a second admin clicking the same
   // button doesn't double-execute. The partial-unique index allows
@@ -151,6 +150,14 @@ export async function POST(
       pseudonymousId: result.pseudonymousId,
     });
   } catch (err) {
+    // A booking landed after the check above: the scrub rolled back whole.
+    if (err instanceof ErasureBlockedByBookingsError) {
+      await prisma.erasureRequest.update({
+        where: { id },
+        data: { status: "PENDING" },
+      });
+      return bookingBlockResponse(err.block);
+    }
     // Flip back to PENDING so the queue picks it up again; record the
     // error in `notes` so the admin sees what blew up.
     await prisma.erasureRequest.update({

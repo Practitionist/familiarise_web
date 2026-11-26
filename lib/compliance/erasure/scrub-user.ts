@@ -68,7 +68,7 @@
 
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
-import type { Db } from "@/lib/prisma";
+import type { Db, PrismaLike } from "@/lib/prisma";
 import {
   purgeDigitalProductSurfaces,
   purgeRecordingSurfaces,
@@ -234,7 +234,7 @@ const ACTIVE_BOOKING_STATUSES = [
  * own door, because a scrubbed learner cannot sign in to attend or cancel.
  */
 export async function liveBookingsForUser(
-  db: Db,
+  db: PrismaLike,
   userId: string,
   now: Date = new Date(),
 ): Promise<LiveBookings> {
@@ -288,7 +288,7 @@ export async function liveBookingsForUser(
  * while any is open: a scrubbed expert cannot sign in to deliver or cancel.
  */
 export async function hostedBookingsForUser(
-  db: Db,
+  db: PrismaLike,
   userId: string,
 ): Promise<ActiveAppointmentsResult | null> {
   const profile = await db.consultantProfile.findFirst({
@@ -301,6 +301,33 @@ export async function hostedBookingsForUser(
 /** True when the user still holds any live booking. */
 export function hasLiveBookings(counts: LiveBookings): boolean {
   return Object.values(counts).some((n) => n > 0);
+}
+
+/** What on the booking side still blocks an erasure: what the user hosts, else what they hold as a learner. */
+export type ErasureBookingBlock =
+  | { kind: "hosted"; hosted: ActiveAppointmentsResult }
+  | { kind: "held"; held: LiveBookings };
+
+/**
+ * The one booking-side question of an erasure, asked by both doors before the
+ * scrub and again by the scrub on its own transaction; null when nothing blocks.
+ */
+export async function erasureBookingBlock(
+  db: PrismaLike,
+  userId: string,
+): Promise<ErasureBookingBlock | null> {
+  const hosted = await hostedBookingsForUser(db, userId);
+  if (hosted?.hasActive) return { kind: "hosted", hosted };
+  const held = await liveBookingsForUser(db, userId);
+  return hasLiveBookings(held) ? { kind: "held", held } : null;
+}
+
+/** The scrub found a booking the door's check did not see; its transaction rolled back, so nothing was scrubbed. */
+export class ErasureBlockedByBookingsError extends Error {
+  constructor(readonly block: ErasureBookingBlock) {
+    super("Erasure is blocked by a live booking");
+    this.name = "ErasureBlockedByBookingsError";
+  }
 }
 
 /** The live bookings in words, for a refusal: "1 plan, 2 class or webinar seats". */
@@ -1020,6 +1047,11 @@ export async function scrubUser(
         pseudonymousId,
       },
     });
+
+    // Read after the update above holds the user's row, so a booking that
+    // committed since the door's check is refused here and the scrub rolls back.
+    const block = await erasureBookingBlock(tx, userId);
+    if (block) throw new ErasureBlockedByBookingsError(block);
 
     if (memberships.length > 0) {
       await tx.membership.updateMany({

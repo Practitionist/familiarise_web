@@ -92,13 +92,17 @@ const mockRequest = jest.fn();
 const tx = {
   ...supportScrubModels(),
   user: { update: jest.fn(async () => ({})) },
+  // The scrub re-reads the user's bookings on its own transaction: none hosted, none held.
   consultantProfile: {
     updateMany: none(),
     findUnique: jest.fn(async () => ({ userId: "u1" })),
+    findFirst: jest.fn(async () => null),
   },
   consulteeProfile: { updateMany: none() },
-  trial: { updateMany: none() },
-  consultation: { updateMany: none() },
+  trial: { updateMany: none(), count: jest.fn(async () => 0) },
+  consultation: { updateMany: none(), count: jest.fn(async () => 0) },
+  subscription: { count: jest.fn(async () => 0) },
+  appointment: { count: jest.fn(async () => 0) },
   collaborator: {
     findMany: jest.fn(async () => [{ id: "c-1" }]),
     updateManyAndReturn: jest.fn(async () => [

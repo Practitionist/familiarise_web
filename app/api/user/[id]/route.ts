@@ -17,13 +17,13 @@ import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   derivePseudonym,
   eraseStreamPrincipalFootprint,
-  hasLiveBookings,
+  erasureBookingBlock,
+  ErasureBlockedByBookingsError,
   hasMoneyInFlight,
-  hostedBookingsForUser,
-  liveBookingsForUser,
   moneyInFlightForUser,
   scrubUser,
   soleOwnerOrganizationsForUser,
+  type ErasureBookingBlock,
 } from "@/lib/compliance/erasure/scrub-user";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 import {
@@ -294,17 +294,25 @@ export async function PATCH(
   }
 }
 
-/** The 409 a learner who still holds a live booking gets; null when none is live. */
-async function liveBookingsBlock(userId: string): Promise<NextResponse | null> {
-  const counts = await liveBookingsForUser(prisma, userId);
-  if (!hasLiveBookings(counts)) return null;
-
+/** The 409 a user who still hosts or holds a live booking gets. */
+function bookingBlockResponse(block: ErasureBookingBlock): NextResponse {
+  if (block.kind === "hosted") {
+    const { hosted } = block;
+    return NextResponse.json(
+      {
+        error: `Cannot delete account while you have active or upcoming appointments (${hosted.details ?? `${hosted.total} active`}). Please complete or cancel them first.`,
+        code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+        breakdown: hosted.breakdown,
+      },
+      { status: 409 },
+    );
+  }
   return NextResponse.json(
     {
       error:
         "Cannot delete account while you have active or upcoming consultations, subscriptions, trials, or class and webinar seats. Please complete, cancel or leave them first.",
       code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
-      counts,
+      counts: block.held,
     },
     { status: 409 },
   );
@@ -388,24 +396,12 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     };
   }
 
-  const activeAppointments = await hostedBookingsForUser(prisma, id);
-  if (activeAppointments?.hasActive) {
+  const block = await erasureBookingBlock(prisma, id);
+  if (block) {
     return {
-      blockerResponse: NextResponse.json(
-        {
-          error: `Cannot delete account while you have active or upcoming appointments (${activeAppointments.details ?? `${activeAppointments.total} active`}). Please complete or cancel them first.`,
-          code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
-          breakdown: activeAppointments.breakdown,
-        },
-        { status: 409 },
-      ),
+      blockerResponse: bookingBlockResponse(block),
       hasRetainedHistory: false,
     };
-  }
-
-  const bookingBlocker = await liveBookingsBlock(id);
-  if (bookingBlocker) {
-    return { blockerResponse: bookingBlocker, hasRetainedHistory: false };
   }
 
   const consultantMoneyCount = profile
@@ -572,6 +568,10 @@ export async function DELETE(
 
     return await executeUserHardDeleteOrFallbackScrub(id);
   } catch (error) {
+    // A booking landed after the checks above: the scrub rolled back whole.
+    if (error instanceof ErasureBlockedByBookingsError) {
+      return bookingBlockResponse(error.block);
+    }
     console.error("Error deleting user:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

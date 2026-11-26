@@ -10,15 +10,16 @@
  */
 
 const mockScrub = jest.fn(async () => ({ vendorFailures: [] as string[] }));
-const mockLiveBookings = jest.fn(async () => ({ activeEventSeats: 0 }));
+const mockBookingBlock = jest.fn(
+  async (): Promise<null | { kind: "held"; held: Record<string, number> }> =>
+    null,
+);
 jest.mock("../../lib/compliance/erasure/scrub-user", () => ({
   derivePseudonym: () => "pseudo-1",
   eraseStreamPrincipalFootprint: jest.fn(async () => undefined),
-  hasLiveBookings: (counts: Record<string, number>) =>
-    Object.values(counts).some((n) => n > 0),
+  erasureBookingBlock: () => mockBookingBlock(),
+  ErasureBlockedByBookingsError: class extends Error {},
   hasMoneyInFlight: () => false,
-  hostedBookingsForUser: jest.fn(async () => null),
-  liveBookingsForUser: () => mockLiveBookings(),
   moneyInFlightForUser: jest.fn(async () => ({})),
   scrubUser: () => mockScrub(),
   soleOwnerOrganizationsForUser: jest.fn(async () => []),
@@ -127,7 +128,10 @@ it("still hard-deletes an account with nothing to keep", async () => {
 });
 
 it("refuses a learner who still holds a class or webinar seat, with nothing erased", async () => {
-  mockLiveBookings.mockResolvedValueOnce({ activeEventSeats: 1 });
+  mockBookingBlock.mockResolvedValueOnce({
+    kind: "held",
+    held: { activeEventSeats: 1 },
+  });
   const res = await del();
   expect(res.status).toBe(409);
   expect(await res.json()).toMatchObject({
