@@ -87,6 +87,9 @@ const mockTx = {
     findMany: jest.fn(async () => mockSeat.occurrences),
   },
   refund: { findMany: jest.fn(async () => []) },
+  // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+  consultantEarnings: { findMany: jest.fn(async () => []) },
+  organizationEarnings: { findMany: jest.fn(async () => []) },
   systemEvent: { create: jest.fn(async (_args: { data: unknown }) => ({})) },
 };
 
