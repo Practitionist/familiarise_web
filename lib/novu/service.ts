@@ -269,7 +269,8 @@ function resolveTriggerArgs(
   if (typeof dedupeKeyOrOpts === "string") {
     return { dedupeKey: dedupeKeyOrOpts, opts };
   }
-  return { dedupeKey: undefined, opts: dedupeKeyOrOpts };
+  // An omitted key keeps the fourth argument, so `(…, undefined, { tx })` stays on tx.
+  return { dedupeKey: undefined, opts: dedupeKeyOrOpts ?? opts };
 }
 
 function defineSingleNotifier<TInput>(
