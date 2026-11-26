@@ -30,7 +30,10 @@ import {
   needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
 } from "@/lib/booking/misses";
-import { escalateAgedNeedsHuman } from "@/lib/booking/session-outcome-sweep";
+import {
+  escalateAgedNeedsHuman,
+  readOutcomeQueueAge,
+} from "@/lib/booking/session-outcome-sweep";
 
 const NOW = new Date("2026-11-09T12:00:00Z");
 const CUTOFF = new Date(NOW.getTime() - 7 * 24 * 3_600_000);
@@ -98,4 +101,42 @@ it("reports nothing when no session has waited 7 days", async () => {
   };
   expect(await escalateAgedNeedsHuman(db as never, NOW)).toBe(0);
   expect(mockStanding).not.toHaveBeenCalled();
+});
+
+it("reports the queue's age: the oldest undecided session, and how many wait for a person and for how long", async () => {
+  const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000);
+  const undecided = { completionStatus: "SCHEDULED" as const };
+  const findFirst = jest.fn(
+    async ({
+      where,
+    }: {
+      where: { AND?: [unknown, { outcomeAt: unknown }] };
+    }) => {
+      if (where === undecided) return { endsAt: minutesAgo(400) };
+      // The waiting list splits on whether a verdict was written.
+      return where.AND?.[1].outcomeAt === null
+        ? { endsAt: minutesAgo(9000) }
+        : { outcomeAt: minutesAgo(3000) };
+    },
+  );
+  const db = { appointmentOccurrence: { findFirst, count: async () => 7 } };
+
+  expect(await readOutcomeQueueAge(db as never, NOW, undecided)).toEqual({
+    oldestUndecidedMinutes: 400,
+    needsHuman: 7,
+    // A session with no verdict waits from its booked end.
+    oldestNeedsHumanMinutes: 9000,
+  });
+
+  const empty = {
+    appointmentOccurrence: {
+      findFirst: async () => null,
+      count: async () => 0,
+    },
+  };
+  expect(await readOutcomeQueueAge(empty as never, NOW, undecided)).toEqual({
+    oldestUndecidedMinutes: null,
+    needsHuman: 0,
+    oldestNeedsHumanMinutes: null,
+  });
 });

@@ -308,3 +308,73 @@ describe("the earnings hold across a reschedule's endings", () => {
     },
   );
 });
+
+it("a subscription's reschedule request leaves a delivered cycle's stamped tranche on its date, open or withdrawn", async () => {
+  const host = await seedHost();
+  await publishEveryHour(host);
+  const buyer = await seedConsultee();
+  const startsAt = futureAt(5, 3, 30);
+  const booking = await seedOneToOne(
+    "subscription",
+    host,
+    buyer,
+    { startsAt, endsAt: new Date(startsAt.getTime() + HOUR_MS) },
+    {
+      status: "APPROVED",
+      isTentative: false,
+      payment: { status: "SUCCEEDED", expiresAt: null, amount: 50_000 },
+    },
+  );
+  const deliveredAt = new Date(Date.now() - 2 * DAY_MS);
+  await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: booking.appointmentId,
+      ordinal: 2,
+      startsAt: deliveredAt,
+      endsAt: new Date(deliveredAt.getTime() + HOUR_MS),
+      isTentative: false,
+      consultantProfileId: host.consultantProfileId,
+      completionStatus: "COMPLETED",
+    },
+  });
+  // The first cycle's tranche, stamped when that cycle was delivered.
+  const stamped = new Date(Date.now() + 5 * DAY_MS);
+  const tranche = await prisma.consultantEarnings.create({
+    data: {
+      consultantProfileId: host.consultantProfileId,
+      paymentId: booking.payment!.id,
+      grossAmount: BigInt(25_000),
+      platformFeePaise: BigInt(5_000),
+      consultantSharePaise: BigInt(20_000),
+      cycleOrdinal: 0,
+      status: "PENDING",
+      holdUntil: stamped,
+    },
+  });
+  const trancheDate = async () =>
+    (
+      await prisma.consultantEarnings.findUniqueOrThrow({
+        where: { id: tranche.id },
+        select: { holdUntil: true },
+      })
+    ).holdUntil;
+  sessionUser.current = {
+    id: buyer.userId,
+    role: "CONSULTEE",
+    consulteeProfileId: buyer.consulteeProfileId,
+    consultantProfileId: null,
+    name: "Buyer",
+  };
+
+  const opened = await post(reschedule, "/reschedule", booking.appointmentId);
+  expect(opened.status).toBe(200);
+  expect(await trancheDate()).toEqual(stamped);
+
+  const withdrawn = await post(
+    withdraw,
+    "/reschedule/withdraw",
+    booking.appointmentId,
+  );
+  expect(withdrawn.status).toBe(200);
+  expect(await trancheDate()).toEqual(stamped);
+});

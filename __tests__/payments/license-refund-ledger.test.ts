@@ -155,11 +155,14 @@ function txStub() {
     // CAS `updateMany` (source status in WHERE, `refundedShareAmount` pinned to
     // the pre-read). Keep the surface complete so this suite fails on an
     // assertion rather than on `updateMany is not a function`.
+    // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
     consultantEarnings: {
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     organizationEarnings: {
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },

@@ -15,6 +15,7 @@ import {
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { onClassSessionVoided } from "@/lib/booking/class-sessions";
+import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import {
   classifySessionOutcome,
   COMPLETION_FOR_OUTCOME,
@@ -39,6 +40,7 @@ import {
   isNegativeMoneyOutcome,
   needsHumanWhere,
 } from "@/lib/booking/misses";
+import { unstampUndeliveredTranches } from "@/lib/booking/subscription-cycle";
 import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
   transitionOccurrenceCompletion,
@@ -233,6 +235,17 @@ async function moveStatus(
       startsAt: occ.startsAt,
       voidedAt: now,
       hostAttributed: HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome),
+    });
+  }
+  // A plan's delivered session just left its cycle undelivered.
+  if (
+    to === "VOIDED" &&
+    occ.appointment.subscription &&
+    isCompletedOccurrence(occ)
+  ) {
+    await unstampUndeliveredTranches(tx, {
+      appointmentId: occ.appointmentId,
+      now,
     });
   }
 }

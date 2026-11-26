@@ -102,8 +102,16 @@ import {
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
 } from "./shared-lifecycle";
+import { NO_MONEY_OWED_PAYMENT } from "@/scripts/earnings/release-earnings";
 
 export { PayoutMakerCheckerError };
+
+/** Earnings a batch may claim: READY, unbatched, and nothing owed back on the payment. */
+const BATCHABLE_EARNINGS = {
+  status: EarningStatus.READY,
+  payoutId: null,
+  payment: NO_MONEY_OWED_PAYMENT,
+} satisfies Prisma.ConsultantEarningsWhereInput;
 
 export interface PayoutSummary {
   id: string;
@@ -201,11 +209,7 @@ export async function checkPayoutEligibility(
   consultantProfileId: string,
 ): Promise<ConsultantPayoutEligibility> {
   const readyEarningsAgg = await prisma.consultantEarnings.aggregate({
-    where: {
-      consultantProfileId,
-      status: EarningStatus.READY,
-      payoutId: null,
-    },
+    where: { consultantProfileId, ...BATCHABLE_EARNINGS },
     _sum: { consultantSharePaise: true, refundedShareAmount: true },
   });
 
@@ -319,8 +323,7 @@ async function runPayoutBatch(
     const eligibleConsultants = await prisma.consultantEarnings.groupBy({
       by: ["consultantProfileId"],
       where: {
-        status: EarningStatus.READY,
-        payoutId: null,
+        ...BATCHABLE_EARNINGS,
         ...(consultantProfileIds?.length
           ? { consultantProfileId: { in: consultantProfileIds } }
           : {}),
@@ -500,11 +503,7 @@ async function mintConsultantPayout(
         }
 
         const readyEarnings = await tx.consultantEarnings.findMany({
-          where: {
-            consultantProfileId,
-            status: EarningStatus.READY,
-            payoutId: null,
-          },
+          where: { consultantProfileId, ...BATCHABLE_EARNINGS },
           select: {
             id: true,
             consultantSharePaise: true,
@@ -562,8 +561,7 @@ async function mintConsultantPayout(
         const linkResult = await tx.consultantEarnings.updateMany({
           where: {
             id: { in: readyEarnings.map((e) => e.id) },
-            status: EarningStatus.READY,
-            payoutId: null,
+            ...BATCHABLE_EARNINGS,
           },
           data: {
             payoutId: payout.id,
@@ -1271,11 +1269,7 @@ export async function previewInstantPayout(
           netSharePaise: readyPaise,
           grossThisPayoutPaise: await earningsGrossPaise(
             prisma,
-            {
-              consultantProfileId,
-              status: EarningStatus.READY,
-              payoutId: null,
-            },
+            { consultantProfileId, ...BATCHABLE_EARNINGS },
             readyPaise,
           ),
           capacityPaise: readyPaise - recoveryPaise,
@@ -1413,9 +1407,9 @@ async function claimConsultantPayoutForDisbursement(
   }
   if (claimOutcome.kind === "refund_blocked") {
     console.warn(
-      `[Payouts] Payout ${payoutId} blocked — an earning's payment has an uncascaded refund`,
+      `[Payouts] Payout ${payoutId} blocked — an earning's payment has a refund in flight or owed`,
     );
-    reportSentryMessage("Payout blocked by an uncascaded refund", {
+    reportSentryMessage("Payout blocked by a refund in flight or owed", {
       subsystem: "payments",
       expected: true,
       extra: { payoutId },

@@ -94,10 +94,7 @@ it("holds both arms past their hold while the marker is set, releases them once 
 
 it("a sponsor's trust-park release parks an owed payment's matured rows as PENDING, not READY", async () => {
   seed("PENDING_TRUST");
-  const out = await releaseSponsorTrustPark(
-    { consultantEarnings, organizationEarnings } as never,
-    "org_sponsor",
-  );
+  const out = await releaseSponsorTrustPark(prisma as never, "org_sponsor");
   expect(out).toMatchObject({ ready: 0, pending: 2 });
   expect(consultantRows[0].status).toBe("PENDING");
   expect(orgRows[0].status).toBe("PENDING");

@@ -15,7 +15,10 @@
 import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
-import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
+import {
+  holdNewEarningsForUnpaidMemberOverage,
+  restoreOverageBaseCarve,
+} from "@/lib/payments/billing/overage-base-carve";
 import { txDouble } from "../fixtures/tx-double";
 import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
 
@@ -84,6 +87,7 @@ function makeTx(opts: {
   const holds = createEarningsHoldStore();
   return {
     state: { legs, payment, children, childLegSums },
+    holds,
     tx: {
       ...holds.db,
       organization: {
@@ -106,6 +110,8 @@ function makeTx(opts: {
           .fn()
           .mockResolvedValue({ _sum: { basePaise: 0, surchargePaise: 0 } }),
         create: jest.fn().mockResolvedValue({ id: "ev1" }),
+        // The side payment the recorder minted is still unpaid.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       bookingUtilization: {
         findUnique: jest.fn().mockResolvedValue({ id: "bu1" }),
@@ -506,6 +512,28 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
     expect(totalCollected).toBe(129_500);
   });
 
+  it("at checkout finds no earnings yet; the earnings written after it start held", async () => {
+    const { holds, tx } = makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      overageBehavior: "CHARGE_MEMBER",
+      baseSource: "LICENSE",
+    });
+    await recordOverageAtCheckout({ tx: txDouble(tx), ...callArgs(100_000) });
+    expect(holds.holds).toEqual([]);
+
+    // The checkout's earnings writer runs after the recorder.
+    holds.consultant.push({ id: "ce1", paymentId: "pay1", status: "PENDING" });
+    holds.org.push({ id: "oe1", paymentId: "pay1", status: "PENDING" });
+    await holdNewEarningsForUnpaidMemberOverage(txDouble(tx), "pay1");
+
+    for (const row of [...holds.consultant, ...holds.org]) {
+      expect(row).toMatchObject({ status: "HELD", preHoldStatus: "PENDING" });
+      expect(holds.activeReasons(row.id)).toEqual(["OVERAGE"]);
+    }
+  });
+
   it("partial over-cap: org parent keeps the covered remainder, member pays the capped marginal", async () => {
     const { state, tx } = makeTx({
       price: 100_000,
@@ -748,24 +776,13 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
     );
     walletDebit.mockClear();
 
+    // Checkout wrote the parent's earning after recording the overage.
     const holds = createEarningsHoldStore();
     holds.consultant.push({
       id: "ce_wallet_1",
       paymentId: "parent_wallet_1",
-      status: "HELD",
-      preHoldStatus: "PENDING",
+      status: "PENDING",
       holdUntil: null,
-    });
-    holds.holds.push({
-      id: "h1",
-      consultantEarningsId: "ce_wallet_1",
-      organizationEarningsId: null,
-      reason: "OVERAGE",
-      sourceRef: "parent_wallet_1",
-      placedAt: new Date(0),
-      releasedAt: null,
-      releasedById: null,
-      note: null,
     });
     const paymentUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const legUpdate = jest.fn().mockResolvedValue({});
@@ -777,6 +794,8 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
           overageBehavior: "CHARGE_MEMBER",
           payment: { id: "side_wallet_1", parentPaymentId: "parent_wallet_1" },
         }),
+        // Unpaid when the earning is written; none left once this one fails.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         count: jest.fn().mockResolvedValue(0),
       },
       payment: {
@@ -811,6 +830,11 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
       "../../lib/payments/ledger/post",
     );
     postLedgerTxn.mockClear();
+    await holdNewEarningsForUnpaidMemberOverage(
+      mockTx as never,
+      "parent_wallet_1",
+    );
+    expect(holds.activeReasons("ce_wallet_1")).toEqual(["OVERAGE"]);
 
     const outcome = await restoreOverageBaseCarve(mockTx as never, {
       sidePaymentId: "side_wallet_1",
@@ -869,11 +893,17 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
   });
 
   it("LICENSE parent: leaves ₹0 LICENSE leg untouched and keeps parent earnings HELD when member side-charge fails", async () => {
-    const consultantUpdateMany = jest.fn();
+    const holds = createEarningsHoldStore();
+    holds.consultant.push({
+      id: "ce_license_1",
+      paymentId: "parent_license_1",
+      status: "PENDING",
+    });
     const paymentUpdateMany = jest.fn();
     const legUpdate = jest.fn();
 
     const mockTx = {
+      ...holds.db,
       overageEvent: {
         findFirst: jest.fn().mockResolvedValue({
           id: "oe_license_1",
@@ -884,6 +914,7 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
             parentPaymentId: "parent_license_1",
           },
         }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       payment: {
         findUnique: jest.fn().mockResolvedValue({
@@ -908,8 +939,12 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
           ),
         update: legUpdate,
       },
-      consultantEarnings: { updateMany: consultantUpdateMany },
     };
+    // The earning written at checkout starts held for the unpaid overage.
+    await holdNewEarningsForUnpaidMemberOverage(
+      mockTx as never,
+      "parent_license_1",
+    );
 
     const outcome = await restoreOverageBaseCarve(mockTx as never, {
       sidePaymentId: "side_license_1",
@@ -918,7 +953,11 @@ describe("restoreOverageBaseCarve — WALLET and LICENSE parent rails", () => {
     expect(outcome).toBe("none");
     expect(paymentUpdateMany).not.toHaveBeenCalled();
     expect(legUpdate).not.toHaveBeenCalled();
-    expect(consultantUpdateMany).not.toHaveBeenCalled();
+    expect(holds.consultant[0]).toMatchObject({
+      status: "HELD",
+      preHoldStatus: "PENDING",
+    });
+    expect(holds.activeReasons("ce_license_1")).toEqual(["OVERAGE"]);
   });
 });
 

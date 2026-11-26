@@ -144,6 +144,7 @@ function makeWorld(rail: "CARD" | "WALLET") {
     },
     paymentLeg: {
       findMany: jest.fn(async () => legs),
+      findUnique: jest.fn(async () => null),
       upsert: jest.fn(async () => ({})),
     },
     payment: {
@@ -175,7 +176,10 @@ function makeWorld(rail: "CARD" | "WALLET") {
     },
     organizationInvoice: { findUnique: jest.fn(async () => null) },
     creditNote: { findUnique: jest.fn(async () => null) },
-    overageEvent: { findMany: jest.fn(async () => []) },
+    overageEvent: {
+      findMany: jest.fn(async () => []),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+    },
     orgAuditLog: { create: jest.fn(async () => ({})) },
   };
 

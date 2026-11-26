@@ -102,6 +102,9 @@ jest.mock("../../lib/prisma", () => {
     systemEvent: { create: jest.fn(async () => ({})) },
     // The claim stamps the owed refund; the drive clears it by CAS.
     payment: { updateMany: async () => ({ count: 1 }) },
+    // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+    consultantEarnings: { findMany: async () => [] },
+    organizationEarnings: { findMany: async () => [] },
     refund: { findUnique: async () => null },
     $disconnect: jest.fn(),
   };
@@ -342,13 +345,18 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     ).toBeGreaterThanOrEqual(HOURLY_MINUTES);
   });
 
-  it.each(["not-final", "unavailable", "expired", "too-early"] as const)(
-    "the detector neither refunds nor strikes while Stream's record is %s",
-    async (kind) => {
+  it.each([
+    { kind: "not-final" },
+    { kind: "unavailable", throttled: false },
+    { kind: "expired" },
+    { kind: "too-early" },
+  ] as const)(
+    "the detector neither refunds nor strikes while Stream's record is $kind",
+    async (unsettled) => {
       db.consultation.findMany.mockResolvedValue([
         consultation(NO_SHOW_GRACE_MINUTES + 30, [CONSULTEE]),
       ]);
-      settlement.current = { kind };
+      settlement.current = unsettled;
 
       const result = await detectConsultantNoShows();
 

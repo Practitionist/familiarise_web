@@ -75,6 +75,7 @@ jest.mock("../../lib/novu/service", () => ({
 import { RefundStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { processApprovedPayouts } from "../../lib/payments/payouts/payout-service";
+import { matchesWhere } from "../fixtures/mem-db";
 
 /** The Prisma surface processApprovedPayouts touches in these tests. */
 interface PayoutPrismaMock {
@@ -131,80 +132,53 @@ type RefundRow = {
   amountPaise?: number;
 };
 
-/** The filter keys refundRowBlocks knows how to interpret. */
-const SUPPORTED_KEYS = new Set(["status", "cascadedAt", "OR", "amountPaise"]);
-
 /**
- * Applies the guard's own Prisma refund filter to one fixture row, so the
- * exemptions are pinned against the predicate the source really emits. Mirrors
- * only what the guard emits — status equality / `notIn`, an exact `cascadedAt`
- * match, and an `OR` of those. Any other key throws, so a rewritten guard
- * fails loudly instead of quietly matching nothing.
+ * Evaluates the guard's own payment predicate against one fixture payment, so
+ * the exemptions are pinned against what the source really emits, whatever its
+ * shape. A refund row defaults to a cash refund.
  */
-function refundRowBlocks(
-  filter: Record<string, unknown>,
-  row: RefundRow,
-): boolean {
-  for (const key of Object.keys(filter)) {
-    if (!SUPPORTED_KEYS.has(key)) {
-      throw new Error(`Unsupported refund filter key in guard: ${key}`);
-    }
-  }
-
-  const status = filter.status as
-    { notIn?: RefundStatus[] } | RefundStatus | undefined;
-  if (status !== undefined) {
-    if (typeof status === "object" && status.notIn) {
-      if (status.notIn.includes(row.status)) return false;
-    } else if (status !== row.status) {
-      return false;
-    }
-  }
-
-  if (filter.cascadedAt !== undefined && filter.cascadedAt !== row.cascadedAt) {
-    return false;
-  }
-
-  const amount = filter.amountPaise as { gt?: number } | undefined;
-  if (amount?.gt !== undefined && !((row.amountPaise ?? 100) > amount.gt)) {
-    return false;
-  }
-
-  const or = filter.OR as Record<string, unknown>[] | undefined;
-  if (or) return or.some((clause) => refundRowBlocks(clause, row));
-
-  return true;
-}
-
-/**
- * Dispatch on the predicate shape so the dispute guard and the refund guard can
- * share one mock without depending on their relative order.
- */
-function stubEarnings(refunds: RefundRow[]): void {
+function stubEarnings(
+  refunds: RefundRow[],
+  refundOwedKey: string | null = null,
+): void {
+  const payment = {
+    refunds: refunds.map((row) => ({ amountPaise: 100, ...row })),
+    disputes: [], // no live dispute in any case here
+    refundOwedKey,
+  };
   mocks.consultantEarnings.findFirst.mockImplementation(
-    (args: { where: { payment?: Record<string, unknown> } }) => {
-      const payment = args?.where?.payment;
-      if (payment?.disputes) return null; // no live dispute in any case here
-      const some = payment?.refunds as
-        { some: Record<string, unknown> } | undefined;
-      if (some) {
-        return refunds.some((row) => refundRowBlocks(some.some, row))
-          ? { id: "ce_refund_blocked" }
-          : null;
-      }
-      return null; // any other findFirst in the path is not a guard
-    },
+    (args: { where: { payment?: Record<string, unknown> } }) =>
+      args?.where?.payment && matchesWhere(payment, args.where.payment)
+        ? { id: "ce_refund_blocked" }
+        : null,
   );
 }
 
-/** The `payment.refunds.some` filter the guard actually sent, or undefined. */
+type RefundClause = { refunds?: { some: Record<string, unknown> } };
+type GuardCall = {
+  where: {
+    payoutId?: string;
+    payment?: RefundClause & { OR?: RefundClause[] };
+  };
+  select?: unknown;
+};
+
+/** The guard call that carries a `refunds.some` filter, alone or inside an `OR`. */
+function refundGuardCall(): GuardCall | undefined {
+  return mocks.consultantEarnings.findFirst.mock.calls
+    .map(([arg]: [GuardCall]) => arg)
+    .find((arg: GuardCall) => refundClauseOf(arg) !== undefined);
+}
+
+function refundClauseOf(arg: GuardCall): RefundClause | undefined {
+  const payment = arg?.where?.payment;
+  return [payment, ...(payment?.OR ?? [])].find((c) => !!c?.refunds);
+}
+
+/** The `refunds.some` filter the guard actually sent, or undefined. */
 function refundFilterSent(): Record<string, unknown> | undefined {
-  const call = mocks.consultantEarnings.findFirst.mock.calls.find(
-    ([arg]: [{ where: { payment?: { refunds?: { some: unknown } } } }]) =>
-      !!arg?.where?.payment?.refunds,
-  );
-  return call?.[0].where.payment?.refunds?.some as
-    Record<string, unknown> | undefined;
+  const call = refundGuardCall();
+  return call ? refundClauseOf(call)?.refunds?.some : undefined;
 }
 
 let gatewayFetch: jest.Mock;
@@ -324,6 +298,17 @@ describe("consultant rail — uncascaded-refund disbursement block", () => {
     expect(mocks.consultantPayout.updateMany).toHaveBeenCalled();
     expect(gatewayFetch).toHaveBeenCalled();
   });
+
+  it("an owed-refund marker with no refund row blocks the same way", async () => {
+    stubEarnings([], "cancel:appt_1");
+
+    const results = await processApprovedPayouts();
+
+    expect(mocks.consultantPayout.updateMany).not.toHaveBeenCalled();
+    expect(gatewayFetch).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ success: false, skipped: true });
+    expect(mocks.consultantEarnings.updateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("consultant rail — payout.amount vs what its earnings still owe", () => {
@@ -384,12 +369,9 @@ describe("the guard's predicate is scoped to the earnings in this payout", () =>
   it("asks for id only — a cheap existence probe, like the dispute guard", async () => {
     await processApprovedPayouts();
 
-    const call = mocks.consultantEarnings.findFirst.mock.calls.find(
-      ([arg]: [{ where: { payment?: { refunds?: unknown } } }]) =>
-        !!arg?.where?.payment?.refunds,
-    );
+    const call = refundGuardCall();
     expect(call).toBeDefined();
-    expect(call![0].select).toEqual({ id: true });
+    expect(call!.select).toEqual({ id: true });
   });
 
   it("exempts exactly the two refund statuses where no money moved", async () => {
