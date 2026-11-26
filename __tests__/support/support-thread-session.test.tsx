@@ -362,3 +362,73 @@ it("starts a session's report on its page beside an open human payment case", as
     appointmentOccurrenceId: "occ-a",
   });
 });
+
+it("a turn still pending when the page moves to another session completes into the thread it was sent from, and leaves the other session's thread and actions alone", async () => {
+  // Session A has no report yet; session B shows its own case.
+  let answerTurn: (response: unknown) => void = () => undefined;
+  global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      turnBodies.push(JSON.parse(String(init.body)));
+      return new Promise((resolve) => (answerTurn = resolve));
+    }
+    const forB = String(url).includes("occ-b");
+    return {
+      ok: true,
+      json: async () => ({
+        data: forB ? shown("case-b", "occ-b").thread : null,
+        intents: [],
+        booking: null,
+      }),
+    };
+  }) as unknown as typeof fetch;
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const page = renderHook(
+    ({ occurrenceId }: { occurrenceId: string }) =>
+      useSupportThread("appointment", { occurrenceId }),
+    {
+      initialProps: { occurrenceId: "occ-a" },
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    },
+  );
+  await waitFor(() => expect(page.result.current.data).toBeDefined());
+
+  act(() => {
+    page.result.current.submitTurn({ category: "NO_SHOW" });
+  });
+  await waitFor(() => expect(turnBodies).toHaveLength(1));
+  // The person opens session B's page while A's turn is still out.
+  page.rerender({ occurrenceId: "occ-b" });
+  await waitFor(() => expect(page.result.current.thread?.id).toBe("case-b"));
+
+  await act(async () => {
+    answerTurn({
+      ok: true,
+      json: async () => ({
+        data: {
+          ...turnResult("case-a-new", "occ-a"),
+          actions: [{ kind: "LINK", label: "Open the booking", href: "/x" }],
+        },
+      }),
+    });
+  });
+  await waitFor(() => expect(page.result.current.turnPending).toBe(false));
+
+  // B's page still shows B's case, with nothing of A's answer on it.
+  expect(page.result.current.thread).toMatchObject({
+    id: "case-b",
+    appointmentOccurrenceId: "occ-b",
+  });
+  expect(page.result.current.messages.map((m) => m.body)).not.toContain(
+    "Noted on case-a-new",
+  );
+  expect(page.result.current.lastActions).toEqual([]);
+  // A's answer is on A's thread.
+  const threadA = client.getQueryData<ThreadData>(
+    supportKeys.thread("appointment", "occ-a"),
+  )?.thread;
+  expect(threadA?.messages.map((m) => m.body)).toContain("Noted on case-a-new");
+});

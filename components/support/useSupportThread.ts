@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  hashKey,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { useCaseTimeline } from "./useCaseTimeline";
 import { useZoneClock } from "@/lib/time/use-zone-clock";
@@ -17,6 +22,9 @@ import { supportKeys } from "@/lib/support/support-keys";
  * The per-appointment support conversation: flow options, free text and the
  * hand-off to a person. Resolver actions are only displayed, never executed here.
  */
+
+/** One page's thread entry: a booking's, or one of its sessions'. */
+type ThreadKey = ReturnType<typeof supportKeys.thread>;
 
 export type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -318,20 +326,22 @@ export function useSupportThread(
   const { toast } = useToast();
   const clock = useZoneClock();
   const qc = useQueryClient();
-  const queryKey = supportKeys.thread(appointmentId, occurrenceId);
+  const queryKey: ThreadKey = supportKeys.thread(appointmentId, occurrenceId);
 
-  // Undo the optimistic bubble. A turn sent before the first GET resolves has
-  // NO snapshot to restore, so the pending bubble is filtered out instead.
+  // Undo the optimistic bubble in the thread the turn was sent from. A turn sent
+  // before the first GET resolves has NO snapshot to restore, so the pending
+  // bubble is filtered out instead.
   const rollbackOptimistic = (
+    sentFrom: ThreadKey,
     previous: ThreadData | undefined,
     optimisticId: string | undefined,
   ) => {
     if (previous) {
-      qc.setQueryData(queryKey, previous);
+      qc.setQueryData(sentFrom, previous);
       return;
     }
     if (!optimisticId) return;
-    qc.setQueryData<ThreadData>(queryKey, (old) =>
+    qc.setQueryData<ThreadData>(sentFrom, (old) =>
       old?.thread
         ? {
             ...old,
@@ -402,16 +412,20 @@ export function useSupportThread(
           ]),
         );
       }
-      return { previous, optimisticId };
+      // The thread this turn was sent from: the page may show another session's by the time it completes.
+      return { previous, optimisticId, sentFrom: queryKey };
     },
     onSuccess: (result, vars, context) => {
+      // These callbacks are the latest render's, so `queryKey` is the page shown now, not the sender's.
+      const sentFrom = context?.sentFrom ?? queryKey;
+      const stillShown = hashKey(sentFrom) === hashKey(queryKey);
       // The server took the request but refused the write: treat it exactly
       // like a failure, or the bubble sits there looking delivered.
       if (result.accepted === false) {
         const id = context?.optimisticId;
         const said = vars.userMessage ?? vars.chosenLabel;
-        rollbackOptimistic(context?.previous, id);
-        if (id && said)
+        rollbackOptimistic(sentFrom, context?.previous, id);
+        if (id && said && stillShown)
           setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
         toast({
           title: "Support",
@@ -422,7 +436,7 @@ export function useSupportThread(
         return;
       }
       // A retry bound to a case the page no longer shows leaves the shown thread alone.
-      const shownId = qc.getQueryData<ThreadData>(queryKey)?.thread?.id;
+      const shownId = qc.getQueryData<ThreadData>(sentFrom)?.thread?.id;
       const shownCase = shownId && shownId !== "local" ? shownId : undefined;
       const forOtherCase = Boolean(
         vars.binding?.caseId && shownCase && vars.binding.caseId !== shownCase,
@@ -435,7 +449,8 @@ export function useSupportThread(
         shownCase !== result.threadId
           ? result.threadId
           : undefined;
-      if (!forOtherCase) {
+      // The actions and reply-by line belong to the page shown now; another session's page keeps its own.
+      if (!forOtherCase && stillShown) {
         setLastActions(result.actions ?? []);
         if (result.outcomeId !== undefined) {
           setLastOutcomeId(result.outcomeId ?? null);
@@ -445,7 +460,7 @@ export function useSupportThread(
         }
       }
       const said = vars.userMessage ?? vars.chosenLabel;
-      qc.setQueryData<ThreadData>(queryKey, (old) => {
+      qc.setQueryData<ThreadData>(sentFrom, (old) => {
         if (forOtherCase) return old;
         const merged = appendMessages(
           movedTo && old ? { ...old, thread: null } : old,
@@ -479,16 +494,18 @@ export function useSupportThread(
           },
         };
       });
-      void qc.invalidateQueries({ queryKey });
+      void qc.invalidateQueries({ queryKey: sentFrom });
     },
     onError: (e: unknown, vars, context) => {
+      const sentFrom = context?.sentFrom ?? queryKey;
+      const stillShown = hashKey(sentFrom) === hashKey(queryKey);
       // Keep the message where the user put it, marked failed, with a retry.
       // A DEFINITE refusal (403/404/400) is different: a retry returns the
       // same answer, so the bubble goes and the reason is shown instead.
       const id = context?.optimisticId;
       const said = vars.userMessage ?? vars.chosenLabel;
       if (e instanceof SupportRequestError && e.isDefinite) {
-        rollbackOptimistic(context?.previous, id);
+        rollbackOptimistic(sentFrom, context?.previous, id);
         toast({
           title: "Support",
           description: e.message,
@@ -496,8 +513,9 @@ export function useSupportThread(
         });
         return;
       }
-      if (id && said) {
-        rollbackOptimistic(context?.previous, id);
+      if (id && said) rollbackOptimistic(sentFrom, context?.previous, id);
+      // A retry bubble belongs to the thread it was sent from; on another session's page the failure is only said.
+      if (id && said && stillShown) {
         setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
       } else {
         toast({
