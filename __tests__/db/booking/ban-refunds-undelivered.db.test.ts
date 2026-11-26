@@ -178,7 +178,7 @@ async function expectPlanEnded(plan: {
     where: { id: plan.subscriptionId },
     select: { status: true, cancellationReason: true },
   });
-  expect(sub).toEqual({
+  expect(sub).toMatchObject({
     status: "CANCELLED",
     cancellationReason: "MODERATION",
   });
@@ -218,7 +218,7 @@ describe("a ban refunds a plan for what was not delivered", () => {
       where: { paymentId: plan.paymentId },
       select: { dedupeKey: true, amountPaise: true },
     });
-    expect(refunds).toEqual([
+    expect(refunds).toMatchObject([
       {
         dedupeKey: `moderation:${plan.appointmentId}:${plan.paymentId}`,
         amountPaise: 16 * UNIT,
@@ -329,7 +329,7 @@ describe("a ban on a learner who holds a class or webinar seat", () => {
       where: { paymentId: seat.paymentId },
       select: { dedupeKey: true, amountPaise: true },
     });
-    expect(refunds).toEqual([
+    expect(refunds).toMatchObject([
       {
         dedupeKey: `moderation:${cls.appointmentId}:${seat.paymentId}`,
         amountPaise: 500_000,

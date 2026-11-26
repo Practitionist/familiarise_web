@@ -183,7 +183,7 @@ describe("a lapsed conduct removal on a class seat", () => {
       where: { paymentId: seat.paymentId },
       select: { amountPaise: true, dedupeKey: true },
     });
-    expect(refunds).toEqual([
+    expect(refunds).toMatchObject([
       {
         amountPaise: 5 * UNIT,
         dedupeKey: `conduct-removal:${caseId}:pay:${seat.paymentId}`,

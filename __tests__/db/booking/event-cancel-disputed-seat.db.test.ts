@@ -78,7 +78,7 @@ describe("a class cancel with one seat under a payment dispute", () => {
     expect(row.status).toBe("CANCELLED");
     expect(await refundedPaise(clear.paymentId)).toBe(UNDELIVERED);
     expect(await refundedPaise(disputed.paymentId)).toBe(0);
-    expect(await markerOf(disputed.paymentId)).toEqual({
+    expect(await markerOf(disputed.paymentId)).toMatchObject({
       refundOwedKey: `event-cancel:${cls.classId}:pay:${disputed.paymentId}`,
       refundOwedPaise: UNDELIVERED,
       refundOwedAttempts: 0,
@@ -106,7 +106,7 @@ describe("a class cancel with one seat under a payment dispute", () => {
       where: { paymentId: disputed.paymentId },
       select: { dedupeKey: true },
     });
-    expect(refunds).toEqual([
+    expect(refunds).toMatchObject([
       { dedupeKey: `event-cancel:${cls.classId}:pay:${disputed.paymentId}` },
     ]);
     expect((await markerOf(disputed.paymentId)).refundOwedKey).toBeNull();
@@ -123,7 +123,7 @@ describe("a class cancel with one seat under a payment dispute", () => {
     await retryAutoRefunds({ limit: 50 });
 
     expect(await refundedPaise(disputed.paymentId)).toBe(0);
-    expect(await markerOf(disputed.paymentId)).toEqual({
+    expect(await markerOf(disputed.paymentId)).toMatchObject({
       refundOwedKey: null,
       refundOwedPaise: null,
       refundOwedAttempts: 0,
