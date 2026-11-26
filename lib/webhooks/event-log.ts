@@ -3,13 +3,22 @@
  */
 import { Prisma } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
 
 export type WebhookClaim = { claimedAt: Date | null };
+
+/** What storing a delivery answered: whether the caller may run it, and under which claim. */
+export type WebhookReceipt = {
+  isNew: boolean;
+  eventRecordId?: string;
+  claim?: WebhookClaim;
+  /** When a reclaimed row was first stored; absent on the delivery that stores it. */
+  receivedAt?: Date;
+};
 
 export function toInputJson(value: unknown): Prisma.InputJsonValue {
   if (
@@ -41,6 +50,29 @@ export const TERMINAL_ERROR_PREFIXES = ["gave up:", "permanent:"] as const;
 /** Formats a permanent unprocessable error marker for `WebhookEvent.error`. */
 export function permanentFailure(reason: string): string {
   return `permanent: ${reason}`;
+}
+
+/** Formats the terminal marker for an event that kept failing until the retry cap. */
+export function gaveUpFailure(reason: string): string {
+  return `gave up: ${reason}`.slice(0, 500);
+}
+
+/**
+ * Puts a terminal row back in the sweeper's queue: unclaimed, with no error.
+ * A compare-and-set on the terminal error the caller read, so a row another
+ * actor already moved is left alone. Returns whether this call moved it.
+ */
+export async function requeueTerminalWebhookEvent(
+  tx: Tx,
+  id: string,
+  terminalError: string | null,
+): Promise<boolean> {
+  if (!isTerminalWebhookError(terminalError)) return false;
+  const moved = await tx.webhookEvent.updateMany({
+    where: { id, processed: false, error: terminalError },
+    data: { error: null, claimedAt: null, processedAt: null },
+  });
+  return moved.count === 1;
 }
 
 /** Returns true when `error` carries a terminal prefix that must never be retried. */
@@ -76,7 +108,7 @@ async function resolveExistingWebhookEvent(
   },
   eventId: string,
   payload: unknown,
-): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
+): Promise<WebhookReceipt> {
   if (existing.processed && existing.error === null) {
     console.log(
       `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
@@ -121,6 +153,7 @@ async function resolveExistingWebhookEvent(
       isNew: true,
       eventRecordId: existing.id,
       claim: { claimedAt },
+      receivedAt: existing.receivedAt,
     };
   }
 
@@ -156,6 +189,7 @@ async function resolveExistingWebhookEvent(
       isNew: true,
       eventRecordId: existing.id,
       claim: { claimedAt },
+      receivedAt: existing.receivedAt,
     };
   }
 
@@ -175,7 +209,7 @@ export async function logWebhookEvent(
   eventType: string,
   payload: unknown,
   signature?: string,
-): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
+): Promise<WebhookReceipt> {
   try {
     const existing = await prisma.webhookEvent.findUnique({
       where: { eventId },

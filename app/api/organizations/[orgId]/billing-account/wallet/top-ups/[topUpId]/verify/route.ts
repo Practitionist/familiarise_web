@@ -6,7 +6,8 @@
  * payment is captured, and only then runs the same `routeCapturedPayment` the
  * `payment.captured` webhook runs. `confirmTopUp` claims PENDING → CONFIRMED by
  * CAS, so whichever of this route and the webhook arrives first credits the
- * wallet and the other is a no-op.
+ * wallet and the other is a no-op. Ownership is the top-up row's minted order
+ * id plus the signature; the router builds the credit's inputs from that row.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -92,8 +93,9 @@ export async function POST(
     );
   }
 
-  // The signature proves the id pair; capture state, amount and notes come
-  // from the gateway, and only a positive integer INR paise amount is credited.
+  // The signature proves the id pair; capture state and amount come from the
+  // gateway, and only a positive integer INR paise amount is credited. The
+  // payment's notes ride along as the router's cross-check, never as a gate.
   // Any doubt answers "pending" and leaves the webhook to it.
   let notes: Record<string, string>;
   let capturedAmountPaise: number;
@@ -120,16 +122,6 @@ export async function POST(
       contexts: { topUp: { topUpId, orderId } },
     });
     return NextResponse.json({ status: "pending" satisfies TopUpStatus });
-  }
-
-  if (
-    notes.type !== "credit_purchase" ||
-    notes.walletEntryOrderId !== topUpId
-  ) {
-    return NextResponse.json(
-      { error: "This payment does not belong to this top-up" },
-      { status: 400 },
-    );
   }
 
   try {

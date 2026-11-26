@@ -480,6 +480,11 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       currency: "INR",
       appointmentId: "appt-1",
       isMockPayment: false,
+      description: null,
+      refundOwedKey: null,
+      refunds: [],
+      // The buyer's seat on the booking is live.
+      appointment: { deletedAt: null, participants: [{ id: "seat-1" }] },
     });
     const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
     const body = await (res as Response).json();

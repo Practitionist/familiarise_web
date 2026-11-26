@@ -3,7 +3,9 @@ import type { DisputeStatus, ErasureStatus, Prisma } from "@prisma/client";
 import { HELD_PRE_LAUNCH } from "@/lib/email/held";
 import { EXPECTED_REFUSAL_PREFIXES } from "@/lib/email/replay-policy";
 import {
+  AUTO_REFUND_STUCK_PREFIX,
   MANUAL_RECOVERY_PREFIX,
+  REFUND_STATUSES_RETURNING_MONEY,
   unreturnedCaptureWhere,
 } from "@/lib/payments/webhooks/auto-refund-marker";
 
@@ -54,6 +56,14 @@ export const PARKED_CAPTURE_WHERE: Prisma.PaymentWhereInput = {
   deletedAt: null,
   description: { startsWith: MANUAL_RECOVERY_PREFIX },
   ...unreturnedCaptureWhere,
+};
+
+/** Captures whose automatic refund gave up and waits for an operator, until a refund is pending or paid. */
+export const STUCK_AUTO_REFUND_WHERE: Prisma.PaymentWhereInput = {
+  paymentStatus: "SUCCEEDED",
+  deletedAt: null,
+  description: { startsWith: AUTO_REFUND_STUCK_PREFIX },
+  refunds: { none: { status: { in: REFUND_STATUSES_RETURNING_MONEY } } },
 };
 
 /** The queue's order; the gauge reads its first row. */

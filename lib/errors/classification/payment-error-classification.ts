@@ -134,6 +134,11 @@ export const ErrorTypes = {
   SEAT_HOLD_LAPSED: "SEAT_HOLD_LAPSED",
   // A replay of a seat checkout whose order is still being minted; 409 + retryAfter.
   CHECKOUT_IN_PROGRESS: "CHECKOUT_IN_PROGRESS",
+  // A same-key replay of a paid checkout that ended without a live booking; 409, terminal.
+  CHECKOUT_REFUNDED: "CHECKOUT_REFUNDED",
+  CHECKOUT_REFUND_IN_PROGRESS: "CHECKOUT_REFUND_IN_PROGRESS",
+  CHECKOUT_NEEDS_SUPPORT: "CHECKOUT_NEEDS_SUPPORT",
+  CHECKOUT_BOOKING_ENDED: "CHECKOUT_BOOKING_ENDED",
   // A platform code on an order whose take cannot fund promo (fee waiver, host org).
   DISCOUNT_NOT_APPLICABLE: "DISCOUNT_NOT_APPLICABLE_ERROR",
   // Organisation-funded rails while the platform is not GST-registered.

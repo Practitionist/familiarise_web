@@ -45,6 +45,7 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
 
 const paymentsFetch = jest.fn();
 const ordersFetch = jest.fn();
+const ordersFetchPayments = jest.fn();
 const withRazorpaySdkTimeout = jest.fn((_op: string, call: () => unknown) =>
   call(),
 );
@@ -54,7 +55,10 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   },
   getRazorpayClient: () => ({
     payments: { fetch: (...a: unknown[]) => paymentsFetch(...a) },
-    orders: { fetch: (...a: unknown[]) => ordersFetch(...a) },
+    orders: {
+      fetch: (...a: unknown[]) => ordersFetch(...a),
+      fetchPayments: (...a: unknown[]) => ordersFetchPayments(...a),
+    },
   }),
   withRazorpaySdkTimeout: (op: string, call: () => unknown) =>
     withRazorpaySdkTimeout(op, call),
@@ -152,6 +156,7 @@ beforeEach(() => {
     amount: 250000,
     currency: "INR",
     status: "captured",
+    created_at: 1_764_000_000,
     notes: { appointmentType: "CONSULTATION" },
   });
 });
@@ -182,6 +187,7 @@ describe("verify-signature drives the canonical pipeline", () => {
       notes: { appointmentType: "CONSULTATION" },
       amountPaise: 250000,
       gatewayPaymentId: PAY_ID,
+      gatewayCapturedAt: new Date(1_764_000_000 * 1000),
     });
   });
 
@@ -382,6 +388,36 @@ describe("GET /api/checkout/verify?sync=true is budgeted and time-boxed", () => 
     expect(ordersFetch).toHaveBeenCalledWith(ORDER_ID);
     expect(res.status).toBe(400);
     expect((await res.json()).retryAfter).toBeUndefined();
+  });
+
+  it("hands the pipeline the order's notes when the captured payment carries none", async () => {
+    ordersFetch.mockResolvedValue({
+      status: "paid",
+      notes: { appointmentType: "CONSULTATION", userId: USER_ID },
+    });
+    // Razorpay answers an empty notes map as an array.
+    ordersFetchPayments.mockResolvedValue({
+      items: [
+        {
+          id: PAY_ID,
+          status: "captured",
+          amount: 50000,
+          notes: [],
+          created_at: 1_764_000_000,
+        },
+      ],
+    });
+
+    await verifyGet(verifyRequest());
+
+    expect(routeCapturedPayment).toHaveBeenCalledWith({
+      orderId: ORDER_ID,
+      notes: { appointmentType: "CONSULTATION", userId: USER_ID },
+      amountPaise: 50000,
+      gatewayPaymentId: PAY_ID,
+      // The gateway's own time for the payment, for the hold-deadline rule.
+      gatewayCapturedAt: new Date(1_764_000_000 * 1000),
+    });
   });
 });
 

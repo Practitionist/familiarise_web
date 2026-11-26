@@ -67,6 +67,11 @@ const classFindUnique = jest.fn();
 const classUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
 const historyCreate = jest.fn().mockResolvedValue({});
 const participantCreateMany = jest.fn().mockResolvedValue({ count: 1 });
+const occurrenceFindMany = jest.fn().mockResolvedValue([]);
+const buyerConflictFindFirst = jest.fn().mockResolvedValue(null);
+const bookingUtilizationFindUnique = jest.fn().mockResolvedValue(null);
+const reverseCreditsForPayment = jest.fn();
+const notifyPaymentFailed = jest.fn();
 
 const txStub = {
   $executeRaw: jest.fn(async () => 0),
@@ -75,7 +80,12 @@ const txStub = {
     update: paymentUpdate,
     updateMany: paymentUpdateMany,
   },
-  appointment: { findUnique: appointmentFindUnique, update: jest.fn() },
+  appointment: {
+    findUnique: appointmentFindUnique,
+    findFirst: buyerConflictFindFirst,
+    update: jest.fn(),
+  },
+  consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
   appointmentParticipant: {
     createMany: participantCreateMany,
     updateMany: participantUpdateMany,
@@ -94,7 +104,7 @@ const txStub = {
     findFirst: participantFindFirst,
   },
   appointmentOccurrence: {
-    findMany: jest.fn().mockResolvedValue([]),
+    findMany: occurrenceFindMany,
     findFirst: jest.fn().mockResolvedValue(null),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
@@ -103,6 +113,7 @@ const txStub = {
   class: { findUnique: classFindUnique, updateMany: classUpdateMany },
   bookingStatusHistory: { createMany: jest.fn(), create: historyCreate },
   paymentLeg: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  bookingUtilization: { findUnique: bookingUtilizationFindUnique },
 };
 
 const fetchRazorpayOrder = jest.fn();
@@ -192,11 +203,12 @@ jest.mock("../../lib/novu", () => ({
   __esModule: true,
   attemptTrigger: jest.fn(),
   notifyPaymentSuccess: jest.fn(),
-  notifyPaymentFailed: jest.fn(),
+  notifyPaymentFailed: (...a: unknown[]) => notifyPaymentFailed(...a),
   notifyAppointmentBooked: jest.fn(),
 }));
 jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
+  reverseCreditsForPayment: (...a: unknown[]) => reverseCreditsForPayment(...a),
 }));
 jest.mock("../../lib/stream-logger", () => ({
   __esModule: true,
@@ -210,17 +222,32 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 
 import {
   confirmExistingAppointment,
+  handlePaymentFailure,
   handlePaymentSuccess,
+  refundLateCapture,
 } from "../../lib/payments/webhooks/handlers";
 import prisma from "../../lib/prisma";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
 const markerRow = prisma.payment.findUnique as unknown as jest.Mock;
 const markerSettle = prisma.payment.updateMany as unknown as jest.Mock;
+const markerOverwrite = prisma.payment.update as unknown as jest.Mock;
 
 const BUYER = "user-1";
 const WEBINAR = "web-1";
 const APPOINTMENT = "appt-web-1";
+
+const HOUR_MS = 3_600_000;
+/** One session row of the event, `startsInHours` from now and an hour long. */
+function session(startsInHours: number, ordinal = 1) {
+  const startsAt = new Date(Date.now() + startsInHours * HOUR_MS);
+  return {
+    ordinal,
+    startsAt,
+    endsAt: new Date(startsAt.getTime() + HOUR_MS),
+    completionStatus: "SCHEDULED",
+  };
+}
 
 const WEBINAR_METADATA = {
   appointmentType: "WEBINAR",
@@ -337,7 +364,11 @@ beforeEach(() => {
   classFindUnique.mockResolvedValue({
     status: "SCHEDULED",
     appointment: { id: APPOINTMENT, deletedAt: null },
+    classPlan: { price: 10000, totalSessions: 2, lateJoinUntilSession: null },
   });
+  // An event still on sale: its sessions are ahead and the buyer is free.
+  occurrenceFindMany.mockResolvedValue([session(24, 1), session(48, 2)]);
+  buyerConflictFindFirst.mockResolvedValue(null);
   appointmentFindUnique.mockResolvedValue(liveWebinarAppointment());
   paymentFindUnique.mockResolvedValue(pendingSeatPayment());
   (validateWebhookMetadata as jest.Mock).mockReturnValue(WEBINAR_METADATA);
@@ -524,6 +555,118 @@ describe("a capture whose seat is not there any more", () => {
   });
 });
 
+// A HELD seat is promoted only while checkout would still sell it to this buyer.
+describe("a capture that lands when checkout would no longer sell the seat", () => {
+  const classAppointment = {
+    id: APPOINTMENT,
+    consultation: null,
+    subscription: null,
+    webinar: null,
+    class: { id: "class-1" },
+  };
+  const released = { capturedAfterTerminal: true, seatReleased: true };
+  const cancelledHeldSeat = expect.objectContaining({
+    where: expect.objectContaining({
+      AND: expect.arrayContaining([
+        expect.objectContaining({ userId: BUYER, status: "HELD" }),
+      ]),
+    }),
+    data: { status: "CANCELLED" },
+  });
+  const promoted = expect.objectContaining({ data: { status: "CONFIRMED" } });
+  const confirm = () =>
+    confirmExistingAppointment(txStub as never, APPOINTMENT, BUYER);
+
+  // The re-read after the release finds the seat this capture just cancelled.
+  beforeEach(() =>
+    participantFindFirst.mockResolvedValue({
+      id: "part-1",
+      status: "CANCELLED",
+      paymentId: "pay-1",
+    }),
+  );
+
+  it("a webinar whose session has ended releases the HELD seat and refunds in full", async () => {
+    occurrenceFindMany.mockResolvedValue([session(-3)]);
+
+    const outcome = await handlePaymentSuccess(
+      "order-1",
+      WEBINAR_METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    expect(outcome).toBe("confirmed");
+    expect(participantUpdateMany).toHaveBeenCalledWith(cancelledHeldSeat);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+    // No amount named: the booking door refunds the whole refundable balance.
+    expect(refundBookingPayment).toHaveBeenCalledWith({
+      paymentId: "pay-1",
+      reason: "capture after seat release",
+      initiatedByUserId: null,
+      dedupeKey: "capture-unseated:pay-1",
+    });
+    expect(recordSystemErrorSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db: txStub,
+        context: expect.objectContaining({
+          reason: expect.stringContaining("has ended"),
+        }),
+      }),
+    );
+  });
+
+  it("a COMPLETED webinar is not sold, whatever its session row says", async () => {
+    webinarFindUnique.mockResolvedValue({ status: "COMPLETED" });
+    expect(await confirm()).toEqual(released);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+  });
+
+  it("a class past its enrolment cutoff is not sold", async () => {
+    appointmentFindUnique.mockResolvedValue(classAppointment);
+    // Session 1 has started and the host allows no late join.
+    occurrenceFindMany.mockResolvedValue([session(-0.5, 1), session(24, 2)]);
+    expect(await confirm()).toEqual(released);
+    expect(participantUpdateMany).toHaveBeenCalledWith(cancelledHeldSeat);
+  });
+
+  it("a class still open to a late join confirms the seat", async () => {
+    appointmentFindUnique.mockResolvedValue(classAppointment);
+    classFindUnique.mockResolvedValue({
+      status: "SCHEDULED",
+      classPlan: { price: 10000, totalSessions: 2, lateJoinUntilSession: 2 },
+    });
+    occurrenceFindMany.mockResolvedValue([session(-0.5, 1), session(24, 2)]);
+    expect(await confirm()).toEqual({ capturedAfterTerminal: false });
+    expect(participantUpdateMany).toHaveBeenCalledWith(promoted);
+  });
+
+  it("a buyer with another live booking at that time is refunded, not double-booked", async () => {
+    buyerConflictFindFirst.mockResolvedValue({ id: "appt-other" });
+    expect(await confirm()).toEqual(released);
+    expect(participantUpdateMany).toHaveBeenCalledWith(cancelledHeldSeat);
+    // The buyer's own seat on this event is not a conflict with itself.
+    expect(buyerConflictFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([{ NOT: { id: { in: [APPOINTMENT] } } }]),
+        }),
+      }),
+    );
+  });
+
+  it("a redelivery for a seat already CONFIRMED on an ended event stays a no-op", async () => {
+    occurrenceFindMany.mockResolvedValue([session(-3)]);
+    participantUpdateMany.mockResolvedValue({ count: 0 });
+    participantFindFirst.mockResolvedValue({
+      id: "part-1",
+      status: "CONFIRMED",
+      paymentId: "pay-1",
+    });
+    expect(await confirm()).toEqual({ capturedAfterTerminal: false });
+    expect(recordSystemErrorSafe).not.toHaveBeenCalled();
+  });
+});
+
 describe("the auto-refund marker on a released seat", () => {
   beforeEach(() => {
     participantUpdateMany.mockResolvedValue({ count: 0 });
@@ -561,6 +704,210 @@ describe("the auto-refund marker on a released seat", () => {
     await deliver();
     expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     expect(markerSettle).not.toHaveBeenCalled();
+  });
+});
+
+// A hold still live when the gateway took the money is honoured: only an ended event or a busy buyer refunds.
+describe("a capture the gateway took while the seat's hold was live", () => {
+  const MIN_MS = 60_000;
+  const classAppointment = {
+    id: APPOINTMENT,
+    consultation: null,
+    subscription: null,
+    webinar: null,
+    class: { id: "class-1" },
+  };
+  const released = { capturedAfterTerminal: true, seatReleased: true };
+  const promoted = expect.objectContaining({ data: { status: "CONFIRMED" } });
+  const cancelled = expect.objectContaining({ data: { status: "CANCELLED" } });
+  /** Paid at 09:58, session 1 started at 10:00 with no late join, processed at 10:01; the hold runs to 10:10. */
+  const paidBeforeTheStart = () => {
+    appointmentFindUnique.mockResolvedValue(classAppointment);
+    occurrenceFindMany.mockResolvedValue([session(-1 / 60, 1), session(24, 2)]);
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({ expiresAt: new Date(Date.now() + 9 * MIN_MS) }),
+    );
+    participantFindFirst.mockResolvedValue({
+      id: "part-1",
+      status: "CANCELLED",
+      paymentId: "pay-1",
+    });
+    return new Date(Date.now() - 3 * MIN_MS);
+  };
+  const capture = (gatewayCapturedAt?: Date) =>
+    handlePaymentSuccess(
+      "order-1",
+      CLASS_METADATA as unknown as Record<string, string>,
+      10000,
+      "pay_gw_1",
+      gatewayCapturedAt ? { gatewayCapturedAt } : undefined,
+    );
+
+  it("seats a buyer who paid at 09:58 for a class that started at 10:00, processed at 10:01", async () => {
+    const paidAt = paidBeforeTheStart();
+
+    expect(await capture(paidAt)).toBe("confirmed");
+
+    expect(participantUpdateMany).toHaveBeenCalledWith(promoted);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(cancelled);
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("with no gateway time the processing time decides: enrolment has closed, so it refunds", async () => {
+    paidBeforeTheStart();
+
+    await capture();
+
+    expect(participantUpdateMany).toHaveBeenCalledWith(cancelled);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("a gateway time later than the hold deadline is not inside the hold", async () => {
+    paidBeforeTheStart();
+
+    await capture(new Date(Date.now() + 10 * MIN_MS));
+
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+  });
+
+  const confirmPaidInsideHold = () =>
+    confirmExistingAppointment(txStub as never, APPOINTMENT, BUYER, {
+      paidInsideHold: true,
+    });
+
+  it("still refunds in full when the class has ended", async () => {
+    paidBeforeTheStart();
+    occurrenceFindMany.mockResolvedValue([session(-48, 1), session(-24, 2)]);
+
+    expect(await confirmPaidInsideHold()).toEqual(released);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+  });
+
+  it("still refunds in full when a webinar is over", async () => {
+    occurrenceFindMany.mockResolvedValue([session(-3)]);
+    participantFindFirst.mockResolvedValue({
+      id: "part-1",
+      status: "CANCELLED",
+      paymentId: "pay-1",
+    });
+
+    expect(await confirmPaidInsideHold()).toEqual(released);
+  });
+
+  it("still refunds in full when the buyer has another live booking at that time", async () => {
+    paidBeforeTheStart();
+    buyerConflictFindFirst.mockResolvedValue({ id: "appt-other" });
+
+    expect(await confirmPaidInsideHold()).toEqual(released);
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(promoted);
+  });
+});
+
+// The post-commit marker writers replace only the pending marker they read.
+describe("a post-commit marker writer", () => {
+  const STUCK =
+    "Auto-refund stuck: capture amount 9000p ≠ expected 10000p. Booking NOT confirmed.";
+  const PENDING =
+    "Auto-refund pending: capture landed on a EXPIRED payment whose hold was already released. Booking NOT confirmed.";
+  afterEach(() => markerRow.mockResolvedValue(null));
+
+  it("the late-capture refund leaves a stuck marker as the retry sweep wrote it", async () => {
+    markerRow.mockResolvedValue({ description: STUCK });
+
+    await refundLateCapture({
+      paymentId: "pay-1",
+      releasedBy: "payment EXPIRED",
+    });
+
+    expect(markerOverwrite).not.toHaveBeenCalled();
+    expect(markerSettle).not.toHaveBeenCalled();
+  });
+
+  it("the late-capture refund replaces a pending marker by compare-and-set on it", async () => {
+    markerRow.mockResolvedValue({ description: PENDING });
+
+    await refundLateCapture({
+      paymentId: "pay-1",
+      releasedBy: "payment EXPIRED",
+    });
+
+    expect(markerOverwrite).not.toHaveBeenCalled();
+    expect(markerSettle).toHaveBeenCalledWith({
+      where: { id: "pay-1", description: PENDING },
+      data: {
+        description: expect.stringMatching(
+          /^Auto-refunded: capture landed after the hold was released \(payment EXPIRED\)/,
+        ),
+      },
+    });
+  });
+
+  it("the amount-mismatch refund leaves a stuck marker as the retry sweep wrote it", async () => {
+    markerRow.mockResolvedValue({ description: STUCK });
+
+    const outcome = await handlePaymentSuccess(
+      "order-1",
+      WEBINAR_METADATA as unknown as Record<string, string>,
+      9000,
+    );
+
+    expect(outcome).toBe("amount_mismatch");
+    expect(refundPayment).toHaveBeenCalledTimes(1);
+    expect(markerOverwrite).not.toHaveBeenCalled();
+    expect(markerSettle).not.toHaveBeenCalled();
+  });
+});
+
+// A failed attempt inside the hold window changes nothing on the row.
+describe("a failed attempt while the hold is still open", () => {
+  it("does not store the failed attempt's gateway payment id on the PENDING row", async () => {
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({
+        gatewayPaymentId: null,
+        expiresAt: new Date(Date.now() + 10 * 60_000),
+        appointment: null,
+      }),
+    );
+
+    await handlePaymentFailure("order-1", "card declined", "pay_failed_1");
+
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// A lapsed hold whose row a new checkout re-minted since the read is left alone.
+describe("a failed attempt on a lapsed hold that loses its compare-and-set", () => {
+  it("gives nothing back and leaves the booking as it was", async () => {
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({
+        expiresAt: new Date(Date.now() - 60_000),
+        appointment: {
+          id: APPOINTMENT,
+          appointmentType: "WEBINAR",
+          consultation: null,
+          subscription: null,
+        },
+      }),
+    );
+    paymentUpdateMany.mockResolvedValue({ count: 0 });
+
+    await handlePaymentFailure("order-1", "card declined", "pay_failed_1");
+
+    expect(paymentUpdateMany).toHaveBeenCalledTimes(1);
+    expect(paymentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { paymentStatus: "FAILED" } }),
+    );
+    // Credits, the discount use (it starts by reading the payment by id), the
+    // organisation's use and the booking cleanup all sit behind the lost write.
+    expect(reverseCreditsForPayment).not.toHaveBeenCalled();
+    expect(paymentFindUnique).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "pay-1" } }),
+    );
+    expect(bookingUtilizationFindUnique).not.toHaveBeenCalled();
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
+    expect(notifyPaymentFailed).not.toHaveBeenCalled();
   });
 });
 

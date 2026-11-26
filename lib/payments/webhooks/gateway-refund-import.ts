@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { razorpayNotesSchema } from "@/schemas/webhooks/razorpay";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
+import { isUnknownIdAnswer } from "@/lib/payments/core/razorpay-unknown-id";
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 // Razorpay's largest refund page; the default is 10.
@@ -22,7 +23,7 @@ export async function razorpayErrorDescription(res: Response): Promise<string> {
   }
 }
 
-/** A Razorpay GET; `null` when the id is unknown (400 or 404). Throws when the gateway cannot answer. */
+/** A Razorpay GET; `null` when Razorpay has no record of the id. Throws on any other refusal or when the gateway cannot answer. */
 export async function razorpayGet(
   path: string,
   deadlineAt: number,
@@ -40,7 +41,7 @@ export async function razorpayGet(
   });
   if (res.ok) return res.json();
   const description = await razorpayErrorDescription(res);
-  if (res.status === 400 || res.status === 404) return null;
+  if (isUnknownIdAnswer(res.status, description)) return null;
   throw new Error(`${res.status} ${description}`);
 }
 
