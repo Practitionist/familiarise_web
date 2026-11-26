@@ -121,6 +121,27 @@ describe("host-time writers take the database's locks first", () => {
     expect(unlisted).toEqual([]);
   });
 
+  it.each(["auto", "manual", "use-requested"])(
+    "allocator %s mode renews its Redis grants ahead of each attempt, never inside the transaction",
+    (mode) => {
+      const source = read(`lib/booking/allocation/modes/${mode}.ts`);
+      const opened = source.indexOf("async (tx) =>");
+      const lockCall = source.indexOf("await lockAllocationTimesInTx(");
+      // The database's locks are the callback's first statement.
+      expect(
+        source.slice(source.indexOf("{", opened) + 1, lockCall).trim(),
+      ).toBe("");
+      const hook = source.slice(source.indexOf("beforeAttempt: async () => {"));
+      expect(source.indexOf("beforeAttempt: async () => {")).toBeGreaterThan(
+        lockCall,
+      );
+      expect(hook.slice(0, hook.indexOf("},"))).toMatch(
+        /renewConsulteeBooking\(consulteeLock\);\s+await renewAllocationBatch\(slotGrant\);/,
+      );
+      expect(source.match(/renewAllocationBatch\(/g)).toHaveLength(1);
+    },
+  );
+
   it("hands the checkout commit the atoms of both of its grants", () => {
     const orchestrate = read("lib/payments/checkout/orchestrate.ts");
     expect(orchestrate).toContain("slotGrantEntries(lock)");

@@ -29,8 +29,10 @@ import {
 import {
   lockConsulteeBooking,
   lockSlotBatch,
+  requestLockBudget,
   unlockConsulteeBooking,
   unlockSlotBooking,
+  type LockRetryConfig,
   type SlotBatchEntry,
   type SlotBatchGrant,
 } from "@/utils/appointmentlock";
@@ -239,12 +241,21 @@ export async function lockTrialPickInTx(
  * reverse. Throws the lock module's typed errors; nothing is held on a throw.
  */
 export async function lockTrialPick(
-  args: TrialPick & { consulteeUserId: string },
+  args: TrialPick & {
+    consulteeUserId: string;
+    /** The request's shared lock deadline; a door that took an earlier tier passes its own. */
+    lockBudget?: LockRetryConfig;
+  },
 ): Promise<() => Promise<void>> {
-  const consulteeLock = await lockConsulteeBooking(args.consulteeUserId);
+  const lockBudget = args.lockBudget ?? requestLockBudget();
+  const consulteeLock = await lockConsulteeBooking(
+    args.consulteeUserId,
+    undefined,
+    lockBudget,
+  );
   let slots: SlotBatchGrant;
   try {
-    slots = await lockSlotBatch(trialPickEntries(args));
+    slots = await lockSlotBatch(trialPickEntries(args), undefined, lockBudget);
   } catch (error) {
     await unlockConsulteeBooking(consulteeLock);
     throw error;

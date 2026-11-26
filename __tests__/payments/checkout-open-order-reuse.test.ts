@@ -96,6 +96,8 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  requestLockBudget: () => ({}),
+  renewConsulteeBooking: jest.fn(async () => undefined),
   __esModule: true,
   LockContentionError: class extends Error {},
   EventCheckoutLockUnavailableError: class extends Error {},

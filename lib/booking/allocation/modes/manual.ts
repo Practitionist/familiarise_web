@@ -20,6 +20,7 @@ import {
   unlockAutoAllocate,
   ALLOCATOR_LOCK_RETRY_CONFIG,
   lockConsulteeBooking,
+  renewConsulteeBooking,
   unlockConsulteeBooking,
   unlockSlotInterval,
   type SlotBatchGrant,
@@ -506,7 +507,6 @@ export async function manualAllocate(
     // SHORT write-only transaction (see autoAllocate for the rationale).
     return await bookingTransaction(
       async (tx) => {
-        await renewAllocationBatch(slotGrant);
         await lockAllocationTimesInTx(tx, slots, batchProfiles);
         // #1692 — per-event serialisation first (see autoAllocate).
         const lockedReplay = await guardAllocationInTx(
@@ -678,6 +678,11 @@ export async function manualAllocate(
       {
         maxWait: ALLOCATION_TX_MAX_WAIT_MS,
         timeout: ALLOCATION_TX_TIMEOUT_MS,
+        // Outside the transaction, ahead of every attempt: a lost grant writes nothing.
+        beforeAttempt: async () => {
+          await renewConsulteeBooking(consulteeLock);
+          await renewAllocationBatch(slotGrant);
+        },
       },
     );
   } finally {

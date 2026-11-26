@@ -50,6 +50,9 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  requestLockBudget: () => ({}),
+  renewConsulteeBooking: jest.fn(async () => undefined),
+  ConsulteeBookingBusyError: class extends Error {},
   withEventCheckoutLock: (
     _key: unknown,
     fn: (renew: () => unknown) => unknown,

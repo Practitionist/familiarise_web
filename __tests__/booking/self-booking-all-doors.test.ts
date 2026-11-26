@@ -29,6 +29,9 @@ jest.mock("../../lib/profiles/ensure-consultee-profile", () => ({
 const mockLockSlotBooking = jest.fn(async () => ({ key: "slot" }));
 const mockLockRequestCap = jest.fn(async () => ({ key: "request-cap" }));
 jest.mock("../../utils/appointmentlock", () => ({
+  requestLockBudget: () => ({}),
+  renewConsulteeBooking: jest.fn(async () => undefined),
+  ConsulteeBookingBusyError: class extends Error {},
   lockSlotBatch: (...a: unknown[]) => mockLockSlotBooking(...(a as [])),
   unlockSlotInterval: jest.fn(async () => undefined),
   lockConsulteeBooking: jest.fn(async () => ({ key: "consultee" })),

@@ -55,6 +55,7 @@ import {
   BookingLockUnavailableError,
   lockRequestCap,
   RequestCapBusyError,
+  requestLockBudget,
   unlockRequestCap,
 } from "@/utils/appointmentlock";
 import {
@@ -561,9 +562,15 @@ export async function POST(request: NextRequest) {
     // under it), then the consultee, then the slot atoms — checkout's order.
     // A rival request for the pair that passed the read above is refused by
     // the in-transaction recheck or the pair index, with the same 409.
+    // One deadline for all three tiers: a wait on one is not available to the next.
+    const lockBudget = requestLockBudget();
     let capLock: Awaited<ReturnType<typeof lockRequestCap>>;
     try {
-      capLock = await lockRequestCap(consultantProfileId);
+      capLock = await lockRequestCap(
+        consultantProfileId,
+        undefined,
+        lockBudget,
+      );
     } catch (error) {
       if (error instanceof RequestCapBusyError) {
         return NextResponse.json(
@@ -592,6 +599,7 @@ export async function POST(request: NextRequest) {
         buyerConsultantProfileId: buyerConsultantProfile?.id,
         startsAt,
         endsAt,
+        lockBudget,
       });
       try {
         // Read and rendered before the transaction: a free trial stages only its rows.

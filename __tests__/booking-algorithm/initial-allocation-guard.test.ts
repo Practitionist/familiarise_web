@@ -58,6 +58,9 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
+  requestLockBudget: () => ({}),
+  renewConsulteeBooking: jest.fn(async () => undefined),
+  ConsulteeBookingBusyError: class extends Error {},
   // allocate() takes an existing booking's appointment lock first.
   withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
     fn({ key: "appointment-lock" }),

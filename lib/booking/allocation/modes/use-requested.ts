@@ -19,6 +19,7 @@ import {
   unlockAutoAllocate,
   ALLOCATOR_LOCK_RETRY_CONFIG,
   lockConsulteeBooking,
+  renewConsulteeBooking,
   unlockConsulteeBooking,
   unlockSlotInterval,
   type SlotBatchGrant,
@@ -299,7 +300,6 @@ export async function useRequestedSlots(
 
     return await bookingTransaction(
       async (tx) => {
-        await renewAllocationBatch(slotGrant);
         await lockAllocationTimesInTx(tx, requestedSlots, batchProfiles);
         // Multi-tab guard: another tab already confirmed slots for this
         // event → typed 409 instead of re-approving over it. Advisory-locked
@@ -496,6 +496,11 @@ export async function useRequestedSlots(
         // all three allocation transactions age out the same way.
         maxWait: ALLOCATION_TX_MAX_WAIT_MS,
         timeout: ALLOCATION_TX_TIMEOUT_MS,
+        // Outside the transaction, ahead of every attempt: a lost grant writes nothing.
+        beforeAttempt: async () => {
+          await renewConsulteeBooking(consulteeLock);
+          await renewAllocationBatch(slotGrant);
+        },
       },
     );
   } finally {

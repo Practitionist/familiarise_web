@@ -47,6 +47,7 @@ export function requestCapLockModule(): object {
   return {
     lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
     unlockRequestCap: jest.fn(async () => undefined),
+    requestLockBudget: () => ({}),
     RequestCapBusyError: class extends Error {},
     BookingLockUnavailableError: class extends Error {},
   };

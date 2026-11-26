@@ -91,6 +91,9 @@ jest.mock("../../lib/prisma", () => {
 });
 const lockSlotBatch = jest.fn(async (..._a: unknown[]) => []);
 jest.mock("../../utils/appointmentlock", () => ({
+  requestLockBudget: () => ({}),
+  renewConsulteeBooking: jest.fn(async () => undefined),
+  ConsulteeBookingBusyError: class extends Error {},
   withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
   lockConsulteeBooking: jest.fn(async () => ({})),
   unlockConsulteeBooking: jest.fn(),

@@ -28,6 +28,9 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  requestLockBudget: () => ({}),
+  renewConsulteeBooking: jest.fn(async () => undefined),
+  ConsulteeBookingBusyError: class extends Error {},
   lockAutoAllocate: jest.fn().mockResolvedValue({ key: "auto" }),
   unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
   lockConsulteeBooking: jest.fn().mockResolvedValue({ key: "consultee" }),

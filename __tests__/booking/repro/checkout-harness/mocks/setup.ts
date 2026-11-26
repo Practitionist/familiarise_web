@@ -20,6 +20,7 @@ jest.mock("../../../../../lib/payments/index", () => ({
 jest.mock("../../../../../utils/appointmentlock", () => ({
   __esModule: true,
   CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },
+  requestLockBudget: () => ({ retryCount: 5 }),
   CHECKOUT_LOCK_TTL_MS: {},
   EventFullError: class extends Error {},
   EventCheckoutBusyError: class extends Error {},

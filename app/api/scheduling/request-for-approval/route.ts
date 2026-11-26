@@ -11,7 +11,10 @@ import {
   unlockConsulteeBooking,
   lockRequestCap,
   unlockRequestCap,
+  renewConsulteeBooking,
+  requestLockBudget,
   BookingLockUnavailableError,
+  ConsulteeBookingBusyError,
   LockContentionError,
   RequestCapBusyError,
   type SlotBatchGrant,
@@ -473,8 +476,18 @@ export async function POST(req: NextRequest) {
     try {
       // Lock order: request cap (consultant tier) → consultee → slot batch.
       // The cap's count and the insert below both run under it.
-      requestCapLock = await lockRequestCap(consultantProfileId);
-      consulteeLock = await lockConsulteeBooking(session.user.id);
+      // One deadline for all three tiers: a wait on one is not available to the next.
+      const lockBudget = requestLockBudget();
+      requestCapLock = await lockRequestCap(
+        consultantProfileId,
+        undefined,
+        lockBudget,
+      );
+      consulteeLock = await lockConsulteeBooking(
+        session.user.id,
+        undefined,
+        lockBudget,
+      );
 
       // Under the consultee lock, so a concurrent same-key retry sees the first commit.
       const replayedInLock = await replayRequest(
@@ -521,7 +534,7 @@ export async function POST(req: NextRequest) {
               ]
             : []),
         ];
-        lock = await lockSlotBatch(slotEntries);
+        lock = await lockSlotBatch(slotEntries, undefined, lockBudget);
 
         console.log(
           JSON.stringify({
@@ -558,6 +571,8 @@ export async function POST(req: NextRequest) {
         // say about. The nested create was already atomic on its own; the
         // transaction is what extends that atomicity to the audit row. The
         // budget sits well inside the 60 s slot lock held above.
+        // Re-armed for this one attempt; a grant that is no longer ours writes nothing.
+        await renewConsulteeBooking(consulteeLock);
         const consultation = await prisma.$transaction(
           async (tx) => {
             // The database arbitrates the window before any row is locked or read.
@@ -818,6 +833,9 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        // The consultee key's busy answer is mapped by the outer handler.
+        if (lockError instanceof ConsulteeBookingBusyError) throw lockError;
+
         Sentry.captureException(
           lockError instanceof Error ? lockError : new Error(String(lockError)),
           { tags: { subsystem: "scheduling" } },
@@ -891,6 +909,7 @@ export async function POST(req: NextRequest) {
       );
     }
     if (
+      error instanceof ConsulteeBookingBusyError ||
       error instanceof LockContentionError ||
       error instanceof SlotLockError
     ) {

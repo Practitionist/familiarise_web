@@ -28,6 +28,7 @@ import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleVal
 import {
   lockConsulteeBooking,
   lockSlotBatch,
+  requestLockBudget,
   unlockConsulteeBooking,
   unlockSlotInterval,
   withAppointmentLock,
@@ -495,17 +496,27 @@ export async function rebookIncidentRemedy(args: {
     (id, i, all): id is string => !!id && all.indexOf(id) === i,
   );
   // Global lock order: appointment, then consultee, then one all-or-nothing slot batch.
+  // One deadline for all three tiers: a wait on one is not available to the next.
+  const lockBudget = requestLockBudget();
   const committed = await withAppointmentLock(
     voided.appointmentId,
     async () => {
-      const consulteeLock = await lockConsulteeBooking(args.userId);
+      const consulteeLock = await lockConsulteeBooking(
+        args.userId,
+        undefined,
+        lockBudget,
+      );
       try {
         const slotEntries = slotProfileIds.map((consultantProfileId) => ({
           consultantProfileId,
           startsAt: ctx.startsAt,
           endsAt: ctx.endsAt,
         }));
-        const slotLocks = await lockSlotBatch(slotEntries);
+        const slotLocks = await lockSlotBatch(
+          slotEntries,
+          undefined,
+          lockBudget,
+        );
         try {
           return await prisma.$transaction(
             async (tx) => {
@@ -525,6 +536,7 @@ export async function rebookIncidentRemedy(args: {
         await unlockConsulteeBooking(consulteeLock);
       }
     },
+    lockBudget,
   );
   await notifyRebooked(ctx);
   return {

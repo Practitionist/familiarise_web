@@ -19,6 +19,7 @@ import {
   unlockAutoAllocate,
   ALLOCATOR_LOCK_RETRY_CONFIG,
   lockConsulteeBooking,
+  renewConsulteeBooking,
   unlockConsulteeBooking,
   tryLockSlotBatch,
   unlockSlotInterval,
@@ -523,7 +524,6 @@ export async function autoAllocate(
     // the route's eventMutationLimiter).
     return await bookingTransaction(
       async (tx) => {
-        await renewAllocationBatch(slotGrant);
         await lockAllocationTimesInTx(
           tx,
           selectedSlots,
@@ -733,6 +733,11 @@ export async function autoAllocate(
       {
         maxWait: ALLOCATION_TX_MAX_WAIT_MS,
         timeout: ALLOCATION_TX_TIMEOUT_MS,
+        // Outside the transaction, ahead of every attempt: a lost grant writes nothing.
+        beforeAttempt: async () => {
+          await renewConsulteeBooking(consulteeLock);
+          await renewAllocationBatch(slotGrant);
+        },
       },
     );
   } finally {

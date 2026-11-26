@@ -29,16 +29,28 @@ jest.mock("../../lib/rate-limit", () => ({
 jest.mock("../../lib/profiles/ensure-consultee-profile", () => ({
   ensureConsulteeProfile: jest.fn(async () => undefined),
 }));
-const mockLockSlotBooking = jest.fn(async () => ({ key: "slot" }));
-const mockLockRequestCap = jest.fn(async () => ({ key: "request-cap" }));
+const mockLockSlotBooking = jest.fn(async (..._args: unknown[]) => ({
+  key: "slot",
+}));
+const mockLockRequestCap = jest.fn(async (..._args: unknown[]) => ({
+  key: "request-cap",
+}));
+const mockLockConsulteeBooking = jest.fn(async (..._args: unknown[]) => ({
+  key: "consultee",
+}));
+const MOCK_LOCK_BUDGET = { deadlineAt: 1 };
 jest.mock("../../utils/appointmentlock", () => ({
   lockSlotBatch: (...a: unknown[]) => mockLockSlotBooking(...(a as [])),
   unlockSlotInterval: jest.fn(async () => undefined),
-  lockConsulteeBooking: jest.fn(async () => ({ key: "consultee" })),
+  lockConsulteeBooking: (...a: unknown[]) =>
+    mockLockConsulteeBooking(...(a as [])),
   unlockConsulteeBooking: jest.fn(async () => undefined),
+  renewConsulteeBooking: jest.fn(async () => undefined),
   lockRequestCap: (...a: unknown[]) => mockLockRequestCap(...(a as [])),
   unlockRequestCap: jest.fn(async () => undefined),
+  requestLockBudget: () => MOCK_LOCK_BUDGET,
   BookingLockUnavailableError: class extends Error {},
+  ConsulteeBookingBusyError: class ConsulteeBookingBusyError extends Error {},
   LockContentionError: class extends Error {},
   RequestCapBusyError: class extends Error {},
 }));
@@ -190,7 +202,7 @@ describe("consultant request gate", () => {
     expect(mockLockSlotBooking).toHaveBeenCalledTimes(1);
     // The consultant count runs under the expert's request-cap lock and after
     // the slot batch, inside the insert's own transaction.
-    expect(mockLockRequestCap).toHaveBeenCalledWith("cp_1");
+    expect(mockLockRequestCap.mock.calls[0][0]).toBe("cp_1");
     expect(mockConsultationCount.mock.invocationCallOrder[1]).toBeGreaterThan(
       mockLockSlotBooking.mock.invocationCallOrder[0],
     );
@@ -246,6 +258,32 @@ describe("consultant request gate", () => {
 
 // #1583 B-P1-06 / E-P1-03 — the Zod edge refuses off-grid and too-soon
 // starts with a typed code, and the in-lock check sees the consultee too.
+describe("request-for-approval lock tiers", () => {
+  it("passes one deadline to the cap, consultee and slot tiers", async () => {
+    await POST(request());
+    expect(mockLockRequestCap.mock.calls[0]).toEqual([
+      "cp_1",
+      undefined,
+      MOCK_LOCK_BUDGET,
+    ]);
+    expect(mockLockConsulteeBooking.mock.calls[0][2]).toBe(MOCK_LOCK_BUDGET);
+    expect(mockLockSlotBooking.mock.calls[0][2]).toBe(MOCK_LOCK_BUDGET);
+  });
+
+  it("a consultee key held by another booking → 409 with a retry, never a 500", async () => {
+    const { ConsulteeBookingBusyError } = jest.requireMock(
+      "../../utils/appointmentlock",
+    );
+    mockLockConsulteeBooking.mockRejectedValueOnce(
+      new ConsulteeBookingBusyError(),
+    );
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).retryAfter).toBe(30);
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("request-for-approval slot edge (#1583)", () => {
   it("10:07Z → 400 SLOT_NOT_ON_GRID before any lock", async () => {
     const res = await POST(request("2030-01-01T10:07:00.000Z"));
