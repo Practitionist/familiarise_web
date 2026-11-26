@@ -34,6 +34,12 @@ jest.mock("../../app/api/webhooks/utils", () => ({
     handleRazorpayPayoutWebhook(...args),
 }));
 
+// Routing reads the app's rows; in this suite handlers are mocked and every order is a booking payment's.
+jest.mock("../../lib/payments/webhooks/capture-rail", () => ({
+  ...jest.requireActual("../../lib/payments/webhooks/capture-rail"),
+  resolveCaptureRail: jest.fn(async () => ({ rail: "booking" })),
+}));
+
 jest.mock("../../lib/payments/webhooks/overage-handlers", () => ({
   __esModule: true,
   handleOverageMemberSuccess: jest.fn(),
@@ -192,17 +198,18 @@ describe("dispute lifecycle event routing", () => {
   });
 });
 
-describe("schema mismatch is terminal (FAMILIARISE_WEB-3W)", () => {
-  it("stamps a payment.captured payload missing required fields with the permanent: prefix", async () => {
-    // Before the fix the raw ZodError message was stored, so the sweeper
-    // re-drove the row every tick for the whole 168-hour give-up window.
+describe("schema mismatch ends terminal", () => {
+  it("stamps a payment.captured payload missing required fields with the permanent: prefix once its retry window has passed", async () => {
+    // A money event is re-driven for a day, not for the 168-hour give-up window.
     await processRazorpayWebhookEvent(
       {
         event: "payment.captured",
         payload: { payment: { entity: { id: "pay_S4Priya00000001" } } },
-      } as never,
+      },
       "payment.captured",
       "payment.captured:pay_S4Priya00000001",
+      undefined,
+      new Date(Date.now() - 25 * 3_600_000),
     );
     expect(markWebhookEventProcessed).toHaveBeenCalledTimes(1);
     const [eventId, error] = markWebhookEventProcessed.mock.calls[0];
@@ -277,6 +284,8 @@ describe("order.paid carries the payment entity (#1582 F-P0-01)", () => {
       { type: "booking" },
       118000,
       "pay_OrderPaid000001",
+      // The payment entity's own time rides along for the hold-deadline rule.
+      { gatewayCapturedAt: new Date(1_700_000_000 * 1000) },
     );
   });
 });

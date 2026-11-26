@@ -70,6 +70,8 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(),
       updateMany: jest.fn(),
     },
+    // No declared incident is waiting for its enumeration.
+    platformIncident: { findMany: async () => [] },
     $transaction: jest.fn(),
     $disconnect: jest.fn().mockResolvedValue(undefined),
   },

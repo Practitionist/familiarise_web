@@ -43,7 +43,8 @@ import {
   razorpayPayoutErrorSchema,
   fundAccountValidationEntitySchema,
   disputeUpdateEntitySchema,
-  type RazorpayWebhookEnvelope,
+  gatewayPaymentTime,
+  razorpayWebhookEnvelopeSchema,
 } from "@/schemas/webhooks/razorpay";
 import { handleFundAccountValidationWebhook } from "@/lib/payments/payouts/reverse-penny-drop";
 import {
@@ -57,7 +58,16 @@ import {
   type PayerInstrumentFields,
 } from "@/lib/payments/payer-instruments";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
-import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
+import {
+  errorMessageOf,
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
+import {
+  railNamedByNotes,
+  resolveCaptureRail,
+  type CaptureRail,
+} from "@/lib/payments/webhooks/capture-rail";
 import { z, ZodError } from "zod";
 
 const DISPUTE_EVENT_VERDICT: Partial<Record<string, string>> = {
@@ -71,11 +81,8 @@ const refundEntitySchema = z.object({
   amount: z.number(),
   currency: z.string().optional(),
   status: z.string(),
-  speed_requested: z.enum(["normal", "optimum"]).nullable().optional(),
-  speed_processed: z
-    .enum(["normal", "instant", "optimum"])
-    .nullable()
-    .optional(),
+  speed_requested: z.string().nullable().optional(),
+  speed_processed: z.string().nullable().optional(),
   notes: razorpayNotesSchema,
 });
 
@@ -116,24 +123,52 @@ function payloadFee(entity: {
 }
 
 /**
- * Route a captured payment to the handler its `notes.type` selects.
- *
- * Extracted because there are now three callers — `payment.captured`,
- * `order.paid`, and the client-return path in
- * `app/api/checkout/verify-signature/route.ts` — and the routing MUST be
- * identical across all of them. Before #ADR-21 the verify-signature path had no
- * routing at all: it flipped `Payment.paymentStatus` to SUCCEEDED directly,
- * which made the later webhook hit `handlePaymentSuccess`'s already-SUCCEEDED
- * early-return and skip appointment confirmation, earnings, the
- * `booking:<paymentId>` journal entry and the capture-amount parity check.
- *
- * Every handler below is idempotent, so whichever caller arrives first does the
- * work and the others are no-ops.
+ * The rail an order belongs to: its own row decides. Notes are a cross-check
+ * against that row, and select a rail only for an order no row names (a
+ * purchase deleted since, an invoice whose order was replaced or cleared).
+ */
+async function captureRailFor(
+  orderId: string,
+  notes: Record<string, string>,
+): Promise<CaptureRail> {
+  const byRows = await resolveCaptureRail(prisma, orderId);
+  const claimed = railNamedByNotes(notes);
+  if (byRows.rail === "unknown") {
+    if (claimed === "wallet_top_up" || claimed === "org_invoice") {
+      return { rail: claimed, notes };
+    }
+    return { rail: claimed ?? "booking" };
+  }
+  // A replaced overage order's tombstone is a parentless Payment row: the
+  // booking writer refunds it as a late capture, so that pairing is no conflict.
+  const replacedOverageOrder =
+    byRows.rail === "booking" && claimed === "overage";
+  if (claimed && claimed !== byRows.rail && !replacedOverageOrder) {
+    reportSentryMessage(
+      "Gateway notes name a different rail than the order's row",
+      {
+        subsystem: "payments",
+        op: "razorpay.capture_rail",
+        level: "warning",
+        expected: true,
+        extra: { orderId, rowRail: byRows.rail, notesRail: claimed },
+      },
+    );
+  }
+  return byRows;
+}
+
+/**
+ * Route a captured payment to the handler of the rail its order belongs to.
+ * Every door calls this (both capture webhooks, the two client-return routes,
+ * the top-up verify route and the reconcile sweeps), so the routing is the
+ * same wherever a capture is first seen. Every handler is idempotent:
+ * whichever caller arrives first does the work and the others are no-ops.
  */
 export async function routeCapturedPayment(params: {
   /** Razorpay order id — this is what `Payment.paymentIntent` stores. */
   orderId: string;
-  /** `notes` from the Razorpay order/payment entity; selects the handler. */
+  /** `notes` from the Razorpay order or payment entity; the booking and standalone-sale handlers read them, the rail does not. */
   notes: Record<string, string>;
   /** Captured amount in paise, for the parity check. */
   amountPaise?: number;
@@ -145,6 +180,8 @@ export async function routeCapturedPayment(params: {
   gatewayPaymentId?: string;
   /** Razorpay's `method`; the standalone sale rails record it on their Payment. */
   method?: string;
+  /** The gateway's own time for the payment; a seat hold still live then is honoured. */
+  gatewayCapturedAt?: Date;
   /** Gateway fee (GST included) and its GST, from the webhook's payment entity only. */
   fee?: { feePaise: number; taxPaise: number };
   /** The webhook payment entity's payer fields, hashed onto the Payment for the referral vest. */
@@ -169,8 +206,10 @@ async function dispatchCapturedPayment(params: {
   amountPaise?: number;
   gatewayPaymentId?: string;
   method?: string;
+  gatewayCapturedAt?: Date;
 }): Promise<void> {
   const { orderId, notes, amountPaise, gatewayPaymentId, method } = params;
+  const { gatewayCapturedAt } = params;
 
   // #1861 P4b — IDs only. `orderId` is what Payment.paymentIntent stores;
   // an internal Payment.id or appointmentId is not yet resolved at this
@@ -178,69 +217,79 @@ async function dispatchCapturedPayment(params: {
   // is what's known here.
   Sentry.getCurrentScope().setTag("gatewayOrderId", orderId);
 
-  if (notes.type === "credit_purchase" || notes.type === "invoice_payment") {
-    // The org path only trusts an amount that came off a PAYMENT entity. On
-    // `order.paid` the figure available is the order total, not what was
-    // actually settled, so passing it could mark an invoice PAID on a partial
-    // payment. Withholding it keeps the documented conservative behaviour in
-    // handleOrgPaymentSuccess ("no payment id -> refuse to mark PAID").
-    await handleOrgPaymentSuccess(
-      notes,
-      gatewayPaymentId,
-      gatewayPaymentId ? amountPaise : undefined,
-    );
-    return;
+  const rail = await captureRailFor(orderId, notes);
+  // No rail settles on an order total: without a payment entity the amount is withheld.
+  const capturedPaise = gatewayPaymentId ? amountPaise : undefined;
+  switch (rail.rail) {
+    case "wallet_top_up":
+    case "org_invoice":
+      await handleOrgPaymentSuccess(
+        rail.notes,
+        gatewayPaymentId,
+        capturedPaise,
+      );
+      return;
+    case "overage":
+      await handleOverageMemberSuccess(
+        orderId,
+        capturedPaise,
+        gatewayPaymentId,
+      );
+      return;
+    case "recording_purchase":
+      await handleRecordingPurchaseSuccess(
+        orderId,
+        gatewayPaymentId,
+        notes,
+        capturedPaise,
+        method,
+      );
+      return;
+    case "digital_product_purchase":
+      await handleDigitalProductPurchaseSuccess(
+        orderId,
+        gatewayPaymentId,
+        notes,
+        capturedPaise,
+        method,
+      );
+      return;
+    default:
+      // The booking pipeline stores the `pay_` id on the Payment row it confirms.
+      await (gatewayCapturedAt
+        ? handlePaymentSuccess(orderId, notes, amountPaise, gatewayPaymentId, {
+            gatewayCapturedAt,
+          })
+        : handlePaymentSuccess(orderId, notes, amountPaise, gatewayPaymentId));
   }
-  if (notes.type === "overage_member") {
-    // Settle only on gateway truth; withhold order total without a payment entity.
-    await handleOverageMemberSuccess(
-      orderId,
-      gatewayPaymentId ? amountPaise : undefined,
-      gatewayPaymentId,
-    );
-    return;
-  }
-  if (notes.type === "recording_purchase") {
-    // #366 — standalone replay sale; not a Payment row, settled on its own
-    // RecordingPurchase record (idempotent per gatewayOrderId). Withhold the
-    // order total without a payment entity, like the org and overage rails.
-    await handleRecordingPurchaseSuccess(
-      orderId,
-      gatewayPaymentId,
-      notes,
-      gatewayPaymentId ? amountPaise : undefined,
-      method,
-    );
-    return;
-  }
-  if (notes.type === "digital_product_purchase") {
-    // Settled on its own DigitalProductPurchase row; withhold the order total without a payment entity.
-    await handleDigitalProductPurchaseSuccess(
-      orderId,
-      gatewayPaymentId,
-      notes,
-      gatewayPaymentId ? amountPaise : undefined,
-      method,
-    );
-    return;
-  }
-  // #1353 — the B2C pipeline persists the `pay_…` id on the Payment row it is
-  // already the single writer of, so later refund and dispute webhooks (which
-  // carry only that id) can find the row without a live gateway lookup.
-  await handlePaymentSuccess(orderId, notes, amountPaise, gatewayPaymentId);
 }
 
+/** Events that move or describe money: a shape the handlers cannot read is retried before it is given up. */
+const MONEY_EVENT_PREFIXES = [
+  "payment.",
+  "order.",
+  "refund.",
+  "payout.",
+  "fund_account.validation.",
+];
+
+/** How long after receipt a money event with an unreadable shape stays retryable. */
+const SCHEMA_MISMATCH_RETRY_MS = 24 * 3_600_000;
+
 /**
- * Process a Razorpay webhook event. Called via the route's `after()` callback
- * AND by the stuck-webhook sweeper on replay. Errors are caught and recorded on
- * the WebhookEvent row (via markWebhookEventProcessed) for retry/observability.
+ * Process a stored Razorpay webhook event. Called via the route's `after()`
+ * callback and by the stuck-webhook sweeper on replay. The event arrives as
+ * stored, unvalidated; every parse happens here, and a failure is recorded on
+ * the WebhookEvent row (via markWebhookEventProcessed), never thrown.
  */
 export async function processRazorpayWebhookEvent(
-  event: RazorpayWebhookEnvelope,
+  rawEvent: unknown,
   eventType: string,
   eventId: string,
-  /** The live route's claim on the row; the sweeper re-drive passes none. */
+  /** The caller's claim on the row. */
   claim?: WebhookClaim,
+  /** When the row was first stored; absent on the delivery that stored it. */
+  receivedAt?: Date,
 ): Promise<void> {
   // PII-scrub the payload before logging — Razorpay payloads can carry
   // payer email/phone/contact, partial card/UPI fingerprints, and any
@@ -248,7 +297,7 @@ export async function processRazorpayWebhookEvent(
   // lib/logging/webhook-scrub.ts for the redaction rules.
   console.log(`🔔 Razorpay Webhook Event: ${eventType}`, {
     eventId,
-    payload: scrubWebhookPayload(event.payload),
+    event: scrubWebhookPayload(rawEvent),
   });
   Sentry.logger.info(
     Sentry.logger.fmt`razorpay dispatch: handling ${eventType}`,
@@ -262,6 +311,7 @@ export async function processRazorpayWebhookEvent(
   let deferred = false;
 
   try {
+    const event = razorpayWebhookEnvelopeSchema.parse(rawEvent);
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
@@ -272,6 +322,7 @@ export async function processRazorpayWebhookEvent(
           amountPaise: capturedEntity.amount,
           gatewayPaymentId: capturedEntity.id,
           method: capturedEntity.method,
+          gatewayCapturedAt: gatewayPaymentTime(capturedEntity.created_at),
           fee: payloadFee(capturedEntity),
           payer: capturedEntity,
         });
@@ -287,6 +338,7 @@ export async function processRazorpayWebhookEvent(
           amountPaise: paidEntity?.amount,
           gatewayPaymentId: paidEntity?.id,
           method: paidEntity?.method,
+          gatewayCapturedAt: gatewayPaymentTime(paidEntity?.created_at),
           fee: paidEntity ? payloadFee(paidEntity) : undefined,
           payer: paidEntity,
         });
@@ -296,25 +348,31 @@ export async function processRazorpayWebhookEvent(
       case "payment.failed": {
         const failedEvent = razorpayPaymentFailedEventSchema.parse(event);
         const failedEntity = failedEvent.payload.payment.entity;
-        const failedNotes = failedEntity.notes;
         const failedOrderId = failedEntity.order_id ?? "";
-        if (
-          failedNotes.type === "credit_purchase" ||
-          failedNotes.type === "invoice_payment"
-        ) {
-          await handleOrgPaymentFailure(failedNotes, failedEntity.id);
-        } else if (failedNotes.type === "overage_member") {
-          await handleOverageMemberFailure(failedOrderId);
-        } else if (failedNotes.type === "recording_purchase") {
-          await handleRecordingPurchaseFailure(failedOrderId);
-        } else if (failedNotes.type === "digital_product_purchase") {
-          await handleDigitalProductPurchaseFailure(failedOrderId);
-        } else {
-          await handlePaymentFailure(
-            failedOrderId,
-            failedEntity.error_description ?? undefined,
-            failedEntity.id,
-          );
+        const failedRail = await captureRailFor(
+          failedOrderId,
+          failedEntity.notes,
+        );
+        switch (failedRail.rail) {
+          case "wallet_top_up":
+          case "org_invoice":
+            await handleOrgPaymentFailure(failedRail.notes, failedEntity.id);
+            break;
+          case "overage":
+            await handleOverageMemberFailure(failedOrderId);
+            break;
+          case "recording_purchase":
+            await handleRecordingPurchaseFailure(failedOrderId);
+            break;
+          case "digital_product_purchase":
+            await handleDigitalProductPurchaseFailure(failedOrderId);
+            break;
+          default:
+            await handlePaymentFailure(
+              failedOrderId,
+              failedEntity.error_description ?? undefined,
+              failedEntity.id,
+            );
         }
         break;
       }
@@ -616,24 +674,36 @@ export async function processRazorpayWebhookEvent(
         .slice(0, 5)
         .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
         .join("; ");
-      processingError = permanentFailure(
-        `schema mismatch: ${eventType} — ${detail}`.slice(0, 500),
+      const mismatch = `schema mismatch: ${eventType} — ${detail}`.slice(
+        0,
+        500,
       );
+      // A money event stays in the sweeper's queue for a bounded time, so a
+      // decoder deployed inside it imports the event with no operator step.
+      const retryable =
+        MONEY_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix)) &&
+        Date.now() - (receivedAt?.getTime() ?? Date.now()) <
+          SCHEMA_MISMATCH_RETRY_MS;
+      processingError = retryable ? mismatch : permanentFailure(mismatch);
       console.error(
-        `Razorpay webhook ${eventId} is permanently unprocessable:`,
+        `Razorpay webhook ${eventId} failed schema validation (${retryable ? "retryable" : "permanent"}):`,
         detail,
       );
-      reportSentryError(
-        new Error(`Razorpay ${eventType} payload failed schema validation`),
-        {
-          subsystem: "payments",
-          op: "razorpay.schema_mismatch",
-          expected: true,
-          level: "warning",
-          tags: { provider: "razorpay" },
-          contexts: { dispatch: { eventType, eventId, detail } },
-        },
-      );
+      // Once when first met and once when given up; the sweeper's own run
+      // report covers the re-drives in between.
+      if (!retryable || !receivedAt) {
+        reportSentryError(
+          new Error(`Razorpay ${eventType} payload failed schema validation`),
+          {
+            subsystem: "payments",
+            op: "razorpay.schema_mismatch",
+            expected: true,
+            level: "warning",
+            tags: { provider: "razorpay", permanent: String(!retryable) },
+            contexts: { dispatch: { eventType, eventId, detail } },
+          },
+        );
+      }
     } else {
       processingError = errorMessageOf(handlerError);
       console.error(

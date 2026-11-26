@@ -27,16 +27,17 @@ This repo has a single canonical webhook endpoint at `app/api/webhooks/razorpay/
    - Supports zero-downtime rotation: checks `RAZORPAY_WEBHOOK_SECRET` first, then falls back to `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` (and `RAZORPAYX_WEBHOOK_SECRET` on payout / fund-account events) using length-guarded `crypto.timingSafeEqual`.
 2. **Idempotency via `WebhookEvent` (`lib/webhooks/event-log.ts`)**:
    - `app/api/webhooks/razorpay/route.ts` deliberately ignores the unsigned `x-razorpay-event-id` header and derives `eventId` deterministically from the HMAC-verified body (`${eventType}:${entityId}:${bodyDigest}`, or `body_${bodyDigest}` fallback).
-   - Claims the event atomically via `logWebhookEvent` before running handlers; marks it completed on `200` or failed on error.
+   - Stores the signed event and claims it atomically via `logWebhookEvent` before any schema runs; the route reads only the event name and entity ids (`readRazorpayIngress`) and always answers `200` to a verified delivery. Dispatch marks the row completed, or writes the parse or handler error on it.
 3. **Zod Schema Validation (`schemas/webhooks/razorpay.ts`)**:
+   - Runs inside dispatch, never in the route: the loose envelope, then the strict schema of the handler the event routes to. A Zod failure on a money event is `schema mismatch: …` (re-driven by the sweeper for 24 hours from receipt), then `permanent: schema mismatch: …`; on any other event it is permanent at once.
    - Validates webhook envelope and per-event payloads across `payment.*`, `order.*`, `refund.*`, `payment.dispute.*`, `payout.*`, and `fund_account.validation.*`.
    - Important field nuances:
-     - `refund.entity.speed_requested`: `z.enum(["normal", "optimum"]).nullable().optional()` (NEVER `"instant"`).
-     - `refund.entity.speed_processed`: `z.enum(["normal", "instant", "optimum"]).nullable().optional()`.
+     - `refund.entity.speed_requested` and `refund.entity.speed_processed`: plain nullable strings in the envelope and in the dispatcher's refund entity (documented values: `normal`, `optimum`, and `instant` for `speed_processed` only). A value the app has not seen is stored and imported, not rejected.
+     - `dispute.entity.deduct_at_onset`: untyped in the envelope; the dispute handler's own entity schema parses it.
      - `payout.entity.status_details` & `payout.entity.error`: `{ reason, description, source }` (fallbacks alongside `failure_reason`).
      - `fund_account.validation.entity`: supports both `results` (official REST/webhook field) and `validation_results` fallback.
 4. **Event Dispatch (`app/api/webhooks/razorpay-dispatch.ts`)**:
-   - `payment.captured`, `payment.failed`, `order.paid`: routed to `lib/payments/webhooks/handlers.ts` / `routeCapturedPayment`. Note that `order.paid` carries both `payload.order.entity` and `payload.payment.entity`.
+   - `payment.captured`, `payment.failed`, `order.paid`: routed to `lib/payments/webhooks/handlers.ts` / `routeCapturedPayment`. The rail (booking, overage, replay, digital product, wallet top-up, organisation invoice) comes from the app's own rows for the order id (`resolveCaptureRail` in `lib/payments/webhooks/capture-rail.ts`); `notes.type` is a cross-check and never selects a rail a row can name. Note that `order.paid` carries both `payload.order.entity` and `payload.payment.entity`.
    - `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`: routed to `handleRefundCreated` (`app/api/webhooks/utils.ts`) and metadata persistence on `Refund`.
    - `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`: routed to `handleDisputeCreated` / `handleDisputeUpdated` (`app/api/webhooks/utils.ts`).
    - `payout.initiated`, `payout.updated`, `payout.processed`, `payout.reversed`, `payout.failed`, `payout.rejected`, `payout.queued`, `payout.pending`, `payout.cancelled`: routed to `handleRazorpayPayoutWebhook` (`app/api/webhooks/utils.ts` → `handlePayoutWebhook` in `lib/payments/payouts/payout-service.ts` and `markOrgPayout*` in `lib/payments/payouts/org-payout-service.ts`), extracting failure reason from `failure_reason ?? status_details?.description ?? status_details?.reason ?? error?.description ?? error?.reason`.

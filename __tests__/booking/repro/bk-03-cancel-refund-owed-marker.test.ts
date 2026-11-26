@@ -26,6 +26,9 @@ const makeTx = () => ({
     findMany: async () => [],
     count: async () => 0,
   },
+  // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+  consultantEarnings: { findMany: async () => [] },
+  organizationEarnings: { findMany: async () => [] },
   consultation: { findUnique: async () => ({ status: "SCHEDULED" }) },
   streamRevocationRetry: createMockRevocationRetryTable(),
 });

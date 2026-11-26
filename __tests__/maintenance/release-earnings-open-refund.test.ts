@@ -2,80 +2,85 @@
  * @jest-environment node
  */
 
-/**
- * #1775 P-2 — the release sweep moved PENDING earnings past their hold to
- * READY without reading refunds, so a seat whose refund was still in flight
- * could be paid out. The open-refund predicate rides the cohort AND the CAS.
- */
+// Invariant: an earning is not released while a cash refund on its payment is
+// PENDING, or SUCCEEDED with its cascade not yet applied; the claim restates it.
 
-jest.mock("../../lib/cron/with-cron-lock", () => ({
-  __esModule: true,
-  withCronLock: jest.fn(
-    async (_key: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
-  ),
-}));
+jest.mock("../../lib/cron/with-cron-lock", () =>
+  jest.requireActual("../fixtures/earnings-release-world").cronLockModule(),
+);
 
-type Where = {
-  status?: string;
-  payment?: { refunds?: { none?: { status?: string } } };
-};
-const refundStatus: Record<string, string> = { ce_1: "PENDING" };
-const matches = (id: string, where: Where) =>
-  !where.payment?.refunds?.none ||
-  refundStatus[id] !== where.payment.refunds.none.status;
-const ROW = {
-  id: "ce_1",
-  status: "PENDING",
-  holdUntil: new Date("2026-06-01T00:00:00.000Z"),
-  consultantSharePaise: 90_000,
-  consultantProfile: { user: { name: "C", email: "c@x" } },
-  payment: { id: "pay_1", amount: 100_000 },
-};
-
-jest.mock("../../lib/prisma", () => {
-  const consultantEarnings = {
-    findMany: jest.fn(async ({ where }: { where: Where }) =>
-      matches(ROW.id, where) ? [ROW] : [],
-    ),
-    updateMany: jest.fn(async ({ where }: { where: Where }) => ({
-      count: matches(ROW.id, where) ? 1 : 0,
-    })),
-  };
-  const organizationEarnings = {
-    findMany: jest.fn(async () => []),
-    updateMany: jest.fn(async () => ({ count: 0 })),
-  };
-  const client = { consultantEarnings, organizationEarnings };
-  return {
-    __esModule: true,
-    default: {
-      ...client,
-      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
-      $disconnect: jest.fn(),
-    },
-  };
-});
+jest.mock("../../lib/prisma", () =>
+  jest
+    .requireActual("../fixtures/earnings-release-world")
+    .earningsPrismaModule(),
+);
 
 import prisma from "@/lib/prisma";
+import type { Row } from "../fixtures/mem-db";
+import {
+  seedEarnings,
+  type EarningsTable as Table,
+} from "../fixtures/earnings-release-world";
 import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
-it("holds an earning while its payment has a PENDING refund, releases it once settled", async () => {
-  const held = await releaseEarningsFromHold();
-  expect(held.releasedCount).toBe(0);
-  const claim = (prisma.consultantEarnings.updateMany as jest.Mock).mock
-    .calls[0][0];
-  expect(claim.where.payment.refunds.none.status).toBe("PENDING");
+const consultantEarnings = prisma.consultantEarnings as unknown as Table;
+const organizationEarnings = prisma.organizationEarnings as unknown as Table;
 
-  refundStatus.ce_1 = "SUCCEEDED";
-  const released = await releaseEarningsFromHold();
-  expect(released.releasedCount).toBe(1);
+const payment: Row = {
+  id: "pay_1",
+  amount: 100_000,
+  appointmentId: null,
+  refundOwedKey: null,
+  refunds: [],
+};
+
+function seedWithRefund(refund: Row) {
+  payment.refunds = [refund];
+  seedEarnings(
+    { consultantEarnings, organizationEarnings },
+    "PENDING",
+    payment,
+  );
+}
+
+beforeEach(() => jest.clearAllMocks());
+
+it.each([
+  ["a PENDING refund", { status: "PENDING", cascadedAt: null }, 0],
+  [
+    "a SUCCEEDED refund whose cascade has not run",
+    { status: "SUCCEEDED", cascadedAt: null },
+    0,
+  ],
+  [
+    "a SUCCEEDED refund already cascaded",
+    { status: "SUCCEEDED", cascadedAt: new Date("2026-09-01") },
+    1,
+  ],
+  ["a FAILED refund", { status: "FAILED", cascadedAt: null }, 1],
+  [
+    "a zero-amount credit restoration",
+    { status: "SUCCEEDED", cascadedAt: null, amountPaise: 0 },
+    1,
+  ],
+])("%s on the payment releases %#: both arms agree", async (_l, refund, n) => {
+  seedWithRefund({ amountPaise: 5_000, ...refund });
+
+  const out = await releaseEarningsFromHold();
+
+  expect(out).toMatchObject({
+    releasedCount: n,
+    organizationEarningsReleased: n,
+  });
+  expect(consultantEarnings.rows[0].status).toBe(n ? "READY" : "PENDING");
+  expect(organizationEarnings.rows[0].status).toBe(n ? "READY" : "PENDING");
 });
 
-it("#1569 D10 — the claim also keeps an earning whose booking owes a miss PENDING", async () => {
+it("the claim also keeps an earning whose booking owes a miss PENDING", async () => {
+  seedWithRefund({ amountPaise: 5_000, status: "FAILED", cascadedAt: null });
   await releaseEarningsFromHold();
-  const claim = (prisma.consultantEarnings.updateMany as jest.Mock).mock
-    .calls[0][0];
-  expect(claim.where.payment.OR).toEqual([
+  const claim = consultantEarnings.updateMany.mock.calls[0][0];
+  expect((claim.where as { payment: { OR: unknown } }).payment.OR).toEqual([
     { appointmentId: null },
     {
       appointment: {

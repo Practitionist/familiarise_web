@@ -80,6 +80,7 @@ import {
   resolvePayoutMsmeDeadline,
 } from "./shared-lifecycle";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import { NO_MONEY_OWED_PAYMENT } from "@/scripts/earnings/release-earnings";
 
 export class PayoutLockError extends Error {
   readonly code = "PAYOUT_LOCK_CONFLICT" as const;
@@ -249,6 +250,7 @@ export async function getOrgPayoutEligibility(
       organizationId: orgId,
       status: "READY",
       orgPayoutId: null,
+      payment: NO_MONEY_OWED_PAYMENT,
     },
     _sum: { orgSharePaise: true, refundedAmountPaise: true },
     _count: true,
@@ -375,11 +377,13 @@ export async function createOrgPayoutBatch(
             });
 
             const claim = await tx.organizationEarnings.updateMany({
+              // An earning with money owed back on its payment stays READY for a later batch.
               where: {
                 organizationId: orgId,
                 status: "READY",
                 orgPayoutId: null,
                 createdAt: { gte: periodStart, lt: periodEnd },
+                payment: NO_MONEY_OWED_PAYMENT,
               },
               data: { orgPayoutId: created.id },
             });
@@ -688,7 +692,7 @@ async function checkOrgPayoutDisputeOrRefundBlock(
   });
   if (uncascadedRefundEarning) {
     console.warn(
-      `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has an in-flight or uncascaded refund`,
+      `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a refund in flight or owed`,
     );
     return readOrgPayoutCurrentStatus(tx, payoutId);
   }
@@ -2473,6 +2477,7 @@ export async function createOrgPayoutBatches(opts?: {
       status: "READY",
       orgPayoutId: null,
       createdAt: { lt: periodEnd },
+      payment: NO_MONEY_OWED_PAYMENT,
     },
     orderBy: { organizationId: "asc" },
     _count: true,

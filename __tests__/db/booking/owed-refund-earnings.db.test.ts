@@ -359,12 +359,13 @@ describe("earnings wait for a plan-end refund that is still owed", () => {
     const s = await seedEndedPlan();
     await settleWithFailingGatewayAndLetHoldsLapse(s);
     const key = planEndRefundKey(s.subscriptionId, s.paymentId);
-    // A spent marker whose own refund in fact succeeded.
+    // A spent marker whose own refund in fact succeeded and has been applied.
     await prisma.refund.create({
       data: {
         paymentId: s.paymentId,
         amountPaise: BigInt(PRICE / 4),
         status: "SUCCEEDED",
+        cascadedAt: new Date(),
         refundId: `rfnd_done_${randomUUID()}`,
         dedupeKey: key,
         paymentGateway: "RAZORPAY",

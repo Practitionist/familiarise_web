@@ -298,15 +298,40 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
         "pay_attempt_1",
       );
 
+      // The hold stays PENDING and the failed attempt's id is not stored on it.
+      expect(paymentMock.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("fails a lapsed hold only by compare-and-set on the order and deadline it read", async () => {
+      const db = getMockDb();
+      const lapsed = new Date(Date.now() - 60_000);
+      const paymentMock = {
+        findUnique: jest.fn(async () => ({
+          id: "pay_row_2",
+          paymentIntent: "order_lapsed_hold",
+          paymentStatus: "PENDING",
+          expiresAt: lapsed,
+          appointmentId: null,
+        })),
+        // A checkout re-minted on the row since the read matches nothing.
+        updateMany: jest.fn(async () => ({ count: 0 })),
+      };
+      db.payment = paymentMock;
+      db.__tx.payment = paymentMock;
+
+      const { handlePaymentFailure } =
+        await import("../../lib/payments/webhooks/handlers");
+      await handlePaymentFailure("order_lapsed_hold", "Insufficient funds");
+
+      expect(paymentMock.updateMany).toHaveBeenCalledTimes(1);
       expect(paymentMock.updateMany).toHaveBeenCalledWith({
         where: {
-          id: "pay_row_1",
+          id: "pay_row_2",
           paymentStatus: "PENDING",
-          gatewayPaymentId: null,
+          paymentIntent: "order_lapsed_hold",
+          expiresAt: lapsed,
         },
-        data: {
-          gatewayPaymentId: "pay_attempt_1",
-        },
+        data: { paymentStatus: "FAILED" },
       });
     });
 

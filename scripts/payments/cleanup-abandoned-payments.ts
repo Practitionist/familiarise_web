@@ -407,9 +407,16 @@ async function expirePendingPayments(
   const expired: AbandonedPayment[] = [];
   // One-at-a-time and in cohort order: a deterministic write sequence.
   for (const payment of payments) {
-    // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
+    // Conditional on the row as it was read: a capture racing this sweep keeps
+    // SUCCEEDED, and a checkout re-minted on the row since (another order, or
+    // a new hold deadline) is left alone.
     const { count } = await tx.payment.updateMany({
-      where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+      where: {
+        id: payment.id,
+        paymentStatus: PaymentStatus.PENDING,
+        paymentIntent: payment.paymentIntent,
+        expiresAt: payment.expiresAt,
+      },
       data: { paymentStatus: PaymentStatus.EXPIRED },
     });
     if (count === 1) {
@@ -832,8 +839,14 @@ async function cleanupAbandonedAppointment(
  */
 export async function retireOrphanPendingPayment(
   paymentId: string,
+  /** The order the caller asked the gateway about; a row re-minted since is not retired. */
+  paymentIntent: string,
 ): Promise<{ outcome: "retired" | "skipped"; errors: string[] }> {
-  const orphan = { id: paymentId, paymentStatus: PaymentStatus.PENDING };
+  const orphan = {
+    id: paymentId,
+    paymentStatus: PaymentStatus.PENDING,
+    paymentIntent,
+  };
   const appointment = await prisma.appointment.findFirst({
     where: { payment: { some: orphan } },
     include: {
@@ -870,9 +883,10 @@ export async function retireOrphanPendingPayment(
   }
 
   const claimed = await prisma.$transaction(async (tx) => {
-    // Conditional on PENDING: a capture racing this keeps SUCCEEDED.
+    // Conditional on PENDING and on the order: a capture racing this keeps
+    // SUCCEEDED, and a re-minted checkout keeps its row.
     const { count } = await tx.payment.updateMany({
-      where: { id: paymentId, paymentStatus: PaymentStatus.PENDING },
+      where: orphan,
       data: { paymentStatus: PaymentStatus.EXPIRED },
     });
     if (count === 0) return false;

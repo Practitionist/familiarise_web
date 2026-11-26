@@ -104,6 +104,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+// Routing reads the app's rows; in this suite every order is a booking payment's.
+jest.mock("../../lib/payments/webhooks/capture-rail", () => ({
+  ...jest.requireActual("../../lib/payments/webhooks/capture-rail"),
+  resolveCaptureRail: jest.fn(async () => ({ rail: "booking" })),
+}));
+
 jest.mock("../../lib/payments/payouts", () => ({
   createEarningsFromPayment: (...a: unknown[]) =>
     mockParityState.createEarningsFromPayment(...a),
