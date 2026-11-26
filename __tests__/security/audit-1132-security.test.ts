@@ -59,9 +59,9 @@ describe("Razorpay webhook dedup key (#1132)", () => {
   // idempotency key and the second partial refund was dropped as a duplicate —
   // after the money had already left.
   it("probes refund and dispute before payment", () => {
-    const idxRefund = src.indexOf("payload?.refund?.entity?.id");
-    const idxDispute = src.indexOf("payload?.dispute?.entity?.id");
-    const idxPayment = src.indexOf("payload?.payment?.entity?.id");
+    const idxRefund = src.indexOf('ingress.entityId("refund")');
+    const idxDispute = src.indexOf('ingress.entityId("dispute")');
+    const idxPayment = src.indexOf('ingress.entityId("payment")');
 
     expect(idxRefund).toBeGreaterThan(-1);
     expect(idxDispute).toBeGreaterThan(-1);
@@ -72,34 +72,55 @@ describe("Razorpay webhook dedup key (#1132)", () => {
 });
 
 describe("Outbound webhook egress guard (#1132)", () => {
-  const expectBlocked = async (url: string) =>
-    expect(assertPublicUrl(url)).rejects.toBeInstanceOf(SsrfBlockedError);
-
   it("blocks cloud metadata and loopback by literal IP", async () => {
-    await expectBlocked("https://169.254.169.254/latest/meta-data/");
-    await expectBlocked("https://127.0.0.1/hook");
-    await expectBlocked("https://[::1]/hook");
+    for (const url of [
+      "https://169.254.169.254/latest/meta-data/",
+      "https://127.0.0.1/hook",
+      "https://[::1]/hook",
+    ]) {
+      await expect(assertPublicUrl(url)).rejects.toBeInstanceOf(
+        SsrfBlockedError,
+      );
+    }
   });
 
   it("blocks RFC1918 and CGNAT ranges", async () => {
-    await expectBlocked("https://10.0.0.5/hook");
-    await expectBlocked("https://172.16.0.1/hook");
-    await expectBlocked("https://192.168.1.1/hook");
-    await expectBlocked("https://100.64.0.1/hook");
+    for (const url of [
+      "https://10.0.0.5/hook",
+      "https://172.16.0.1/hook",
+      "https://192.168.1.1/hook",
+      "https://100.64.0.1/hook",
+    ]) {
+      await expect(assertPublicUrl(url)).rejects.toBeInstanceOf(
+        SsrfBlockedError,
+      );
+    }
   });
 
   it("blocks IPv4-mapped and 6to4 wrappers around private space", async () => {
-    await expectBlocked("https://[::ffff:127.0.0.1]/hook");
-    await expectBlocked("https://[fc00::1]/hook");
-    await expectBlocked("https://[fe80::1]/hook");
+    for (const url of [
+      "https://[::ffff:127.0.0.1]/hook",
+      "https://[fc00::1]/hook",
+      "https://[fe80::1]/hook",
+    ]) {
+      await expect(assertPublicUrl(url)).rejects.toBeInstanceOf(
+        SsrfBlockedError,
+      );
+    }
   });
 
   it("blocks non-https, odd ports, credentials and localhost names", async () => {
-    await expectBlocked("http://example.com/hook");
-    await expectBlocked("https://example.com:8080/hook");
-    await expectBlocked("https://user:pass@example.com/hook");
-    await expectBlocked("https://localhost/hook");
-    await expectBlocked("https://foo.internal/hook");
+    for (const url of [
+      "http://example.com/hook",
+      "https://example.com:8080/hook",
+      "https://user:pass@example.com/hook",
+      "https://localhost/hook",
+      "https://foo.internal/hook",
+    ]) {
+      await expect(assertPublicUrl(url)).rejects.toBeInstanceOf(
+        SsrfBlockedError,
+      );
+    }
   });
 
   // #1132 review — url.hostname keeps the brackets on an IPv6 literal, so
@@ -127,7 +148,11 @@ describe("Outbound webhook egress guard (#1132)", () => {
   });
 
   it("rejects an unresolvable host rather than letting it through", async () => {
-    await expectBlocked("https://this-host-does-not-exist-1132.invalid/hook");
+    for (const url of ["https://this-host-does-not-exist-1132.invalid/hook"]) {
+      await expect(assertPublicUrl(url)).rejects.toBeInstanceOf(
+        SsrfBlockedError,
+      );
+    }
   });
 
   it("does not follow redirects at delivery time", () => {

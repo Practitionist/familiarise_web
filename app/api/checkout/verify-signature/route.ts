@@ -41,7 +41,10 @@ import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { z } from "zod";
-import { razorpayFetchedPaymentSchema } from "@/schemas/webhooks/razorpay";
+import {
+  gatewayPaymentTime,
+  razorpayFetchedPaymentSchema,
+} from "@/schemas/webhooks/razorpay";
 import { readJsonBody } from "@/lib/api/parse";
 
 const verifySignatureSchema = z.object({
@@ -162,6 +165,7 @@ export async function POST(req: NextRequest) {
     // notes, and both are needed to run the same pipeline the webhook runs.
     let notes: Record<string, string> = {};
     let capturedAmountPaise: number | undefined;
+    let gatewayCapturedAt: Date | undefined;
     try {
       if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
       // A malformed gateway answer throws into the catch below and defers.
@@ -172,6 +176,7 @@ export async function POST(req: NextRequest) {
       );
       notes = gatewayPayment.notes;
       capturedAmountPaise = gatewayPayment.amount;
+      gatewayCapturedAt = gatewayPaymentTime(gatewayPayment.created_at);
 
       // The signature proves the id pair came from Razorpay. It says nothing
       // about capture state, and this route is the ONLY confirmation path that
@@ -270,6 +275,7 @@ export async function POST(req: NextRequest) {
           notes,
           amountPaise: capturedAmountPaise,
           gatewayPaymentId: razorpay_payment_id,
+          gatewayCapturedAt,
         });
       } catch (err) {
         // Mirrors the webhook's posture: report and let the durable paths

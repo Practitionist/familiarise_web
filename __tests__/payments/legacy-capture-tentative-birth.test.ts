@@ -57,6 +57,7 @@ const appointmentFindUnique = jest.fn(() =>
 );
 const classFindUnique = jest.fn();
 const classUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+const occurrenceFindMany = jest.fn().mockResolvedValue([]);
 const participantCreateMany = jest.fn().mockResolvedValue({ count: 1 });
 const participantUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
 const paymentFindUnique = jest.fn();
@@ -81,7 +82,7 @@ const txStub = {
     updateMany: slotUpdateMany,
     // A subscription placeholder holds no occurrence, so the #827 recheck
     // reads an empty run.
-    findMany: jest.fn().mockResolvedValue([]),
+    findMany: occurrenceFindMany,
   },
   // The capture recheck reads whether the payer is an expert too.
   consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -102,7 +103,12 @@ const txStub = {
     },
     findMany: jest.fn().mockResolvedValue([]),
   },
-  appointment: { create: appointmentCreate, findUnique: appointmentFindUnique },
+  appointment: {
+    create: appointmentCreate,
+    findUnique: appointmentFindUnique,
+    // The seat capture reads the buyer's calendar: free.
+    findFirst: jest.fn().mockResolvedValue(null),
+  },
   class: { findUnique: classFindUnique, updateMany: classUpdateMany },
   // #1583 A-P0-01 — the subscription confirm arm and its history row.
   subscription: {
@@ -219,6 +225,9 @@ function makeCancelledClass() {
     schedulingPeriodEndsAt: new Date("2026-03-01"),
     classPlan: {
       id: "plan-1",
+      price: 10000,
+      totalSessions: 2,
+      lateJoinUntilSession: null,
       consultantProfile: { userId: "consultant-1" },
     },
     // #1554 — a class is ONE wrapper whose occurrences are its sittings;
@@ -230,8 +239,22 @@ function makeCancelledClass() {
   };
 }
 
+/** A class still on sale: both sessions are ahead. */
+function sessionsAhead() {
+  const day = 24 * 3_600_000;
+  occurrenceFindMany.mockResolvedValue(
+    [1, 2].map((ordinal) => ({
+      ordinal,
+      startsAt: new Date(Date.now() + ordinal * day),
+      endsAt: new Date(Date.now() + ordinal * day + 3_600_000),
+      completionStatus: "PENDING",
+    })),
+  );
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
+  occurrenceFindMany.mockResolvedValue([]);
   slotUpdate.mockResolvedValue({});
   slotUpdateMany.mockResolvedValue({ count: 0 });
   classUpdateMany.mockResolvedValue({ count: 1 });
@@ -339,6 +362,7 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
       };
     });
     classUpdateMany.mockResolvedValue({ count: 1 }); // CAS succeeds
+    sessionsAhead();
     appointmentFindUniqueResult = {
       id: "session-appt-1",
       class: { id: "class-1", status: "SCHEDULED" },
@@ -466,6 +490,7 @@ describe("#1440 — recovery of a SUCCEEDED, unlinked payment", () => {
       };
     });
     classUpdateMany.mockResolvedValue({ count: 1 });
+    sessionsAhead();
     appointmentFindUniqueResult = {
       id: "session-appt-1",
       class: { id: "class-1", status: "SCHEDULED" },

@@ -133,6 +133,39 @@ describe("system event write-failure reporting", () => {
     expect(event.hint.extra?.operation).toBe("recordSystemEvent");
   });
 
+  describe("on a transaction client", () => {
+    const failure = new Error("could not serialize access");
+    const tx = { systemEvent: { create: jest.fn() } };
+    const event = { category: "PAYMENT", message: "parked", db: tx as never };
+    beforeEach(() => tx.systemEvent.create.mockRejectedValue(failure));
+
+    it("every writer rethrows a failed insert, so the transaction's owner sees it", async () => {
+      await expect(recordSystemEvent(event)).rejects.toBe(failure);
+      await expect(recordSystemEventSafe(event)).rejects.toBe(failure);
+      await expect(
+        recordSystemErrorSafe({
+          category: "PAYMENT",
+          summary: "parked",
+          err: new Error("boom"),
+          db: tx as never,
+        }),
+      ).rejects.toBe(failure);
+      // Not a lost audit row to report: the caller's transaction fails with it.
+      expect(sentEvents()).toHaveLength(0);
+    });
+
+    it("the global client passed by name stays best effort", async () => {
+      create.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        recordSystemEventSafe({
+          category: "PAYMENT",
+          message: "parked",
+          db: prisma,
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   it("stays quiet on a successful write", async () => {
     create.mockResolvedValueOnce({ id: "evt_1" });
     await recordSystemEventSafe({ category: "OVERAGE", message: "hello" });

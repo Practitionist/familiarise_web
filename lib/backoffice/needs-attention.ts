@@ -13,6 +13,7 @@ import {
   DEAD_LETTER_BELL_WHERE,
   DEAD_LETTER_EMAIL_WHERE,
   PARKED_CAPTURE_WHERE,
+  STUCK_AUTO_REFUND_WHERE,
   parkedCaptureOrder,
   parkedCaptureSince,
 } from "@/lib/backoffice/queue-predicates";
@@ -27,7 +28,10 @@ export const ATTENTION_ROW_CAP = 25;
 const LAST_ERROR_MAX_CHARS = 200;
 
 /** Queues listed with no Better Stack gauge: nothing clears them but an operator, so each is due at once. */
-const UNGAUGED_LIMITS_MS = { refundedLiveBookings: 0 } as const;
+const UNGAUGED_LIMITS_MS = {
+  refundedLiveBookings: 0,
+  stuckAutoRefunds: 0,
+} as const;
 
 export type AttentionQueueKey =
   keyof PendingAges | keyof typeof UNGAUGED_LIMITS_MS;
@@ -343,6 +347,52 @@ const SOURCES: readonly AttentionSource[] = [
     },
   },
   {
+    key: "stuckAutoRefunds",
+    label: "Automatic refunds that gave up",
+    money: true,
+    note: "The retry sweep stopped after its attempts failed; refund by hand. A payment with a refund pending or paid is not listed here.",
+    read: async (now) => {
+      const where = STUCK_AUTO_REFUND_WHERE;
+      const { rows, total } = await windowOf(
+        (order, take) =>
+          prisma.payment.findMany({
+            where,
+            orderBy: parkedCaptureOrder(order),
+            take,
+            select: {
+              id: true,
+              description: true,
+              capturedAt: true,
+              createdAt: true,
+              _count: { select: { refunds: true } },
+            },
+          }),
+        () => prisma.payment.count({ where }),
+      );
+      return splitWindow(
+        rows.map((p) => ({
+          key: p.createdAt.getTime(),
+          item: {
+            id: p.id,
+            state: "Refund by hand",
+            ageMs: now.getTime() - parkedCaptureSince(p).getTime(),
+            attempts: p._count.refunds,
+            lastError: lastError(p.description),
+            links: [
+              {
+                label: "Payment",
+                path: `payments/${encodeURIComponent(p.id)}`,
+              },
+              tracePayment(p.id),
+              { label: "Refunds", path: "money/refunds" },
+            ],
+          },
+        })),
+        total,
+      );
+    },
+  },
+  {
     key: "refundedLiveBookings",
     label: "Fully refunded, booking still live",
     money: true,
@@ -580,7 +630,7 @@ const SOURCES: readonly AttentionSource[] = [
     key: "webhookEvents",
     label: "Gateway webhooks not processed",
     money: false,
-    note: "Events the sweep gave up on after 7 days stay listed.",
+    note: "Events the sweep gave up on after 7 days, or marked permanent, stay listed until the audited requeue door puts them back in the queue.",
     read: async (now, limitMs) => {
       const where: Prisma.WebhookEventWhereInput = {
         processed: false,

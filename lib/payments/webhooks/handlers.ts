@@ -48,7 +48,12 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isExclusionViolation, isWriteConflict } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
+import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
+import { consulteeHasOverlappingSession } from "@/lib/payments/checkout/occupancy-validate";
 import {
   recordSystemError,
   recordSystemErrorSafe,
@@ -363,12 +368,11 @@ export async function refundLateCapture(input: {
       : {}),
   });
   if (outcome?.status !== "PENDING") {
-    await prisma.payment.update({
-      where: { id: input.paymentId },
-      data: {
-        description: `Auto-refunded: capture landed after the hold was released (${input.releasedBy}). Booking NOT confirmed.`,
-      },
-    });
+    await replacePendingAutoRefundMarker(
+      input.paymentId,
+      () =>
+        `Auto-refunded: capture landed after the hold was released (${input.releasedBy}). Booking NOT confirmed.`,
+    );
   }
 }
 
@@ -377,7 +381,12 @@ export async function handlePaymentSuccess(
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
   gatewayPaymentId?: string,
-  options?: { recover?: boolean; deferLateCaptureRefund?: boolean },
+  options?: {
+    recover?: boolean;
+    deferLateCaptureRefund?: boolean;
+    /** The gateway's own time for the payment; absent, the processing time decides. */
+    gatewayCapturedAt?: Date;
+  },
 ): Promise<PaymentSuccessTxResult["outcome"] | null> {
   const recovering = options?.recover === true;
   const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
@@ -1058,11 +1067,17 @@ export async function handlePaymentSuccess(
             payment.expiresAt !== null &&
             payment.expiresAt < confirmNow;
 
+          // A seat hold still live when the gateway took the money is honoured.
+          const paidInsideHold =
+            payment.expiresAt !== null &&
+            options?.gatewayCapturedAt !== undefined &&
+            options.gatewayCapturedAt <= payment.expiresAt;
+
           const confirmResult = await confirmExistingAppointment(
             tx,
             appointment.id,
             payment.userId,
-            { holdExpired, now: confirmNow },
+            { holdExpired, now: confirmNow, paidInsideHold },
           );
 
           console.log(
@@ -1290,13 +1305,11 @@ export async function handlePaymentSuccess(
         initiatedByUserId: null,
       });
       if (outcome?.status !== "PENDING") {
-        await prisma.payment.update({
-          where: { id: loser.id },
-          data: {
-            description:
-              "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
-          },
-        });
+        await replacePendingAutoRefundMarker(
+          loser.id,
+          () =>
+            "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
+        );
       }
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
@@ -1339,15 +1352,12 @@ export async function handlePaymentSuccess(
         initiatedByUserId: null,
       });
       if (outcome?.status !== "PENDING") {
-        await prisma.payment.update({
-          where: { id: txResult.paymentId },
-          data: {
-            description:
-              surplusPaise > 0
-                ? `REQUIRES_MANUAL_RECOVERY: Over-capture surplus of ${surplusPaise}p on ${paymentIntentId} (refunded ${refundablePaise}p of ${txResult.gatewayAmountPaise}p captured). Booking NOT confirmed.`
-                : `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
-          },
-        });
+        const { gatewayAmountPaise: capturedPaise, expectedAmount } = txResult;
+        await replacePendingAutoRefundMarker(txResult.paymentId, () =>
+          surplusPaise > 0
+            ? `REQUIRES_MANUAL_RECOVERY: Over-capture surplus of ${surplusPaise}p on ${paymentIntentId} (refunded ${refundablePaise}p of ${capturedPaise}p captured). Booking NOT confirmed.`
+            : `Auto-refunded: capture amount ${capturedPaise}p ≠ expected ${expectedAmount}p. Booking NOT confirmed.`,
+        );
       }
     } catch (refundError) {
       reportSentryError(refundError, {
@@ -1748,7 +1758,6 @@ export async function handlePaymentFailure(
       select: {
         id: true,
         paymentStatus: true,
-        gatewayPaymentId: true,
         userId: true,
         appointmentId: true,
         amount: true,
@@ -1827,25 +1836,23 @@ export async function handlePaymentFailure(
 
     // Keep tentative slot hold and consumed credits intact while the order hold window is still active.
     if (payment.expiresAt && payment.expiresAt > new Date()) {
+      // The row's gateway payment id is reserved for the attempt that captures; a failed one is only logged.
       console.warn(
         `[webhook] Payment attempt failed during active hold window for ${paymentIntentId}`,
         { gatewayPaymentId, failureReason },
       );
-      if (gatewayPaymentId && !payment.gatewayPaymentId) {
-        await tx.payment.updateMany({
-          where: {
-            id: payment.id,
-            paymentStatus: PaymentStatus.PENDING,
-            gatewayPaymentId: null,
-          },
-          data: { gatewayPaymentId },
-        });
-      }
       return;
     }
 
+    // Conditional on the order and the lapsed deadline just read: a checkout
+    // re-minted on the row since is not failed.
     const { count } = await tx.payment.updateMany({
-      where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+      where: {
+        id: payment.id,
+        paymentStatus: PaymentStatus.PENDING,
+        paymentIntent: paymentIntentId,
+        expiresAt: payment.expiresAt,
+      },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
     if (count === 0) {
@@ -1978,25 +1985,22 @@ async function confirmSeatAfterCapture(
     eventId: string;
     appointmentId: string;
     userId: string;
-    /** Set when the seat's hold lapsed before this capture: it confirms only if a place is still free. */
-    lapsedAt?: Date;
+    /** The one clock of this confirmation. */
+    now: Date;
+    /** The seat's hold lapsed before this capture: it confirms only if a place is still free. */
+    holdExpired: boolean;
+    /** The gateway took the money while the hold was live: only an ended event or a busy buyer refuses. */
+    paidInsideHold: boolean;
   },
 ): Promise<SeatCaptureOutcome> {
-  // A lapsed seat stopped counting for capacity, so another buyer may hold
-  // the last place now; without room it is released and the capture refunded.
+  // A HELD seat is promoted only while checkout would still sell it to this
+  // buyer; otherwise it is released here and the capture refunded.
+  const refusal = await heldSeatRefusal(tx, args);
+  const releasedHere =
+    refusal !== null &&
+    (await transitionParticipant(tx, args.casWhere, "CANCELLED")) > 0;
   if (
-    args.lapsedAt &&
-    !(await seatStillFits(
-      tx,
-      args.kind,
-      args.eventId,
-      args.userId,
-      args.lapsedAt,
-    ))
-  ) {
-    await transitionParticipant(tx, args.casWhere, "CANCELLED");
-  }
-  if (
+    !releasedHere &&
     (await transitionParticipant(tx, args.casWhere, "CONFIRMED", {
       history: { reason: "registered", actorUserId: args.userId },
     })) > 0
@@ -2040,12 +2044,112 @@ async function confirmSeatAfterCapture(
     eventId: args.eventId,
     appointmentId: args.appointmentId,
     userId: args.userId,
-    reason: `the seat is ${fresh.status} — the buyer left before the payment captured`,
+    reason:
+      releasedHere && refusal
+        ? refusal
+        : `the seat is ${fresh.status} — the buyer left before the payment captured`,
     participantId: fresh.id,
     seatStatus: fresh.status,
     seatPaymentId: fresh.paymentId,
   });
   return { kind: "released" };
+}
+
+/**
+ * Why checkout would not sell this seat to this buyer now, or null: the sale
+ * rule of the webinar and class checkout handlers (a session ahead, enrolment
+ * open), room for a seat whose hold lapsed, then the buyer's own calendar.
+ * A seat paid for inside its hold skips the enrolment rule: it is refused only
+ * when the event is over, has no place left, or the buyer is busy.
+ */
+async function heldSeatRefusal(
+  tx: Tx,
+  args: {
+    kind: "class" | "webinar";
+    eventId: string;
+    appointmentId: string;
+    userId: string;
+    now: Date;
+    holdExpired: boolean;
+    paidInsideHold: boolean;
+  },
+): Promise<string | null> {
+  const { kind, eventId, now } = args;
+  const sessions = await tx.appointmentOccurrence.findMany({
+    where: {
+      appointment:
+        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+      deletedAt: null,
+    },
+    orderBy: { startsAt: "asc" },
+    select: {
+      ordinal: true,
+      startsAt: true,
+      endsAt: true,
+      completionStatus: true,
+    },
+  });
+  if (kind === "webinar") {
+    const webinar = await tx.webinar.findUnique({
+      where: { id: eventId },
+      select: { status: true },
+    });
+    if (webinar?.status !== "SCHEDULED") {
+      return `the webinar is ${webinar?.status ?? "missing"}`;
+    }
+    const first = sessions.find((s) => !isDeadOccurrence(s));
+    if (!first) return "the webinar has no live session";
+    if (first.endsAt < now) return "the webinar has ended";
+  } else {
+    const batch = await tx.class.findUnique({
+      where: { id: eventId },
+      select: {
+        classPlan: {
+          select: {
+            price: true,
+            totalSessions: true,
+            lateJoinUntilSession: true,
+          },
+        },
+      },
+    });
+    if (!batch) return "the class is missing";
+    const last = sessions.findLast((s) => s.completionStatus !== "CANCELLED");
+    if (last && last.endsAt < now) return "the class has ended";
+    if (args.paidInsideHold) {
+      if (!last) return "the class has no session ahead";
+    } else {
+      const enrolment = classEnrolmentFrom({
+        pricePaise: batch.classPlan.price,
+        N: batch.classPlan.totalSessions,
+        lateJoinUntilSession: batch.classPlan.lateJoinUntilSession,
+        sessions,
+        now,
+      });
+      if (enrolment.state !== "open") {
+        return `enrolment for the class is ${enrolment.state}`;
+      }
+    }
+  }
+  // A lapsed seat stopped counting for capacity, so another buyer may hold
+  // the last place now.
+  if (
+    args.holdExpired &&
+    !(await seatStillFits(tx, kind, eventId, args.userId, now))
+  ) {
+    return "the hold lapsed and the event has no place left";
+  }
+  for (const s of sessions) {
+    if (isDeadOccurrence(s) || s.endsAt <= now) continue;
+    const busy = await consulteeHasOverlappingSession(tx, {
+      userId: args.userId,
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      selfHoldAppointmentIds: [args.appointmentId],
+    });
+    if (busy) return "the buyer has another live booking at that time";
+  }
+  return null;
 }
 
 /** Whether the event still has a place for this buyer, counting only seats that hold one now. */
@@ -2254,7 +2358,12 @@ export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
-  opts?: { holdExpired?: boolean; now?: Date },
+  opts?: {
+    holdExpired?: boolean;
+    now?: Date;
+    /** The gateway took the money at or before the seat's hold deadline. */
+    paidInsideHold?: boolean;
+  },
 ): Promise<{
   capturedAfterTerminal: boolean;
   doubleBookingBlocked?: boolean;
@@ -2491,7 +2600,9 @@ export async function confirmExistingAppointment(
       eventId: classId,
       appointmentId,
       userId,
-      lapsedAt: opts?.holdExpired ? (opts.now ?? new Date()) : undefined,
+      now: opts?.now ?? new Date(),
+      holdExpired: opts?.holdExpired === true,
+      paidInsideHold: opts?.paidInsideHold === true,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };
@@ -2532,7 +2643,9 @@ export async function confirmExistingAppointment(
       eventId: webinarId,
       appointmentId,
       userId,
-      lapsedAt: opts?.holdExpired ? (opts.now ?? new Date()) : undefined,
+      now: opts?.now ?? new Date(),
+      holdExpired: opts?.holdExpired === true,
+      paidInsideHold: opts?.paidInsideHold === true,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };
@@ -2582,7 +2695,15 @@ export async function confirmExistingAppointment(
   return { capturedAfterTerminal };
 }
 
-export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
+/**
+ * Replaces a pending auto-refund marker by compare-and-set on the marker it
+ * read. A marker another writer already settled or retired to an operator
+ * (stuck) is left as it stands.
+ */
+async function replacePendingAutoRefundMarker(
+  paymentId: string,
+  next: (pending: string) => string,
+): Promise<void> {
   const row = await prisma.payment.findUnique({
     where: { id: paymentId },
     select: { description: true },
@@ -2591,8 +2712,12 @@ export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
   if (!pending?.startsWith(AUTO_REFUND_PENDING_PREFIX)) return;
   await prisma.payment.updateMany({
     where: { id: paymentId, description: pending },
-    data: { description: settledAutoRefundDescription(pending) },
+    data: { description: next(pending) },
   });
+}
+
+export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
+  await replacePendingAutoRefundMarker(paymentId, settledAutoRefundDescription);
 }
 
 export async function releaseBlockedBookingHold(
