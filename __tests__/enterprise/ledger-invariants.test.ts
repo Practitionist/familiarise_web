@@ -53,7 +53,7 @@ describe("#812 invariant — every ledger transaction balances", () => {
   // write, so we only exercise the in-function balance assertion.
   const db = {
     ledgerTransaction: {
-      findUnique: jest.fn().mockResolvedValue({ id: "existing" }),
+      findUnique: jest.fn().mockResolvedValue({ id: "existing", entries: [] }),
       create: jest.fn(),
     },
   } as never;
