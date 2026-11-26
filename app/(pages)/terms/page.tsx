@@ -707,8 +707,10 @@ export default function TermsPage() {
                 <strong>payment dispute</strong> (also called a chargeback) is a
                 request to your bank or card issuer to reverse a payment. Please
                 report a problem to us first: it is usually faster, and a
-                chargeback freezes the amount and pauses actions on the booking
-                while the bank decides.
+                chargeback freezes the amount and pauses changes to a one-to-one
+                booking while the bank decides. A class or webinar can still be
+                cancelled or moved by its host; a refund owed on the disputed
+                payment then waits for the bank&apos;s decision.
               </p>
 
               <Separator className="my-6" />
