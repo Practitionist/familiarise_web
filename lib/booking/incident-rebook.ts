@@ -34,6 +34,7 @@ import {
 } from "@/utils/appointmentlock";
 import { BookingRuleError } from "./booking-rule-error";
 import { createMakeUpOccurrence } from "./class-sessions";
+import { lockHostTimeInTx } from "./allocation/host-time-locks";
 import { incidentRefundKey, isRebookableParent } from "./incident-keys";
 import { rescheduleNotificationVariant } from "./reschedule-proposals";
 import { transitionConsultationRequest, transitionTrial } from "./transitions";
@@ -499,17 +500,24 @@ export async function rebookIncidentRemedy(args: {
     async () => {
       const consulteeLock = await lockConsulteeBooking(args.userId);
       try {
-        const slotLocks = await lockSlotBatch(
-          slotProfileIds.map((consultantProfileId) => ({
-            consultantProfileId,
-            startsAt: ctx.startsAt,
-            endsAt: ctx.endsAt,
-          })),
-        );
+        const slotEntries = slotProfileIds.map((consultantProfileId) => ({
+          consultantProfileId,
+          startsAt: ctx.startsAt,
+          endsAt: ctx.endsAt,
+        }));
+        const slotLocks = await lockSlotBatch(slotEntries);
         try {
-          return await prisma.$transaction((tx) => commitRebook(tx, ctx), {
-            timeout: 15_000,
-          });
+          return await prisma.$transaction(
+            async (tx) => {
+              await lockHostTimeInTx(tx, slotEntries, () =>
+                slotUnavailable(
+                  "That time is no longer free for both of you. Pick another time.",
+                ),
+              );
+              return commitRebook(tx, ctx);
+            },
+            { timeout: 15_000 },
+          );
         } finally {
           await unlockSlotInterval(slotLocks);
         }

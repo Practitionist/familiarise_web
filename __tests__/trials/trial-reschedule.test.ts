@@ -40,6 +40,7 @@ jest.mock("../../lib/booking/transitions", () => ({
 }));
 jest.mock("../../lib/trials/book-trial", () => ({
   lockTrialPick: (...a: unknown[]) => lockTrialPick(...(a as [])),
+  lockTrialPickInTx: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/trials/slot-check", () => ({
   trialWindowRefusal: jest.fn(async () => db.refusal),

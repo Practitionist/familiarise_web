@@ -60,6 +60,7 @@ class MockTrialDailyLimitError extends Error {
 }
 jest.mock("../../lib/trials/book-trial", () => ({
   lockTrialPick: (...a: unknown[]) => lockPick(...(a as [])),
+  lockTrialPickInTx: jest.fn(async () => undefined),
   bookTrialInTx: (...a: unknown[]) =>
     bookTrial(...(a as [unknown, { paid: boolean }])),
   TrialTimeRefusedError: class extends Error {},

@@ -11,6 +11,7 @@ import {
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
@@ -295,6 +296,10 @@ export async function POST(request: NextRequest) {
           prisma.$transaction(
             async (tx) => {
               await renewHostBatch();
+              await lockHostBatchInTx(
+                tx,
+                hostBatchEntries([consultantProfileId], hostWindows),
+              );
               // Topics are already created/found by findOrCreateTopics, no verification needed
 
               // 1. Create the webinar plan using validated data
@@ -817,6 +822,10 @@ export async function PATCH(request: NextRequest) {
                 async (tx) => {
                   await renewEventLock();
                   await renewHostBatch();
+                  await lockHostBatchInTx(
+                    tx,
+                    hostBatchEntries(batchProfiles, batchWindows),
+                  );
                   // An edit that takes host time queues behind a team change on
                   // the plan, then refuses a team its batch did not cover.
                   if (batchProfiles.length > 0) {

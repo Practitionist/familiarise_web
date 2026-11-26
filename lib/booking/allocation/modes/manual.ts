@@ -27,6 +27,7 @@ import {
 } from "@/utils/appointmentlock";
 import {
   allocationBatchProfiles,
+  lockAllocationTimesInTx,
   lockPickedSlots,
   renewAllocationBatch,
 } from "@/lib/booking/allocation/slot-batch";
@@ -506,6 +507,7 @@ export async function manualAllocate(
     return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
+        await lockAllocationTimesInTx(tx, slots, batchProfiles);
         // #1692 — per-event serialisation first (see autoAllocate).
         const lockedReplay = await guardAllocationInTx(
           tx,

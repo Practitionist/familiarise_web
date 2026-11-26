@@ -133,6 +133,7 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(async () => undefined),
   extendLock: jest.fn(async () => true),
   extendSlotInterval: jest.fn(async () => true),
+  slotGrantEntries: jest.fn(() => []),
 }));
 
 jest.mock("../../lib/payments/index", () => ({

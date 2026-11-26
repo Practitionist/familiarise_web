@@ -131,6 +131,23 @@ Who waits and who does not:
   meeting extension holds its extra minutes before it is saved and refuses when
   it cannot.
 
+**Postgres arbitrates the same atoms.** Redis is the fast refusal; the database
+decides. Every writer above calls `lockHostTimeInTx`
+(`lib/booking/allocation/host-time-locks.ts`), or its door's wrapper
+(`lockAllocationTimesInTx`, `lockHostBatchInTx`, `lockTrialPickInTx`), as the
+**first statement of its write transaction**, before the event's advisory lock
+and every row lock, then runs its conflict re-check. It takes one
+`pg_try_advisory_xact_lock` per slot key (`hashtextextended(key, 42)`), walks
+the sorted keys and stops at the first held one, never waits, and throws the
+door's existing slot-taken 409. The locks end with the transaction. A new
+writer that makes an expert's time busy must take the Redis batch and this call
+with the same entries; `__tests__/booking/host-time-writers.test.ts` lists every
+writer and fails on one that takes the batch without the call. Order inside a
+transaction: host-time try-locks, then waiting advisory locks (the per-event
+allocation lock, the per-plan tranche lock), then row locks, then
+compare-and-set writes. Writer table, atom rules and limits:
+`docs/booking/12-concurrency-and-locking.md`, "Postgres arbitrates host time".
+
 ## 3. Acquisition fails closed
 
 `acquireGuarded` is the single acquisition path. It calls `checkRedisHealth()`

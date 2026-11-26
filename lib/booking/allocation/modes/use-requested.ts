@@ -26,6 +26,7 @@ import {
 } from "@/utils/appointmentlock";
 import {
   allocationBatchProfiles,
+  lockAllocationTimesInTx,
   lockPickedSlots,
   renewAllocationBatch,
 } from "@/lib/booking/allocation/slot-batch";
@@ -299,6 +300,7 @@ export async function useRequestedSlots(
     return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
+        await lockAllocationTimesInTx(tx, requestedSlots, batchProfiles);
         // Multi-tab guard: another tab already confirmed slots for this
         // event → typed 409 instead of re-approving over it. Advisory-locked
         // in-txn so it can't race the manual/auto write transactions; a

@@ -17,6 +17,7 @@ import {
   unlockRequestCap,
   extendLock,
   extendSlotInterval,
+  slotGrantEntries,
   unlockSlotInterval,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
@@ -679,6 +680,10 @@ export async function handleCheckout(
         mintedOrder,
         holdExpiresAt,
         renewOrAbort,
+        hostTimeEntries: [
+          ...(Array.isArray(lock) ? slotGrantEntries(lock) : []),
+          ...(buyerSeatGrant ? slotGrantEntries(buyerSeatGrant) : []),
+        ],
         perAttemptTtl,
         checkoutTxTimeoutMs,
         organizationId,

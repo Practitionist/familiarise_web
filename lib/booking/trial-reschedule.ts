@@ -35,7 +35,7 @@ import {
 } from "@/lib/booking/reschedule-outcome-notice";
 import { ReleasedSessionsSchema } from "@/lib/booking/released-sessions";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
-import { lockTrialPick } from "@/lib/trials/book-trial";
+import { lockTrialPick, lockTrialPickInTx } from "@/lib/trials/book-trial";
 import { trialWindowRefusal } from "@/lib/trials/slot-check";
 
 export type TrialConfirmOutcome =
@@ -179,6 +179,16 @@ export async function confirmTrialProposal(args: {
     });
     try {
       return await prisma.$transaction(async (tx): Promise<MoveOutcome> => {
+        await lockTrialPickInTx(
+          tx,
+          {
+            consultantProfileId: trial.consultantProfileId,
+            buyerConsultantProfileId: buyerProfile?.id,
+            startsAt: window.startsAt,
+            endsAt: window.endsAt,
+          },
+          () => new TrialMoveRefused("TIMES_TAKEN"),
+        );
         await closeConfirmedProposal(tx, {
           where: { id: request.id },
           to: args.to,

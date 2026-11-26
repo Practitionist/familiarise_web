@@ -14,6 +14,7 @@ import {
 } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import { lockHostTimeInTx } from "@/lib/booking/allocation/host-time-locks";
 import { recordParticipants } from "@/lib/booking/participants";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -30,6 +31,7 @@ import {
   lockSlotBatch,
   unlockConsulteeBooking,
   unlockSlotBooking,
+  type SlotBatchEntry,
   type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 
@@ -198,32 +200,51 @@ export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
   return { ...created, appointmentId: appointment.id };
 }
 
+interface TrialPick {
+  consultantProfileId: string;
+  buyerConsultantProfileId: string | null | undefined;
+  startsAt: Date;
+  endsAt: Date;
+}
+
+/** The window on the host's calendar and, for a buyer who is an expert too, on their own. */
+function trialPickEntries(pick: TrialPick): SlotBatchEntry[] {
+  return [pick.consultantProfileId, pick.buyerConsultantProfileId]
+    .filter((id): id is string => !!id)
+    .filter((id, i, all) => all.indexOf(id) === i)
+    .map((consultantProfileId) => ({
+      consultantProfileId,
+      startsAt: pick.startsAt,
+      endsAt: pick.endsAt,
+    }));
+}
+
+/**
+ * The first statement of a transaction that writes a trial's time: the
+ * database's try-locks over the atoms `lockTrialPick` took. A held atom is the
+ * door's slot-taken refusal unless the caller passes its own.
+ */
+export async function lockTrialPickInTx(
+  tx: Pick<Tx, "$queryRaw">,
+  pick: TrialPick,
+  refusal: () => Error = () => new TrialTimeRefusedError("SLOT_TAKEN"),
+): Promise<void> {
+  await lockHostTimeInTx(tx, trialPickEntries(pick), refusal);
+}
+
 /**
  * The consultee lock, then the slot atoms over the host's calendar and, for a
  * buyer who is an expert too, their own: checkout's global order (taken after
  * the expert's request-cap lock). Resolves to the release, which frees them in
  * reverse. Throws the lock module's typed errors; nothing is held on a throw.
  */
-export async function lockTrialPick(args: {
-  consulteeUserId: string;
-  consultantProfileId: string;
-  buyerConsultantProfileId: string | null | undefined;
-  startsAt: Date;
-  endsAt: Date;
-}): Promise<() => Promise<void>> {
+export async function lockTrialPick(
+  args: TrialPick & { consulteeUserId: string },
+): Promise<() => Promise<void>> {
   const consulteeLock = await lockConsulteeBooking(args.consulteeUserId);
   let slots: SlotBatchGrant;
   try {
-    slots = await lockSlotBatch(
-      [args.consultantProfileId, args.buyerConsultantProfileId]
-        .filter((id): id is string => !!id)
-        .filter((id, i, all) => all.indexOf(id) === i)
-        .map((consultantProfileId) => ({
-          consultantProfileId,
-          startsAt: args.startsAt,
-          endsAt: args.endsAt,
-        })),
-    );
+    slots = await lockSlotBatch(trialPickEntries(args));
   } catch (error) {
     await unlockConsulteeBooking(consulteeLock);
     throw error;

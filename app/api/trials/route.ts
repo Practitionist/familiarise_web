@@ -11,6 +11,7 @@ import { persistTrialPayLink } from "@/lib/trials/pay-link";
 import {
   bookTrialInTx,
   lockTrialPick,
+  lockTrialPickInTx,
   TrialDailyLimitError,
   TrialPairHeldError,
   TrialTimeRefusedError,
@@ -608,6 +609,12 @@ export async function POST(request: NextRequest) {
         const booked = await prisma
           .$transaction(
             async (tx) => {
+              await lockTrialPickInTx(tx, {
+                consultantProfileId,
+                buyerConsultantProfileId: buyerConsultantProfile?.id,
+                startsAt,
+                endsAt,
+              });
               // Read under a share lock, so a reject that lands meanwhile waits for this write.
               await assertExpertStandsInTx(
                 tx,

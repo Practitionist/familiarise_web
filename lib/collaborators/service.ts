@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 import {
   hostBatchEntries,
+  lockHostBatchInTx,
   HostTimeHeldError,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
@@ -738,6 +739,10 @@ async function acceptInvitation(
         prisma.$transaction(
           async (tx) => {
             await renewHostBatch();
+            await lockHostBatchInTx(
+              tx,
+              hostBatchEntries([args.consultantProfileId], heldWindows),
+            );
             return acceptInTx(tx, args, ref, seenTerms, heldWindows);
           },
           {

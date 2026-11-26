@@ -738,6 +738,14 @@ export function parseSlotKey(
   };
 }
 
+/** A held batch as one entry per atom: the same keys, for the database's locks on them. */
+export function slotGrantEntries(grant: SlotBatchGrant): SlotBatchEntry[] {
+  return grant.flatMap((lock) => {
+    const atom = parseSlotKey(lock.key);
+    return atom ? [atom] : [];
+  });
+}
+
 /** Every atom key of every entry, de-duplicated and sorted (a total order across profiles). */
 export function slotBatchKeys(entries: readonly SlotBatchEntry[]): string[] {
   const keys = new Set<string>();

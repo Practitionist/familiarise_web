@@ -66,6 +66,7 @@ import {
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
@@ -336,6 +337,10 @@ export async function POST(request: NextRequest) {
           prisma.$transaction(
             async (tx) => {
               await renewHostBatch();
+              await lockHostBatchInTx(
+                tx,
+                hostBatchEntries([consultantProfileId], hostWindows),
+              );
               // 1. Create the class plan using validated data
               const classPlan = await tx.classPlan.create({
                 data: {
@@ -805,6 +810,10 @@ export async function PATCH(request: NextRequest) {
                 async (tx) => {
                   await renewEventLock();
                   await renewHostBatch();
+                  await lockHostBatchInTx(
+                    tx,
+                    hostBatchEntries(batchProfiles, batchWindows),
+                  );
                   // An edit that takes host time queues behind a team change on
                   // the plan, then refuses a team its batch did not cover.
                   if (batchProfiles.length > 0) {

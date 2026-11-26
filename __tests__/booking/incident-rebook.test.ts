@@ -20,6 +20,10 @@ const state = {
   buyerProfileId: null as string | null,
 };
 
+// The database's host-time locks are pinned in host-time-locks.test.ts.
+jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
+  lockHostTimeInTx: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     incidentRemedy: {

@@ -56,6 +56,7 @@ import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolic
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
@@ -795,6 +796,10 @@ export async function scheduleClassMakeUp(
         ];
         return withHostSlotBatch(hostBatchEntries(profiles, lockWindows), () =>
           prisma.$transaction(async (tx) => {
+            await lockHostBatchInTx(
+              tx,
+              hostBatchEntries(profiles, lockWindows),
+            );
             await lockPlanForMove(tx, "CLASS", plan.id, profiles);
             const now = new Date();
             const source = await tx.appointmentOccurrence.findFirst({

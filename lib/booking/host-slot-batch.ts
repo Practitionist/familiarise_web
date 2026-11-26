@@ -6,6 +6,7 @@ import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { CollaboratorStatus } from "@prisma/client";
 import { ConsultantScheduleConflictError } from "@/lib/collaborators/availability";
 import { lockPlanRow } from "@/lib/collaborators/team";
+import { lockHostTimeInTx } from "@/lib/booking/allocation/host-time-locks";
 import {
   extendSlotInterval,
   tryLockSlotBatch,
@@ -89,6 +90,18 @@ export function hostBatchEntries(
       endsAt: w.endsAt,
     })),
   );
+}
+
+/**
+ * The first statement of a host-time write transaction, before the plan row
+ * lock: Postgres try-locks over the atoms of the Redis batch. A held atom is
+ * the same transient schedule conflict.
+ */
+export async function lockHostBatchInTx(
+  tx: Pick<Tx, "$queryRaw">,
+  entries: readonly SlotBatchEntry[],
+): Promise<void> {
+  await lockHostTimeInTx(tx, entries, () => new HostTimeHeldError());
 }
 
 /** The held atoms could not be extended to cover the time a write is about to claim. */

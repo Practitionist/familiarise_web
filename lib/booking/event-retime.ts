@@ -31,6 +31,7 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
@@ -152,6 +153,10 @@ export async function retimeWebinar(args: {
           hostBatchEntries(profiles, [{ startsAt, endsAt }]),
           () =>
             prisma.$transaction(async (tx) => {
+              await lockHostBatchInTx(
+                tx,
+                hostBatchEntries(profiles, [{ startsAt, endsAt }]),
+              );
               await lockPlanForMove(tx, "WEBINAR", plan.id, profiles);
               await verifyCohostsFreeForMove(
                 tx,

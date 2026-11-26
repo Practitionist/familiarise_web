@@ -42,6 +42,7 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/booking/host-slot-batch", () => ({
   acceptedCohostProfileIds: async () => [],
   hostBatchEntries: () => [],
+  lockHostBatchInTx: async () => {},
   lockPlanForMove: async () => {},
   withHostSlotBatch: (_entries: unknown, run: (renew: () => void) => unknown) =>
     run(() => {}),

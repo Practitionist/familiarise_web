@@ -267,6 +267,8 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
       collaborator: {
         findMany: jest.fn().mockResolvedValue([]),
       },
+      // The host-time try-locks: no atom is held.
+      $queryRaw: jest.fn().mockResolvedValue([]),
       // The plan row, written before the team is read.
       $executeRaw: jest.fn().mockResolvedValue(1),
     };

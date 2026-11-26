@@ -17,6 +17,7 @@ import {
   type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
+import { lockHostTimeInTx } from "@/lib/booking/allocation/host-time-locks";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { notifyNewBookingRequest } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -507,7 +508,7 @@ export async function POST(req: NextRequest) {
         // per 30-min atom, so overlapping requests with different starts collide)
         // Use default 60s TTL (15s was too short for slow database operations)
         // An expert booking another expert also holds their own calendar's atoms.
-        lock = await lockSlotBatch([
+        const slotEntries = [
           { consultantProfileId, startsAt, endsAt },
           ...(session.user.consultantProfileId &&
           session.user.consultantProfileId !== consultantProfileId
@@ -519,7 +520,8 @@ export async function POST(req: NextRequest) {
                 },
               ]
             : []),
-        ]);
+        ];
+        lock = await lockSlotBatch(slotEntries);
 
         console.log(
           JSON.stringify({
@@ -558,6 +560,20 @@ export async function POST(req: NextRequest) {
         // budget sits well inside the 60 s slot lock held above.
         const consultation = await prisma.$transaction(
           async (tx) => {
+            // The database arbitrates the window before any row is locked or read.
+            await lockHostTimeInTx(
+              tx,
+              slotEntries,
+              (held) =>
+                new RequestRefusal(409, {
+                  error:
+                    held.consultantProfileId === consultantProfileId
+                      ? "Slot no longer available"
+                      : "You already have a session booked during this time.",
+                  code: "SLOT_TAKEN",
+                  conflicts: 1,
+                }),
+            );
             // Standing, mode, cap and availability are read on this transaction, after
             // every lock, so the insert below commits against what they saw.
             await assertExpertStandsInTx(

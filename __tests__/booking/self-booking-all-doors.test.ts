@@ -11,6 +11,10 @@
 
 import { requestDoorProfile } from "../fixtures/request-door-db";
 
+// The database's host-time locks are pinned in host-time-locks.test.ts.
+jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
+  lockHostTimeInTx: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(async () => ({ user: mockSessionUser })),
 }));

@@ -32,6 +32,7 @@ import {
   allocationBatchEntries,
   allocationBatchProfiles,
   heldSlotStartsOf,
+  lockAllocationTimesInTx,
   renewAllocationBatch,
 } from "@/lib/booking/allocation/slot-batch";
 import type { FreedWindow } from "@/lib/booking/class-series";
@@ -523,6 +524,12 @@ export async function autoAllocate(
     return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
+        await lockAllocationTimesInTx(
+          tx,
+          selectedSlots,
+          batchProfiles,
+          () => new AllocationRaceError(),
+        );
         // #1692 — per-event serialisation first, so every re-check below
         // reads what the previous writer committed; a same-key double
         // submit replays instead of 409ing (see guardAllocationInTx).

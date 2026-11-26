@@ -7,6 +7,7 @@
 export function bookTrialModule(): object {
   return {
     lockTrialPick: jest.fn(async () => async () => undefined),
+    lockTrialPickInTx: jest.fn(async () => undefined),
     bookTrialInTx: jest.fn(
       async (
         tx: { trial: { create: (a: unknown) => Promise<object> } },

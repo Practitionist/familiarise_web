@@ -42,6 +42,7 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
@@ -313,6 +314,7 @@ export async function retimeClassSeries(args: {
           ),
           () =>
             prisma.$transaction(async (tx) => {
+              await lockHostBatchInTx(tx, hostBatchEntries(profiles, windows));
               await lockPlanForMove(tx, "CLASS", plan.id, profiles);
               const { schedulingTimezone } = await assertSnapshotCurrent(
                 tx,
