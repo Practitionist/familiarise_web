@@ -17,6 +17,7 @@ import {
   describeLiveBookings,
   hasLiveBookings,
   hasMoneyInFlight,
+  hostedBookingsForUser,
   liveBookingsForUser,
   moneyInFlightForUser,
   scrubUser,
@@ -69,6 +70,20 @@ export async function POST(
           "Erasure is blocked while the user is the sole active owner of an organization. Transfer ownership or deactivate the organization first.",
         code: "ERASURE_BLOCKED_SOLE_ORG_OWNER",
         organizations: soleOwnedOrgs,
+      },
+      { status: 409 },
+    );
+  }
+
+  // An expert's open bookings need a host who can sign in to deliver or
+  // cancel them, so the operator ends them first.
+  const hosted = await hostedBookingsForUser(prisma, request.userId);
+  if (hosted?.hasActive) {
+    return NextResponse.json(
+      {
+        error: `Erasure is blocked while this user still hosts live bookings (${hosted.details ?? `${hosted.total} open`}). Cancel each one through its cancel door, or wait for it to finish, then process this request again. Erasure never cancels a booking itself.`,
+        code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+        breakdown: hosted.breakdown,
       },
       { status: 409 },
     );

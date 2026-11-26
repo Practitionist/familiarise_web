@@ -19,12 +19,12 @@ import {
   eraseStreamPrincipalFootprint,
   hasLiveBookings,
   hasMoneyInFlight,
+  hostedBookingsForUser,
   liveBookingsForUser,
   moneyInFlightForUser,
   scrubUser,
   soleOwnerOrganizationsForUser,
 } from "@/lib/compliance/erasure/scrub-user";
-import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 import {
   afterCollaborationEnded,
@@ -388,25 +388,19 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     };
   }
 
-  if (profile?.id) {
-    const activeAppointments = await checkActiveAppointments(
-      profile.id,
-      prisma,
-      "removal",
-    );
-    if (activeAppointments.hasActive) {
-      return {
-        blockerResponse: NextResponse.json(
-          {
-            error: `Cannot delete account while you have active or upcoming appointments (${activeAppointments.details ?? `${activeAppointments.total} active`}). Please complete or cancel them first.`,
-            code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
-            breakdown: activeAppointments.breakdown,
-          },
-          { status: 409 },
-        ),
-        hasRetainedHistory: false,
-      };
-    }
+  const activeAppointments = await hostedBookingsForUser(prisma, id);
+  if (activeAppointments?.hasActive) {
+    return {
+      blockerResponse: NextResponse.json(
+        {
+          error: `Cannot delete account while you have active or upcoming appointments (${activeAppointments.details ?? `${activeAppointments.total} active`}). Please complete or cancel them first.`,
+          code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+          breakdown: activeAppointments.breakdown,
+        },
+        { status: 409 },
+      ),
+      hasRetainedHistory: false,
+    };
   }
 
   const bookingBlocker = await liveBookingsBlock(id);

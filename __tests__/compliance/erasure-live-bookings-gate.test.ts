@@ -50,6 +50,9 @@ jest.mock("../../lib/compliance/erasure/scrub-user", () => ({
 }));
 
 const live = { consultations: 0, plans: 0, trials: 0, seats: 0 };
+/** What the user hosts as an expert; no expert profile unless `profile` is set. */
+const hosted = { profile: false, trials: 0 };
+type CountArgs = { where: Record<string, unknown> };
 const mockSeatCount = jest.fn(async (_args: { where: unknown }) => live.seats);
 jest.mock("../../lib/prisma", () => {
   const zero = { count: jest.fn(async () => 0) };
@@ -69,9 +72,31 @@ jest.mock("../../lib/prisma", () => {
       consultantEarnings: zero,
       dispute: zero,
       organizationInvoice: zero,
-      consultation: { count: jest.fn(async () => live.consultations) },
-      subscription: { count: jest.fn(async () => live.plans) },
-      trial: { count: jest.fn(async () => live.trials) },
+      // The learner's own bookings name the requester; the hosted ones name the plan or the expert.
+      consultation: {
+        count: jest.fn(async ({ where }: CountArgs) =>
+          "consultationPlan" in where ? 0 : live.consultations,
+        ),
+      },
+      subscription: {
+        count: jest.fn(async ({ where }: CountArgs) =>
+          "subscriptionPlan" in where ? 0 : live.plans,
+        ),
+      },
+      trial: {
+        count: jest.fn(async ({ where }: CountArgs) =>
+          "consultantProfileId" in where ? hosted.trials : live.trials,
+        ),
+      },
+      consultantProfile: {
+        findFirst: jest.fn(async () =>
+          hosted.profile ? { id: "expert-profile" } : null,
+        ),
+      },
+      webinar: zero,
+      class: zero,
+      rescheduleRequest: zero,
+      collaborator: zero,
       appointment: {
         count: (args: { where: unknown }) => mockSeatCount(args),
       },
@@ -94,6 +119,21 @@ const process = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   Object.assign(live, { consultations: 0, plans: 0, trials: 0, seats: 0 });
+  Object.assign(hosted, { profile: false, trials: 0 });
+});
+
+it("refuses an expert who still hosts a scheduled free trial, names it, and never scrubs", async () => {
+  Object.assign(hosted, { profile: true, trials: 1 });
+
+  const res = await process();
+
+  expect(res.status).toBe(409);
+  const body = await res.json();
+  expect(body.code).toBe("ERASURE_BLOCKED_ACTIVE_APPOINTMENTS");
+  expect(body.breakdown).toMatchObject({ trials: 1, consultations: 0 });
+  expect(body.error).toContain("1 active trial");
+  expect(body.error).toMatch(/cancel/i);
+  expect(mockScrub).not.toHaveBeenCalled();
 });
 
 it("refuses a learner with a live plan, names it and the cancel door, and never scrubs", async () => {

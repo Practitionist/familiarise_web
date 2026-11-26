@@ -101,7 +101,8 @@ jest.mock("../../lib/prisma", () => ({
     organizationInvoice: {
       count: jest.fn(async () => counts.organizationInvoice),
     },
-    // The user holds no live booking; that gate has its own suite.
+    // The user hosts and holds no live booking; that gate has its own suite.
+    consultantProfile: { findFirst: jest.fn(async () => null) },
     consultation: { count: jest.fn(async () => 0) },
     subscription: { count: jest.fn(async () => 0) },
     trial: { count: jest.fn(async () => 0) },

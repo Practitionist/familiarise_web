@@ -17,6 +17,7 @@ jest.mock("../../lib/compliance/erasure/scrub-user", () => ({
   hasLiveBookings: (counts: Record<string, number>) =>
     Object.values(counts).some((n) => n > 0),
   hasMoneyInFlight: () => false,
+  hostedBookingsForUser: jest.fn(async () => null),
   liveBookingsForUser: () => mockLiveBookings(),
   moneyInFlightForUser: jest.fn(async () => ({})),
   scrubUser: () => mockScrub(),

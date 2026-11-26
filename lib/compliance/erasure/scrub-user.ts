@@ -98,6 +98,10 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
+import {
+  checkActiveAppointments,
+  type ActiveAppointmentsResult,
+} from "@/lib/booking/active-appointments";
 import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
 import {
   purgeErasedCreatorFiles,
@@ -276,6 +280,22 @@ export async function liveBookingsForUser(
     activeTrials,
     activeEventSeats,
   };
+}
+
+/**
+ * Bookings the user still hosts or co-hosts as an expert; null with no expert
+ * profile. Both erasure doors refuse with ERASURE_BLOCKED_ACTIVE_APPOINTMENTS
+ * while any is open: a scrubbed expert cannot sign in to deliver or cancel.
+ */
+export async function hostedBookingsForUser(
+  db: Db,
+  userId: string,
+): Promise<ActiveAppointmentsResult | null> {
+  const profile = await db.consultantProfile.findFirst({
+    where: { userId },
+    select: { id: true },
+  });
+  return profile ? checkActiveAppointments(profile.id, db, "removal") : null;
 }
 
 /** True when the user still holds any live booking. */
