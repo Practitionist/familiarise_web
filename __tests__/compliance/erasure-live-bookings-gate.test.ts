@@ -115,7 +115,7 @@ it("refuses a learner with a live plan, names it and the cancel door, and never 
   expect(mockScrub).not.toHaveBeenCalled();
 });
 
-it("refuses a learner who still holds a seat on a class or webinar with a session ahead", async () => {
+it("refuses a learner who still holds a seat on a class or webinar until its last session ends", async () => {
   live.seats = 1;
 
   const res = await process();
@@ -125,7 +125,7 @@ it("refuses a learner who still holds a seat on a class or webinar with a sessio
   expect(body.counts.activeEventSeats).toBe(1);
   expect(body.error).toContain("1 class or webinar seat");
   expect(mockScrub).not.toHaveBeenCalled();
-  // A fulfilled learner seat on an event that still has a session to run.
+  // A fulfilled learner seat on an event with a session ahead or under way.
   expect(mockSeatCount).toHaveBeenCalledWith({
     where: expect.objectContaining({
       OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
@@ -136,10 +136,11 @@ it("refuses a learner who still holds a seat on a class or webinar with a sessio
         }),
       },
       occurrences: {
-        some: expect.objectContaining({
-          completionStatus: "SCHEDULED",
-          startsAt: { gt: expect.any(Date) },
-        }),
+        some: {
+          deletedAt: null,
+          completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+          endsAt: { gt: expect.any(Date) },
+        },
       },
     }),
   });

@@ -97,6 +97,7 @@ import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
 import {
   purgeErasedCreatorFiles,
@@ -212,7 +213,7 @@ export interface LiveBookings {
   activeSubscriptions: number;
   /** Trials scheduled or awaiting payment. */
   activeTrials: number;
-  /** Class or webinar seats on an event that still has a session ahead. */
+  /** Class or webinar seats on an event with a session ahead or under way. */
   activeEventSeats: number;
 }
 
@@ -264,13 +265,8 @@ export async function liveBookingsForUser(
         participants: {
           some: { ...paidParticipant(userId), role: "CONSULTEE" },
         },
-        occurrences: {
-          some: {
-            deletedAt: null,
-            completionStatus: "SCHEDULED",
-            startsAt: { gt: now },
-          },
-        },
+        // Until the session ends: a learner in a session under way is still seated.
+        occurrences: { some: { ...LIVE_SLOT_WHERE, endsAt: { gt: now } } },
       },
     }),
   ]);

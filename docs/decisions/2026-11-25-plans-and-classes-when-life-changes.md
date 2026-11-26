@@ -95,7 +95,7 @@ These three extend the [session outcome report window](2026-11-23-session-outcom
 
 ### 12. Smaller rules decided without alternatives **(planned)**
 
-- **(built)** An erasure request processed by an admin runs the same live-booking check as a self-serve account deletion (`liveBookingsForUser` in `lib/compliance/erasure/scrub-user.ts`), so a learner with a live plan is not scrubbed while the plan runs on. The check also counts a paid seat on a class or webinar that has a session still ahead, on both doors.
+- **(built)** An erasure request processed by an admin runs the same live-booking check as a self-serve account deletion (`liveBookingsForUser` in `lib/compliance/erasure/scrub-user.ts`), so a learner with a live plan is not scrubbed while the plan runs on. The check also counts a paid seat on a class or webinar until its last session ends, on both doors.
 - A learner is told when a week of their plan closes with sessions unplaced, with the way to cancel for a refund; operations are told after two such weeks in a row.
 - A learner is told after two absences in a row what is left on the plan and how to cancel it.
 - A learner whose plan-end refund is waiting on a session under review is told the plan is in review.
