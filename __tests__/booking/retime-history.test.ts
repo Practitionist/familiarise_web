@@ -16,6 +16,14 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../utils/appointmentlock", () => ({
+  // A door takes its tiers through this; it hands back the doubles above.
+  requestLockTiers: () => {
+    const locks = jest.requireMock("../../utils/appointmentlock");
+    return {
+      withEventCheckoutLock: locks.withEventCheckoutLock,
+      withAppointmentLock: locks.withAppointmentLock,
+    };
+  },
   withEventCheckoutLock: jest.fn((_scope: unknown, run: () => unknown) =>
     run(),
   ),

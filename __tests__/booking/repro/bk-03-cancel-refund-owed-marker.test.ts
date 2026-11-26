@@ -88,6 +88,14 @@ jest.mock("../../../lib/rate-limit", () => ({
   eventMutationLimiter: {},
 }));
 jest.mock("../../../utils/appointmentlock", () => ({
+  // A door takes its tiers through this; it hands back the doubles above.
+  requestLockTiers: () => {
+    const locks = jest.requireMock("../../../utils/appointmentlock");
+    return {
+      withEventCheckoutLock: locks.withEventCheckoutLock,
+      withAppointmentLock: locks.withAppointmentLock,
+    };
+  },
   __esModule: true,
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},

@@ -9,8 +9,7 @@ import {
   AppointmentBusyError,
   BookingLockUnavailableError,
   renewAppointmentLock,
-  withAppointmentLock,
-  withEventCheckoutLock,
+  requestLockTiers,
 } from "@/utils/appointmentlock";
 import {
   cancelGatewayOrders,
@@ -904,6 +903,8 @@ export async function POST(
             eventId,
           }
         : null;
+    // Both lock tiers of a run share one deadline, minted when the run starts.
+    const { withEventCheckoutLock, withAppointmentLock } = requestLockTiers();
     const runCancel = (captureLanded: boolean) =>
       withEventCheckoutLock(eventCheckoutKey, (renewEventLock) =>
         withAppointmentLock(appointmentId, (lock) =>

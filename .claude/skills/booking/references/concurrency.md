@@ -184,8 +184,11 @@ the request door, the trial door and the incident rebook mint one
 `requestLockBudget()` (`REQUEST_LOCK_BUDGET_MS`, 8 seconds) and pass it to every
 tier (`lockRequestCap`, `lockExpertPlanSales`, `lockConsulteeBooking`,
 `lockSlotBatch`, `lockEventCheckout`, `withAppointmentLock`). Past the deadline a
-tier makes no Redis call and starts no wait, and answers its own busy 409. A new
-multi-tier door must do the same.
+tier makes no Redis call and starts no wait, and answers its own busy 409. A
+lifecycle door that takes the event key and then the appointment key (cancel,
+webinar re-time, class series re-time) or the appointment key alone
+(reschedule) takes them from `requestLockTiers()`, which mints the deadline
+when the door starts acquiring. A new multi-tier door must do the same.
 
 Treat the ceiling as an observed figure, not a configured one: there is no
 `26000` constant and no `[functions]` timeout block in `netlify.toml`, only

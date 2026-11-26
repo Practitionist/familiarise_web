@@ -1016,11 +1016,13 @@ export const EVENT_LIFECYCLE_LOCK_TTL_MS = 75_000;
  * Run `fn` under the event's checkout key, the outermost booking tier (event →
  * appointment → … → slot batch). A null key runs `fn` unlocked: a 1:1 booking
  * has no event key. `renew` re-arms the key; call it at the top of every
- * Serializable attempt so a retry chain never outlives it.
+ * Serializable attempt so a retry chain never outlives it. A door that takes
+ * the appointment under it passes one `requestLockBudget()` to both tiers.
  */
 export async function withEventCheckoutLock<T>(
   key: { appointmentType: string; eventId: string } | null,
   fn: (renew: () => Promise<void>) => Promise<T>,
+  retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<T> {
   if (!key) return fn(() => Promise.resolve());
   let lock: ApprovalLock;
@@ -1029,6 +1031,7 @@ export async function withEventCheckoutLock<T>(
       key.appointmentType,
       key.eventId,
       EVENT_LIFECYCLE_LOCK_TTL_MS,
+      retryConfig,
     );
   } catch (error) {
     if (error instanceof EventCheckoutBusyError) {
@@ -1093,6 +1096,33 @@ export async function withAppointmentLock<T>(
   } finally {
     await unlockAppointment(lock);
   }
+}
+
+/**
+ * The event and appointment tiers of one lifecycle door, sharing one request
+ * deadline: the outermost tier mints it when the door starts acquiring, and
+ * the appointment tier under it waits only for what is left. A door with no
+ * event tier gets a fresh deadline for its appointment tier.
+ */
+export function requestLockTiers(): {
+  withEventCheckoutLock: <T>(
+    key: { appointmentType: string; eventId: string } | null,
+    fn: (renew: () => Promise<void>) => Promise<T>,
+  ) => Promise<T>;
+  withAppointmentLock: <T>(
+    appointmentId: string,
+    fn: (lock: ApprovalLock) => Promise<T>,
+  ) => Promise<T>;
+} {
+  let budget: LockRetryConfig | null = null;
+  return {
+    withEventCheckoutLock: (key, fn) => {
+      budget = requestLockBudget();
+      return withEventCheckoutLock(key, fn, budget);
+    },
+    withAppointmentLock: (appointmentId, fn) =>
+      withAppointmentLock(appointmentId, fn, budget ?? requestLockBudget()),
+  };
 }
 
 /** The appointment lock's grant lapsed or passed to another writer mid-operation. */

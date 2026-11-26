@@ -14,6 +14,8 @@ jest.mock("../../lib/redis", () => {
   };
 });
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   REQUEST_LOCK_BUDGET_MS,
   extendLock,
@@ -21,8 +23,10 @@ import {
   lockRequestCap,
   lockSlotBatch,
   requestLockBudget,
+  requestLockTiers,
   tryLockSlotBatch,
   unlockConsulteeBooking,
+  withEventCheckoutLock,
 } from "../../utils/appointmentlock";
 import type { MockRedis } from "../../lib/redis-mock";
 
@@ -133,6 +137,52 @@ describe("the lock tiers of one request share one deadline", () => {
       deadlineAt: Date.now() + 300,
     });
     expect(await after(waiting, 300)).toEqual({ error: "SlotLockError" });
+  });
+});
+
+describe("a lifecycle door's tiers share the request deadline", () => {
+  it("the event tier stops waiting at the deadline and never runs the door", async () => {
+    await client.set("event-checkout:WEBINAR:w-1", "a-buyer", { px: 600_000 });
+    const door = jest.fn(async () => "ran");
+    const waiting = withEventCheckoutLock(
+      { appointmentType: "WEBINAR", eventId: "w-1" },
+      door,
+      { ...requestLockBudget(), deadlineAt: Date.now() + 300 },
+    );
+    expect(await after(waiting, 300)).toEqual({
+      error: "EventCheckoutBusyError",
+    });
+    expect(door).not.toHaveBeenCalled();
+  });
+
+  it("the appointment tier under an event tier waits only for what the event tier left", async () => {
+    await client.set("event-checkout:WEBINAR:w-1", "a-buyer", { px: 600_000 });
+    await client.set("appointment-lock:appt-1", "a-cancel", { px: 600_000 });
+    const tiers = requestLockTiers();
+    const startedAt = Date.now();
+    // The event key frees late in the budget; the appointment key never does.
+    setTimeout(() => void client.del("event-checkout:WEBINAR:w-1"), 5_000);
+    const door = tiers.withEventCheckoutLock(
+      { appointmentType: "WEBINAR", eventId: "w-1" },
+      () => tiers.withAppointmentLock("appt-1", async () => "ran"),
+    );
+    expect(await after(door, REQUEST_LOCK_BUDGET_MS)).toEqual({
+      error: "AppointmentBusyError",
+    });
+    expect(Date.now() - startedAt).toBeLessThanOrEqual(REQUEST_LOCK_BUDGET_MS);
+  });
+
+  it.each([
+    "app/api/appointments/[appointmentId]/cancel/route.ts",
+    "app/api/appointments/[appointmentId]/reschedule/route.ts",
+    "lib/booking/event-retime.ts",
+    "lib/booking/class-retime.ts",
+  ])("%s takes its lock tiers from one shared deadline", (file) => {
+    const source = readFileSync(join(__dirname, "..", "..", file), "utf8");
+    expect(source).toMatch(/= requestLockTiers\(\);/);
+    expect(source).not.toMatch(
+      /import \{[^}]*\bwith(?:Appointment|EventCheckout)Lock\b[^}]*\} from "@\/utils\/appointmentlock"/,
+    );
   });
 });
 

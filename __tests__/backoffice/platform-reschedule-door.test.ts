@@ -43,6 +43,11 @@ jest.mock("../../utils/appointmentlock", () => {
   }
   return {
     __esModule: true,
+    // A door takes its tiers through this; it hands back the double below.
+    requestLockTiers: () => ({
+      withAppointmentLock: jest.requireMock("../../utils/appointmentlock")
+        .withAppointmentLock,
+    }),
     withAppointmentLock: jest.fn(
       async (_id: string, fn: () => Promise<unknown>) => fn(),
     ),

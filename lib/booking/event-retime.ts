@@ -11,10 +11,7 @@
 import prisma from "@/lib/prisma";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
-import {
-  withAppointmentLock,
-  withEventCheckoutLock,
-} from "@/utils/appointmentlock";
+import { requestLockTiers } from "@/utils/appointmentlock";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -145,6 +142,8 @@ export async function retimeWebinar(args: {
   ];
 
   const dashboardUrl = notificationHref(pre.organizationId, "appointments");
+  // Both lock tiers share one deadline, minted when the door starts acquiring.
+  const { withEventCheckoutLock, withAppointmentLock } = requestLockTiers();
   const result = await withEventCheckoutLock(
     { appointmentType: "WEBINAR", eventId: webinar.id },
     () =>
