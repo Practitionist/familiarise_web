@@ -139,6 +139,9 @@ export async function acceptProposal(args: {
         where: { id: request.id },
         to: "ACCEPTED",
         data: { resolvedById: args.resolvedById },
+        // The deadline is part of the write: an acceptance that reaches its
+        // commit after the proposal lapsed moves nothing.
+        whereAnd: { expiresAt: { gt: new Date() } },
       });
       // The reallocation buffer lasts only while the proposal is open.
       await restoreEarningsHold(tx, request.appointmentId);
@@ -153,6 +156,19 @@ export async function acceptProposal(args: {
   });
   if (!result.success) {
     // Nothing was written; the proposal stays open unless it was closed under us.
+    if (result.errorCode === "RESCHEDULE_NO_LONGER_OPEN") {
+      const after = await prisma.rescheduleRequest.findUnique({
+        where: { id: request.id },
+        select: { status: true, expiresAt: true },
+      });
+      // Still unanswered, so the write missed on its deadline.
+      if (
+        after?.status === "PENDING_REVIEW" &&
+        after.expiresAt.getTime() <= Date.now()
+      ) {
+        return { done: false, reason: "PROPOSAL_EXPIRED" };
+      }
+    }
     return { done: false, reason: result.errorCode ?? "VALIDATION_FAILED" };
   }
 
