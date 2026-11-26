@@ -10,6 +10,7 @@ import type {
   CaseWorkspace,
 } from "@/types/support-case";
 import { listStatusFacts } from "@/lib/appointments/list-status-facts";
+import { PARKED_SESSIONS_COUNT } from "@/lib/booking/awaiting-decision";
 import type { OpenRescheduleProposal } from "@/lib/appointments/consultee-affordances";
 import { toDate } from "@/lib/appointments/view-model";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
@@ -113,6 +114,7 @@ export async function readCaseBooking(
     where: { id: appointmentId },
     select: {
       ...BOOKING_SELECT,
+      _count: { select: PARKED_SESSIONS_COUNT },
       // The requester's own seat: a removed or departed attendee's booking is not the event's.
       participants: {
         where: { userId: requester.id, role: "CONSULTEE" },
@@ -192,7 +194,10 @@ export async function readCaseBooking(
       a.webinar?.status ??
       null,
     seatStatus: a.participants[0]?.status ?? null,
-    facts: caseStatusFacts(a, grants.showPayment),
+    facts: {
+      ...caseStatusFacts(a, grants.showPayment),
+      parkedSessions: a._count.occurrences,
+    },
   };
 }
 

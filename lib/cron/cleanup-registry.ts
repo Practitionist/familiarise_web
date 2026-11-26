@@ -583,6 +583,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           classEndSeatsOwed: r.classEndSeatsOwed,
           classEndOwedPaise: r.classEndOwedPaise,
           classEndCreditSeatsEscalated: r.classEndCreditSeatsEscalated,
+          oldestUndecidedSessionMinutes: r.oldestUndecidedSessionMinutes,
+          needsHumanSessions: r.needsHumanSessions,
+          oldestNeedsHumanMinutes: r.oldestNeedsHumanMinutes,
         }),
         items: (r) => ({
           processed:

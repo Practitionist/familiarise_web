@@ -86,7 +86,7 @@ atom before it opens its transaction. That includes the reschedule withdraw
 (#1583) and, as of #1846, the abandon door, the reschedule expiry sweep (which
 expires and restores in one transaction under it), trial DELETE (which moves
 the status and tombstones the session in one transaction on its own client),
-and moderation's bulk cancel, which takes the lock per engagement. A request or trial with no appointment yet has no atom, so its CAS
+and moderation's bulk cancel, which takes the lock per engagement. Auto-complete takes it around each booking's completing transaction, waiting at most about 0.9 s (`SWEEP_LOCK_RETRY_CONFIG`) and leaving a busy booking for the next run, so a park through the ops outcome door is seen by its CAS (`docs/decisions/2026-11-24-parked-sessions-hold-the-booking-status.md`). A request or trial with no appointment yet has no atom, so its CAS
 alone decides. Offering DELETE takes the `event-checkout:` key checkout takes
 for the same webinar, class or subscription plan, with an explicit 75-second
 TTL and one retry so the lock outlives every attempt; a consultation plan has

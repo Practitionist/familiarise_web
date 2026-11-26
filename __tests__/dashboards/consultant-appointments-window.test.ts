@@ -40,6 +40,7 @@ type Row = {
   createdAt: Date;
   live: boolean;
   occurrences: { startsAt: Date }[];
+  _count: { participants: number; occurrences: number };
 };
 type Where = {
   AND?: Where[];
@@ -61,6 +62,7 @@ const PAST: Row[] = Array.from({ length: 600 }, (_, i) => ({
     Date.UTC(2025, 0, 1) + (i >= 100 && i <= 104 ? 100 : i) * 60_000,
   ),
   live: false,
+  _count: { participants: 0, occurrences: 0 },
   occurrences: [
     {
       startsAt: new Date(Date.UTC(2025, 6, 1) + ((i * 7919) % 600) * 3_600_000),
@@ -71,6 +73,7 @@ const LIVE: Row[] = ["l-1", "l-2", "l-3"].map((id, i) => ({
   id,
   createdAt: new Date(Date.UTC(2026, 9, 1 + i)),
   live: true,
+  _count: { participants: 0, occurrences: 0 },
   occurrences: [],
 }));
 const ROWS = [...PAST, ...LIVE];

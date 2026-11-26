@@ -13,6 +13,14 @@ const BACKLOG = 100;
 let queue: Slot[] = [];
 const decided: string[] = [];
 const confirmDeadlines: boolean[] = [];
+/** When set, every session's Stream read is throttled: the pass marks the run and defers it. */
+let throttled = false;
+const reportSentryError = jest.fn();
+
+jest.mock("../../../lib/observability/report", () => ({
+  ...jest.requireActual("../../../lib/observability/report"),
+  reportSentryError: (...a: unknown[]) => reportSentryError(...a),
+}));
 
 jest.mock("../../../lib/prisma", () => ({
   __esModule: true,
@@ -28,13 +36,28 @@ jest.mock("../../../lib/booking/session-outcome-sweep", () => ({
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
   escalateAgedNeedsHuman: async () => 0,
+  readOutcomeQueueAge: async () => ({
+    oldestUndecidedMinutes: 400,
+    needsHuman: 7,
+    oldestNeedsHumanMinutes: 9000,
+  }),
   confirmClosedOutcomes: async (_now: Date, pastDeadline: () => boolean) => {
     confirmDeadlines.push(pastDeadline());
     return { confirmed: 0, weak: 0, errors: [], checkpoint: null };
   },
-  decideSlotOutcome: async (slot: Slot) => {
-    decided.push(slot.id);
+  decideSlotOutcome: async (
+    slot: Slot,
+    ctx: { stream?: { throttled: boolean; deferred: number } },
+  ) => {
     queue = queue.filter((s) => s.id !== slot.id);
+    if (throttled) {
+      if (ctx.stream) {
+        ctx.stream.throttled = true;
+        ctx.stream.deferred++;
+      }
+      return { kind: "deferred", reason: "attendance-unsettled" };
+    }
+    decided.push(slot.id);
     return {
       kind: "written",
       to: "COMPLETED",
@@ -65,6 +88,8 @@ import { calls, resetDouble } from "./checkout-harness/setup";
 beforeEach(() => {
   decided.length = 0;
   confirmDeadlines.length = 0;
+  throttled = false;
+  reportSentryError.mockClear();
   queue = Array.from({ length: BACKLOG }, (_, i) => ({
     id: `slot-${i}`,
     startsAt: new Date(Date.now() - 5 * 3600_000),
@@ -118,6 +143,35 @@ describe("autoCompleteAppointments backlog", () => {
 
     expect(confirmDeadlines).toEqual([true]);
     expect(decided.length).toBeGreaterThan(0);
+  });
+
+  it("reports a throttled Stream once for the run, however many sessions it left waiting", async () => {
+    throttled = true;
+
+    await autoCompleteAppointments({ maxParents: BITE, maxSlotOutcomes: BITE });
+
+    const reports = reportSentryError.mock.calls.filter(
+      ([, opts]) => opts.op === "session-outcome-sweep.stream-throttled",
+    );
+    expect(reports).toHaveLength(1);
+    expect(reports[0][1]).toMatchObject({
+      level: "warning",
+      extra: { count: 1, sample: [{ deferred: BACKLOG }] },
+    });
+  });
+
+  it("returns the queue's age in the run summary", async () => {
+    const result = await autoCompleteAppointments({
+      maxParents: BITE,
+      maxSlotOutcomes: BITE,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      oldestUndecidedSessionMinutes: 400,
+      needsHumanSessions: 7,
+      oldestNeedsHumanMinutes: 9000,
+    });
   });
 
   it("re-reads parents while the slot pass is still draining", async () => {

@@ -9,7 +9,10 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: { meeting: { findMany: (...a: unknown[]) => findMany(...a) } },
 }));
-const settle = jest.fn(async () => ({ kind: "unavailable" }));
+const settle = jest.fn(async () => ({
+  kind: "unavailable",
+  throttled: false,
+}));
 jest.mock("../../lib/meetings/settle-attendance", () => ({
   ...jest.requireActual("../../lib/meetings/settle-attendance"),
   settleOccurrenceAttendance: (...a: unknown[]) => settle(...(a as [])),

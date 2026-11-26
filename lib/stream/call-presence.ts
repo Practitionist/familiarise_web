@@ -8,6 +8,7 @@
 import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import {
   getStreamVideoClient,
+  isRateLimitError,
   isStreamConfigured,
   streamHttpStatus,
   withStreamCircuitBreaker,
@@ -26,10 +27,13 @@ export interface SettledStreamInterval {
 /**
  * - `read`: every session of every call has ended and was read in full.
  * - `no-session`: Stream affirms no call of the occurrence ever had a session.
- * - `not-final`: a session is still live, is neither announced ready nor
- *   corroborated, a session known elsewhere is missing from the list, or the counts disagree.
+ * - `not-final`: Stream answered, and its answer is not a complete record: a
+ *   session is still live, is neither announced ready nor corroborated, a session
+ *   known elsewhere is missing from the list, the counts disagree, or the calls cannot all be listed.
  * - `expired`: Stream no longer holds the detail (HTTP 404 on a session past its 90 days).
- * - `unavailable`: Stream could not be asked or did not answer.
+ * - `unavailable`: the request itself failed (a rate limit, a network fault, an
+ *   open breaker, missing keys), so nothing is known about the session;
+ *   `throttled` says Stream refused it for rate.
  * - `out-of-time`: the caller's deadline passed first; nothing is known about Stream.
  */
 export type SettledAttendanceRead =
@@ -44,7 +48,7 @@ export type SettledAttendanceRead =
   | { kind: "no-session" }
   | { kind: "not-final" }
   | { kind: "expired" }
-  | { kind: "unavailable" }
+  | { kind: "unavailable"; throttled: boolean }
   | { kind: "out-of-time" };
 
 /** An occurrence has its original call id plus one per rotation; more than a page means we cannot list them all. */
@@ -69,14 +73,29 @@ interface Reader {
 
 class DeadlineExceeded extends Error {}
 
+/** A request Stream did not answer, or refused for rate. */
+class RequestFailed extends Error {
+  constructor(readonly throttled: boolean) {
+    super("Stream request failed");
+  }
+}
+
+/** A 404 is Stream's answer, and each caller decides what it means; any other failure is the request's. */
+function asRequestFailure(error: unknown): never {
+  if (streamHttpStatus(error) === 404) throw error;
+  throw new RequestFailed(isRateLimitError(error));
+}
+
 /** One Stream request through the breaker, abandoned once the read's deadline passes. */
 async function ask<T>(reader: Reader, op: () => Promise<T>): Promise<T> {
-  if (reader.deadlineAt === undefined) {
-    return withStreamCircuitBreaker(op, undefined, reader.failures);
-  }
+  const send = () =>
+    withStreamCircuitBreaker(op, undefined, reader.failures).catch(
+      asRequestFailure,
+    );
+  if (reader.deadlineAt === undefined) return send();
   const remaining = reader.deadlineAt - Date.now();
   if (remaining <= 0) throw new DeadlineExceeded();
-  const request = withStreamCircuitBreaker(op, undefined, reader.failures);
+  const request = send();
   // A request that answers after the deadline is dropped, not reported as unhandled.
   request.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -127,7 +146,7 @@ async function listOccurrenceCalls(
     }),
   );
   // Stream refuses the queryCalls cursor, so a second page means the list is not complete.
-  if (page.next) throw new Error("more calls than one page");
+  if (page.next) throw new NotFinal("more calls than one page");
   const calls = new Map<string, OccurrenceCall>();
   for (const entry of page.calls) {
     if (entry.call.type === STREAM_CALL_TYPE) {
@@ -273,7 +292,7 @@ export async function readSettledAttendance(args: {
   failures?: RunFailureReporter;
   deadlineAt?: number;
 }): Promise<SettledAttendanceRead> {
-  if (!isStreamConfigured()) return { kind: "unavailable" };
+  if (!isStreamConfigured()) return { kind: "unavailable", throttled: false };
   const reader: Reader = {
     client: getStreamVideoClient(),
     failures: args.failures,
@@ -346,6 +365,10 @@ export async function readSettledAttendance(args: {
     if (error instanceof NotFinal) return { kind: "not-final" };
     if (error instanceof Expired) return { kind: "expired" };
     if (error instanceof DeadlineExceeded) return { kind: "out-of-time" };
-    return { kind: "unavailable" };
+    if (error instanceof RequestFailed) {
+      return { kind: "unavailable", throttled: error.throttled };
+    }
+    // Stream answered with something this read cannot take as a record (an unknown call, an unexpected shape).
+    return { kind: "not-final" };
   }
 }

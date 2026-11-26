@@ -15,12 +15,23 @@ export async function cancelOpenPayoutsForPayment(
   paymentId: string,
   failureReason: string,
 ): Promise<{ consultant: string[]; org: string[] }> {
+  return cancelOpenPayoutsForPayments(tx, [paymentId], failureReason);
+}
+
+/** The same cancel over many payments in one pass, for a door that gates a whole roster. */
+export async function cancelOpenPayoutsForPayments(
+  tx: Tx,
+  paymentIds: readonly string[],
+  failureReason: string,
+): Promise<{ consultant: string[]; org: string[] }> {
+  if (paymentIds.length === 0) return { consultant: [], org: [] };
+  const ofPayments = { paymentId: { in: [...paymentIds] } };
   const consultantPayoutIds = [
     ...new Set(
       (
         await tx.consultantEarnings.findMany({
           where: {
-            paymentId,
+            ...ofPayments,
             status: EarningStatus.BATCHED,
             payout: { status: { in: [...OPEN_PAYOUT_STATUSES] } },
           },
@@ -52,7 +63,7 @@ export async function cancelOpenPayoutsForPayment(
       (
         await tx.organizationEarnings.findMany({
           where: {
-            paymentId,
+            ...ofPayments,
             status: EarningStatus.BATCHED,
             orgPayout: { status: { in: [...OPEN_PAYOUT_STATUSES] } },
           },

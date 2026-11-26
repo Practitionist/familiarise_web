@@ -73,6 +73,11 @@ const implied = computeHoldUntil({
   holdHours: holdHoursFor("CONSULTATION"),
 });
 
+/** PENDING rows and rows held from PENDING. */
+const UNRELEASED = {
+  OR: [{ status: "PENDING" }, { status: "HELD", preHoldStatus: "PENDING" }],
+};
+
 describe("restoreEarningsHold", () => {
   it("pulls a reschedule's pushed hold back to what the restored session implies", async () => {
     expect(pushed.getTime()).toBeGreaterThan(implied.getTime() + HOUR);
@@ -81,13 +86,13 @@ describe("restoreEarningsHold", () => {
     expect(await restoreEarningsHold(db, "appt-1")).toBe(2);
     expect(consultantUpdates).toEqual([
       {
-        where: { id: "ce-1", status: "PENDING", holdUntil: pushed },
+        where: { id: "ce-1", ...UNRELEASED, holdUntil: pushed },
         data: { holdUntil: implied },
       },
     ]);
     expect(orgUpdates).toEqual([
       {
-        where: { id: "oe-1", status: "PENDING", holdUntil: pushed },
+        where: { id: "oe-1", ...UNRELEASED, holdUntil: pushed },
         data: { holdUntil: implied },
       },
     ]);

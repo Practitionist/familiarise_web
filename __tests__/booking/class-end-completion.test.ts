@@ -36,7 +36,11 @@ const classRow = (
   status: "SCHEDULED",
   schedulingPeriodEndsAt,
   classPlan: { title: "Ten weeks of Python", totalSessions },
-  appointment: { occurrences: [], _count: { occurrences: accountedRows } },
+  appointment: {
+    id: "appt-cls-1",
+    occurrences: [],
+    _count: { occurrences: accountedRows },
+  },
 });
 const mockTransitionClassEvent = jest.fn();
 const mockStamp = jest.fn();
@@ -73,6 +77,11 @@ jest.mock("../../lib/booking/session-outcome-sweep", () => ({
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
   escalateAgedNeedsHuman: async () => 0,
+  readOutcomeQueueAge: async () => ({
+    oldestUndecidedMinutes: null,
+    needsHuman: 0,
+    oldestNeedsHumanMinutes: null,
+  }),
   confirmClosedOutcomes: async () => ({
     confirmed: 0,
     weak: 0,

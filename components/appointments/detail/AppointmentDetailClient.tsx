@@ -98,6 +98,7 @@ import { ClassSeriesRetimeButton } from "./ClassSeriesRetimeButton";
 import { useClassSessionActions } from "./ClassSessionControls";
 import { useSubscriptionReturnActions } from "./SubscriptionReturnControls";
 import { SessionSchedule, type SessionRowAction } from "./SessionSchedule";
+import { sessionTakesRating } from "@/components/appointments/SessionTimeline";
 import { SessionAttendance } from "./SessionAttendance";
 import {
   RescheduleProposalCard,
@@ -134,6 +135,7 @@ const POST_APPROVAL = new Set<BookingStateKind>([
   "CONFIRMED",
   "AWAITING_ALLOCATION",
   "BEING_MOVED",
+  "AWAITING_DECISION",
   "COMPLETED",
 ]);
 
@@ -896,6 +898,7 @@ export function AppointmentDetailClient({
             // A failing read leaves every row looking unrated; the notice
             // above explains instead.
             if (sessionFeedback.isError) return attendance;
+            if (!sessionTakesRating(session)) return attendance;
             if (role === "consultee" && !canRate && rating === null) {
               return attendance;
             }

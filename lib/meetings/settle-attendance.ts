@@ -37,13 +37,15 @@ export interface SettleTarget {
  * `settled` carries the stored rows; every other answer stored nothing and the
  * caller treats the session as undecided. `too-early`: the room's last known
  * activity is less than `ATTENDANCE_SETTLE_DELAY_MS` old, so a read now could miss a session.
+ * `unavailable`: the Stream request failed, so nothing is known; `throttled` says Stream refused it for rate.
+ * `settled` carries `throttled` when this call's own read was refused for rate and another settler's snapshot answered.
  */
 export type AttendanceSettlement =
-  | { kind: "settled"; intervals: PresenceInterval[] }
+  | { kind: "settled"; intervals: PresenceInterval[]; throttled?: true }
   | { kind: "too-early" }
   | { kind: "not-final" }
   | { kind: "expired" }
-  | { kind: "unavailable" }
+  | { kind: "unavailable"; throttled: boolean }
   | { kind: "out-of-time" };
 
 /**
@@ -99,7 +101,13 @@ export async function settleOccurrenceAttendance(
     deadlineAt: opts.deadlineAt,
   });
   if (read.kind !== "read" && read.kind !== "no-session") {
-    return settledMeanwhile(meeting.id, read.kind);
+    const answer = await settledMeanwhile(meeting.id, read);
+    // Another settler's snapshot does not undo Stream's refusal of this read.
+    return answer.kind === "settled" &&
+      read.kind === "unavailable" &&
+      read.throttled
+      ? { ...answer, throttled: true }
+      : answer;
   }
   // A session Stream ended more recently than the room knew of gets the same wait.
   if (
@@ -162,7 +170,7 @@ export async function settleOccurrenceAttendance(
 /** A read that could not settle still answers a snapshot another settler stored meanwhile. */
 async function settledMeanwhile(
   meetingId: string,
-  kind: "not-final" | "expired" | "unavailable" | "out-of-time",
+  unsettled: Exclude<AttendanceSettlement, { kind: "settled" | "too-early" }>,
 ): Promise<AttendanceSettlement> {
   const room = await prisma.meeting.findUnique({
     where: { id: meetingId },
@@ -170,7 +178,7 @@ async function settledMeanwhile(
   });
   return room?.attendanceSettledAt
     ? { kind: "settled", intervals: await readStoredAttendance(meetingId) }
-    : { kind };
+    : unsettled;
 }
 
 /** A missed stamp is another settler's snapshot, or a room that changed since the read: judge the room afresh. */
@@ -182,7 +190,8 @@ async function settleAfterLostStamp(
     where: { id: target.meeting.id },
     select: SETTLE_MEETING_SELECT,
   });
-  if (!fresh) return { kind: "unavailable" };
+  // The room row is gone; the next run reads the session without it.
+  if (!fresh) return { kind: "not-final" };
   if (fresh.attendanceSettledAt) {
     return { kind: "settled", intervals: await readStoredAttendance(fresh.id) };
   }
