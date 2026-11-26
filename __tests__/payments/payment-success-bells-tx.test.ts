@@ -125,9 +125,7 @@ describe("stagePaymentSuccessBells", () => {
       ["payment-success", ["booker-1"]],
       ["appointment-booked", ["booker-1", "host-1"]],
     ]);
-    // The MULTI booked row is listed once per recipient; its attempts share one key.
-    expect(new Set(staged.map((row) => row.id))).toEqual(
-      new Set(["nx-1", "nx-2"]),
-    );
+    // A booker and host in one time zone share a MULTI row, attempted once.
+    expect(staged.map((row) => row.id)).toEqual(["nx-1", "nx-2"]);
   });
 });
