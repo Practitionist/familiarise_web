@@ -3,41 +3,24 @@
  * (`payout-service.ts`) and the organization rail (`org-payout-service.ts`).
  */
 
-import { Prisma, RefundStatus } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
-import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import type { Posting } from "@/lib/payments/ledger/post";
 import {
   getFYDateRange,
   getIndianFinancialYear,
   getIndianFYQuarter,
 } from "@/lib/payments/tax/tds-service";
+import { MONEY_OWED_PAYMENT } from "@/scripts/earnings/release-earnings";
 import { isDefinitiveGatewayRejection } from "./razorpay-payouts";
 
-/**
- * Payment-level dispute filter shared by consultant and org payout submission:
- * block any payout whose underlying payment has an active dispute.
- */
-export const DISPUTE_GATED_PAYMENT_WHERE = {
-  disputes: {
-    some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
-  },
-};
+/** Claim gate, both payout rails: an active dispute on an earning's payment blocks the payout. */
+export const DISPUTE_GATED_PAYMENT_WHERE = MONEY_OWED_PAYMENT.activeDispute;
 
-/**
- * Payment-level refund filter shared by both payout rails: a cash refund still
- * in flight or not yet cascaded blocks the payout. Zero-amount credit
- * restorations settle in-ledger and are never cascaded, so they never gate.
- */
+/** Claim gate, both payout rails: a refund in flight or still owed on an earning's payment blocks the payout. */
 export const REFUND_GATED_PAYMENT_WHERE = {
-  refunds: {
-    some: {
-      amountPaise: { gt: 0 },
-      status: { notIn: [RefundStatus.FAILED, RefundStatus.CANCELLED] },
-      OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
-    },
-  },
+  OR: [MONEY_OWED_PAYMENT.refundInFlight, MONEY_OWED_PAYMENT.refundOwed],
 } satisfies Prisma.PaymentWhereInput;
 
 export type PayableLedgerAccount =

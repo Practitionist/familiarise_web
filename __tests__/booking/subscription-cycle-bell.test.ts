@@ -100,6 +100,8 @@ function makeTx(statuses: string[]) {
   );
   return {
     tx: {
+      // The plan's advisory lock, taken before the sessions are read.
+      $executeRaw: jest.fn().mockResolvedValue(1),
       appointment: {
         findUnique: jest.fn().mockResolvedValue(wrapperWith(statuses)),
       },

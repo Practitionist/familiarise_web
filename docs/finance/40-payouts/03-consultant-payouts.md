@@ -33,7 +33,7 @@ All amounts are integer paise. They live in `PAYOUT_CONSTANTS` (`lib/payments/pa
 4. `UNVERIFIED` — the default account has not passed verification (penny drop or reverse penny drop).
 5. `PAYOUT_ACCOUNT_FROZEN` or `PAYOUT_ACCOUNT_COOLING_OFF` — the payee froze the account, or it became the default less than 48 hours ago (`payoutAccountHold`).
 6. `CLAWBACK_RECOVERY_PAUSE` — the expert owes more than ₹10,000.
-7. `BELOW_MINIMUM` — READY earnings net of refunds are under ₹250.
+7. `BELOW_MINIMUM` — READY earnings net of refunds are under ₹250. An earning whose payment has money owed back on it (below) is not counted, as the batch would not take it.
 
 The same function feeds the Earnings banner, the Get-paid page and the Home needs-you row, so the three cannot disagree. `payoutRequirements` adds what the expert still has to give: a payout account and its verification block a transfer outright, while a missing PAN or entity type only raises the withholding rate, so those are due now only once earnings exist. A missing GSTIN is only ever "eventually due".
 
@@ -60,10 +60,14 @@ sequenceDiagram
 
 1. Skips the expert if there is no verified default account, if the account is frozen or cooling off, or if the account is on a gateway with no implementation (`isUnimplementedGateway`).
 2. Skips the expert if the outstanding clawback exceeds ₹10,000, so a clawback committing after the read conflicts and retries.
-3. Sums the READY earnings net of refunds. Below ₹250 it mints nothing.
+3. Sums the READY earnings net of refunds, leaving out any whose payment has money owed back on it: a cash refund that is pending or has succeeded but not yet cascaded, an active chargeback, or an owed-refund marker (`NO_MONEY_OWED_PAYMENT`, defined beside `RELEASABLE_PAYMENT` in `scripts/earnings/release-earnings.ts`). Such an earning stays READY and a later batch takes it once the refund settles, the chargeback is decided or the marker clears. The expert query in `runPayoutBatch`, `checkPayoutEligibility` and the instant-payout preview read the same filter. Below ₹250 it mints nothing.
 4. Creates the payout with the idempotency key `payout_<consultantProfileId>_<batchId>`, status APPROVED with approver `SYSTEM_AUTO_APPROVE` if the amount is below ₹5,000 and PENDING otherwise, the bank method (BANK_TRANSFER or UPI) from the account type, and an MSME deadline `mustPayByDate` (see [MSME and statutory exports](../60-tax/04-msme-statutory-exports-and-calendar.md)).
 5. Nets any outstanding clawback against the payout, up to what leaves the payout minimum and room for the highest withholding rate (`recoverClawbackOnPayout`, `recoverablePaise`).
-6. Claims the earnings READY to BATCHED with a conditional update and rolls the whole transaction back if the count differs from what was read.
+6. Claims the earnings READY to BATCHED with a conditional update that repeats the same filter, and rolls the whole transaction back if the count differs from what was read.
+
+For example, Hannah has two READY earnings of 400,000 paise each. A learner cancels a later session on the first payment and ₹1,500 is owed back, so that payment carries an owed-refund marker on Monday night. The batch mints a payout of 400,000 paise for the second earning alone; the first stays READY and joins the next batch after the refund has gone out and been applied.
+
+A gate that appears after batching un-batches. Stamping an owed-refund marker (`stampRefundOwed`, `stampRefundsOwed` in `lib/payments/operations/refund-owed.ts`) and opening a chargeback or a support-case hold each call `cancelOpenPayoutsForPayment` in the same transaction: every PENDING or APPROVED payout that batched one of the payment's earnings is cancelled, all of its earnings return to READY, and the next batch pays the rest. A PROCESSING payout is left alone, and an approved amount is never re-planned in place.
 
 The batch lock is a short-lived Redis mutex that fails closed: if Redis is mocked or unreachable the run throws `CronLockUnavailableError` rather than risk two runners batching the same experts. Cron mutual exclusion itself is the Postgres lease from `withCronLock`.
 
@@ -82,7 +86,7 @@ An instant payout (`createInstantPayout`) is the expert's own request, `POST /ap
 For each payout, `processSinglePayout` does the following in order.
 
 1. **Maker-checker on disbursement.** An administrator who approved a payout cannot also trigger its disbursement by hand while more than one administrator exists.
-2. **The claim gate**, in a Serializable transaction (`runConsultantPayoutClaimGate`). It refuses to send while any earning's payment has a live chargeback (`DISPUTE_GATED_PAYMENT_WHERE`) or a refund that is still pending or has not cascaded (`REFUND_GATED_PAYMENT_WHERE`), both in `shared-lifecycle.ts`. It fails the payout with `SHORTFALL_BEFORE_DISBURSEMENT` and returns the earnings to READY if refunds since batching mean the earnings now owe less than the payout. Otherwise it claims APPROVED to PROCESSING by conditional update; a lost claim means another runner owns the row.
+2. **The claim gate**, in a Serializable transaction (`runConsultantPayoutClaimGate`). It refuses to send while any earning's payment has a live chargeback (`DISPUTE_GATED_PAYMENT_WHERE`), or a refund that is still pending, has not cascaded or is still owed by a marker (`REFUND_GATED_PAYMENT_WHERE`); both in `shared-lifecycle.ts` are built from the clauses batching reads. This is the last check, for a gate that appeared between batching and sending without cancelling the payout: a refund row reserved after batching, or a chargeback that re-opens after its warning closed. It fails the payout with `SHORTFALL_BEFORE_DISBURSEMENT` and returns the earnings to READY if refunds since batching mean the earnings now owe less than the payout. Otherwise it claims APPROVED to PROCESSING by conditional update; a lost claim means another runner owns the row.
 3. **Destination.** The payout is sent to the account recorded at mint, never to a later default. A pre-snapshot payout falls back to the current default, which must also be out of cooling-off.
 4. **Residency.** A non-resident expert's payout is refused: section 195 withholding is not implemented.
 5. **TDS plan.** `planConsultantPayoutTds` computes the withholding, any carry from earlier payouts and any credit, and `stage` writes the result to the row before the gateway call, so an immediate completion webhook posts the correct cash leg. If a second payout wins the one TDS catch-up allowed per financial year, the loser re-plans on its own gross (see [TDS withholding](06-tds-withholding.md)).
@@ -152,15 +156,17 @@ While maintenance is DEGRADED, `/api/admin/payouts`, `/api/consultant/payouts/in
 
 ## Rules and their enforcers
 
-| Rule                                                    | Enforcer                                                                          | Test                                                        | Repair                                            |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------- |
-| A payout is approved from PENDING only                  | Conditional `updateMany` in `approvePayout`                                       | `__tests__/enterprise/payout-approval-cas.test.ts`          | Re-read; the other decision won                   |
-| Two runners never disburse the same payout              | The APPROVED to PROCESSING claim in `runConsultantPayoutClaimGate`                | `__tests__/payments/money-races.test.ts`                    | The loser skips the row                           |
-| A chargeback or in-flight refund blocks disbursement    | `DISPUTE_GATED_PAYMENT_WHERE`, `REFUND_GATED_PAYMENT_WHERE`                       | `__tests__/payments/dispute-payout-block.test.ts`           | The payout waits; the gate lifts when they settle |
-| A timed-out submission is never failed on a guess       | `isDefinitiveGatewayRejection`, `handleProcessSinglePayoutError`                  | `__tests__/enterprise/process-payouts-false-failed.test.ts` | The stuck-payout job asks by reference            |
-| A payout is not sent while live payouts are off         | `ENABLE_LIVE_PAYOUTS` check in `processApprovedPayouts` and `createInstantPayout` | `__tests__/payments/process-payouts-flag-off.test.ts`       | Turn the flag on at go-live                       |
-| An expert gets at most one instant payout per India day | The unique `idempotencyKey` `instant_<profile>_<YYYYMMDD>`                        | `__tests__/payments/instant-payout.test.ts`                 | Wait until midnight IST                           |
-| A bank webhook applies once                             | Terminal statuses are excluded in `handlePayoutWebhook`'s conditional update      | `__tests__/enterprise/payout-webhook-reconciler.test.ts`    | None needed                                       |
+| Rule                                                          | Enforcer                                                                          | Test                                                         | Repair                                            |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------- |
+| A payout is approved from PENDING only                        | Conditional `updateMany` in `approvePayout`                                       | `__tests__/enterprise/payout-approval-cas.test.ts`           | Re-read; the other decision won                   |
+| Two runners never disburse the same payout                    | The APPROVED to PROCESSING claim in `runConsultantPayoutClaimGate`                | `__tests__/payments/money-races.test.ts`                     | The loser skips the row                           |
+| A chargeback or in-flight refund blocks disbursement          | `DISPUTE_GATED_PAYMENT_WHERE`, `REFUND_GATED_PAYMENT_WHERE`                       | `__tests__/payments/dispute-payout-block.test.ts`            | The payout waits; the gate lifts when they settle |
+| An earning with money owed back on its payment is not batched | `NO_MONEY_OWED_PAYMENT` in the batch read and claim                               | `__tests__/payments/payout-batch-money-owed.test.ts`         | A later batch takes it once the gate lifts        |
+| An owed refund on a batched earning cancels the unsent payout | `cancelOpenPayoutsForPayment` inside the two marker stamps                        | `__tests__/payments/owed-refund-cancels-open-payout.test.ts` | The next batch pays the payout's other earnings   |
+| A timed-out submission is never failed on a guess             | `isDefinitiveGatewayRejection`, `handleProcessSinglePayoutError`                  | `__tests__/enterprise/process-payouts-false-failed.test.ts`  | The stuck-payout job asks by reference            |
+| A payout is not sent while live payouts are off               | `ENABLE_LIVE_PAYOUTS` check in `processApprovedPayouts` and `createInstantPayout` | `__tests__/payments/process-payouts-flag-off.test.ts`        | Turn the flag on at go-live                       |
+| An expert gets at most one instant payout per India day       | The unique `idempotencyKey` `instant_<profile>_<YYYYMMDD>`                        | `__tests__/payments/instant-payout.test.ts`                  | Wait until midnight IST                           |
+| A bank webhook applies once                                   | Terminal statuses are excluded in `handlePayoutWebhook`'s conditional update      | `__tests__/enterprise/payout-webhook-reconciler.test.ts`     | None needed                                       |
 
 ## Where in code
 

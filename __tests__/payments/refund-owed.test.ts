@@ -198,7 +198,11 @@ const mockDb = {
       _sum: { consultantSharePaise: 9e9, refundedShareAmount: 0 },
     })),
   },
-  organizationEarnings: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+  organizationEarnings: {
+    findMany: jest.fn(async () => []),
+    updateMany: jest.fn(async () => ({ count: 0 })),
+  },
   referralCreditUsage: { findMany: jest.fn(async () => []) },
   // Every seated payment still holds a live seat.
   appointmentParticipant: {
