@@ -142,6 +142,11 @@ function snapshotTxState(): () => void {
 export const prismaStub = {
   user: { findFirst: async () => ({ id: "u-health" }) },
   payment: paymentApi,
+  // The capture router's other rails: this world holds booking payments only.
+  recordingPurchase: { findUnique: async () => null },
+  digitalProductPurchase: { findUnique: async () => null },
+  organizationInvoice: { findFirst: async () => null },
+  walletTopUp: { findMany: async () => [] },
   refund: refundApi,
   webhookEvent: {
     findUnique: async (args: { where: { eventId: string } }) => {

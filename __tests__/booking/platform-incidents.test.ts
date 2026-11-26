@@ -11,6 +11,8 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: jest.fn(),
+    // The plan's advisory lock, taken before a void re-reads its sessions.
+    $executeRaw: jest.fn(),
     appointment: { findUnique: jest.fn() },
     appointmentOccurrence: {
       findMany: jest.fn(),

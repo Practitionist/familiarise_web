@@ -17,6 +17,7 @@ const handleRazorpayPayoutWebhook = jest.fn().mockResolvedValue(undefined);
 const handleDisputeUpdated = jest.fn().mockResolvedValue(undefined);
 const markWebhookEventProcessed = jest.fn().mockResolvedValue(undefined);
 const handlePaymentSuccess = jest.fn().mockResolvedValue(undefined);
+const handleRefundCreated = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("../../app/api/webhooks/utils", () => ({
   __esModule: true,
@@ -24,13 +25,19 @@ jest.mock("../../app/api/webhooks/utils", () => ({
   handlePaymentSuccess: (...args: unknown[]) => handlePaymentSuccess(...args),
   handleOrgPaymentSuccess: jest.fn(),
   handleOrgPaymentFailure: jest.fn(),
-  handleRefundCreated: jest.fn(),
+  handleRefundCreated: (...args: unknown[]) => handleRefundCreated(...args),
   handleDisputeCreated: jest.fn(),
   handleDisputeUpdated: (...args: unknown[]) => handleDisputeUpdated(...args),
   markWebhookEventProcessed: (...args: unknown[]) =>
     markWebhookEventProcessed(...args),
   handleRazorpayPayoutWebhook: (...args: unknown[]) =>
     handleRazorpayPayoutWebhook(...args),
+}));
+
+// Routing reads the app's rows; in this suite handlers are mocked and every order is a booking payment's.
+jest.mock("../../lib/payments/webhooks/capture-rail", () => ({
+  ...jest.requireActual("../../lib/payments/webhooks/capture-rail"),
+  resolveCaptureRail: jest.fn(async () => ({ rail: "booking" })),
 }));
 
 jest.mock("../../lib/payments/webhooks/overage-handlers", () => ({
@@ -191,17 +198,18 @@ describe("dispute lifecycle event routing", () => {
   });
 });
 
-describe("schema mismatch is terminal (FAMILIARISE_WEB-3W)", () => {
-  it("stamps a payment.captured payload missing required fields with the permanent: prefix", async () => {
-    // Before the fix the raw ZodError message was stored, so the sweeper
-    // re-drove the row every tick for the whole 168-hour give-up window.
+describe("schema mismatch ends terminal", () => {
+  it("stamps a payment.captured payload missing required fields with the permanent: prefix once its retry window has passed", async () => {
+    // A money event is re-driven for a day, not for the 168-hour give-up window.
     await processRazorpayWebhookEvent(
       {
         event: "payment.captured",
         payload: { payment: { entity: { id: "pay_S4Priya00000001" } } },
-      } as never,
+      },
       "payment.captured",
       "payment.captured:pay_S4Priya00000001",
+      undefined,
+      new Date(Date.now() - 25 * 3_600_000),
     );
     expect(markWebhookEventProcessed).toHaveBeenCalledTimes(1);
     const [eventId, error] = markWebhookEventProcessed.mock.calls[0];
@@ -276,6 +284,54 @@ describe("order.paid carries the payment entity (#1582 F-P0-01)", () => {
       { type: "booking" },
       118000,
       "pay_OrderPaid000001",
+      // The payment entity's own time rides along for the hold-deadline rule.
+      { gatewayCapturedAt: new Date(1_700_000_000 * 1000) },
     );
   });
+});
+
+describe("refund events carry the refunded payment through to the handler", () => {
+  const refundEnvelope = (payment: Record<string, unknown>) => ({
+    event: "refund.processed",
+    payload: {
+      refund: {
+        entity: {
+          id: "rfnd_test_1",
+          payment_id: "pay_test_1",
+          amount: 5_000,
+          currency: "INR",
+          status: "processed",
+        },
+      },
+      payment: {
+        entity: { id: "pay_test_1", order_id: "order_test_1", ...payment },
+      },
+    },
+  });
+
+  it.each([
+    [{ captured: false }, false],
+    [{ captured: true }, true],
+    [{}, undefined],
+  ])(
+    "passes the payment id and embedded captured flag %j",
+    async (payment, captured) => {
+      await processRazorpayWebhookEvent(
+        refundEnvelope(payment) as never,
+        "refund.processed",
+        "refund.processed:rfnd_test_1",
+      );
+
+      expect(handleRefundCreated).toHaveBeenCalledWith(
+        "rfnd_test_1",
+        "order_test_1",
+        5_000,
+        "INR",
+        "processed",
+        "pay_test_1",
+        {},
+        captured,
+      );
+    },
+  );
 });

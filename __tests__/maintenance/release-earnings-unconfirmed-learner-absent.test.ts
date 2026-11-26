@@ -208,9 +208,6 @@ describe("a plan with two dated tranches and one learner-absent session", () => 
 it("a sponsor's trust-park release parks an unconfirmed one as PENDING, not READY", async () => {
   seed("PENDING_TRUST");
   expect(
-    await releaseSponsorTrustPark(
-      { consultantEarnings, organizationEarnings } as never,
-      "org_sponsor",
-    ),
+    await releaseSponsorTrustPark(prisma as never, "org_sponsor"),
   ).toMatchObject({ ready: 0, pending: 2 });
 });

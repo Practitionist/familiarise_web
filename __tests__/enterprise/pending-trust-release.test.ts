@@ -46,6 +46,7 @@ const tx = {
   consultantEarnings: {
     updateMany: (...a: unknown[]) => consultantEarningsUpdateMany(...a),
   },
+  platformIncident: { findMany: jest.fn(async () => []) },
   orgAuditLog: {
     create: (...a: unknown[]) => orgAuditLogCreate(...a),
   },

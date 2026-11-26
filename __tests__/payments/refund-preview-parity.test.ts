@@ -84,6 +84,8 @@ const txStub = {
     findMany: jest.fn().mockResolvedValue([]),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
+  // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+  organizationEarnings: { findMany: jest.fn().mockResolvedValue([]) },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // No session of the subscription was refunded on its own.
   refund: { findMany: jest.fn().mockResolvedValue([]) },

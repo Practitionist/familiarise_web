@@ -127,6 +127,7 @@ import {
   walletDebit,
 } from "../../lib/api/organizations/wallet";
 import type { Tx } from "../../lib/prisma";
+import { NO_MONEY_OWED_PAYMENT } from "../../scripts/earnings/release-earnings";
 
 const CONFIG = { seed: 2230, numRuns: 200 };
 
@@ -249,6 +250,7 @@ describe("a dispute opening against a payout batching the same earning", () => {
         id: { in: ["ce-1"] },
         status: "READY",
         payoutId: null,
+        payment: NO_MONEY_OWED_PAYMENT,
       },
       data: { payoutId: "po-1", status: "BATCHED" },
     });

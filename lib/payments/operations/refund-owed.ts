@@ -29,6 +29,10 @@ import {
   OWED_ALREADY_HELD_PREFIX,
   placeEarningsHolds,
 } from "@/lib/payments/payouts/earnings-holds";
+import {
+  cancelOpenPayoutsForPayment,
+  cancelOpenPayoutsForPayments,
+} from "@/lib/payments/payouts/cancel-open-payouts";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { refundBookingPayment } from "./booking-refund";
 import {
@@ -774,12 +778,18 @@ export async function recordRefundNeedsSupport(
   });
 }
 
+/** Why a payout was cancelled when a marker landed on a payment it had batched. */
+const OWED_REFUND_PAYOUT_CANCEL =
+  "Cancelled: a refund is owed on a linked payment";
+
 /**
  * Stamps one marker on the caller's transaction. The first writer wins: a
  * payment that already owes a refund keeps its marker and this returns false.
+ * A stamp cancels the unsent payouts that batched the payment's earnings, in
+ * the same transaction; the earnings return to READY for the next batch.
  */
 export async function stampRefundOwed(
-  tx: Pick<Tx, "payment">,
+  tx: Tx,
   marker: RefundOwedMarker,
 ): Promise<boolean> {
   if (marker.amountPaise !== null && marker.amountPaise <= 0) return false;
@@ -794,7 +804,13 @@ export async function stampRefundOwed(
       refundOwedNextAt: null,
     },
   });
-  return count === 1;
+  if (count !== 1) return false;
+  await cancelOpenPayoutsForPayment(
+    tx,
+    marker.paymentId,
+    OWED_REFUND_PAYOUT_CANCEL,
+  );
+  return true;
 }
 
 /** A door's refund that another door's owed refund already held: the door added nothing. */
@@ -1006,21 +1022,22 @@ export async function heldInsteadOf(
 
 /**
  * Stamps many markers in one statement, so a whole roster costs one round trip
- * inside the caller's transaction instead of one per seat.
+ * inside the caller's transaction instead of one per seat. The unsent payouts
+ * that batched any of these payments' earnings are cancelled in one more pass.
  */
-export function stampRefundsOwed(
-  tx: Pick<Tx, "$executeRaw">,
+export async function stampRefundsOwed(
+  tx: Tx,
   markers: readonly RefundOwedMarker[],
 ): Promise<number> {
   const due = markers.filter(
     (m) => m.amountPaise === null || m.amountPaise > 0,
   );
-  if (due.length === 0) return Promise.resolve(0);
+  if (due.length === 0) return 0;
   const ids = due.map((m) => m.paymentId);
   const keys = due.map((m) => m.key);
   const owed = due.map((m) => m.amountPaise);
   const reasons = due.map((m) => m.reason);
-  return tx.$executeRaw(Prisma.sql`
+  const stamped = await tx.$executeRaw(Prisma.sql`
     UPDATE "Payment" AS p
     SET "refundOwedKey" = v.key,
         "refundOwedPaise" = v.owed,
@@ -1035,6 +1052,11 @@ export function stampRefundsOwed(
       AND p."refundOwedKey" IS NULL
       AND p."paymentStatus" = 'SUCCEEDED'
       AND p."deletedAt" IS NULL`);
+  // A payment in the roster that lost its stamp already carries another door's marker.
+  if (stamped > 0) {
+    await cancelOpenPayoutsForPayments(tx, ids, OWED_REFUND_PAYOUT_CANCEL);
+  }
+  return stamped;
 }
 
 export type RefundOwedOutcome =

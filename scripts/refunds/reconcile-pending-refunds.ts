@@ -1,14 +1,7 @@
 /**
- * Refund Reconciliation - Core Logic
- *
- * Reconciles PENDING refunds that may be stuck due to:
- * - App crash after gateway call succeeded but before DB update
- * - Network timeout during Phase 3 of two-phase refund pattern
- *
- * This module exports the core reconciliation function.
- * It is imported by:
- * - jobs/reconcile-pending-refunds.ts (GitHub Actions)
- * - app/api/cleanup/reconcile-refunds/route.ts (API endpoint)
+ * Reconciles PENDING refunds whose gateway outcome never reached the database:
+ * a crash or timeout between the gateway call and the bind, or a lost webhook.
+ * Registered as `reconcile-refunds` in lib/cron/cleanup-registry.ts.
  */
 
 import {
@@ -21,14 +14,21 @@ import {
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma, { type PrismaLike } from "../../lib/prisma";
-import { failRefund } from "@/lib/payments/operations/refund-owed";
+import {
+  failRefund,
+  resettleOwedOnLateSuccess,
+} from "@/lib/payments/operations/refund-owed";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
+import { z } from "zod";
 import { getRefund, listRefunds } from "../../lib/payments";
 import {
+  getRazorpayClient,
   isRazorpayUnknownOrderError,
   isRazorpayUnknownRefundIdError,
+  withRazorpaySdkTimeout,
 } from "../../lib/payments/core/razorpay";
+import { razorpayFetchedPaymentSchema } from "@/schemas/webhooks/razorpay";
 import type { RefundResult } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
@@ -65,6 +65,10 @@ const RECONCILIATION_THRESHOLD_MS = 60 * 60 * 1000;
 // Fail a placeholder only after this long WITHOUT any trace at the gateway
 const PLACEHOLDER_FAIL_AFTER_MS = 24 * 60 * 60 * 1000;
 
+/** The gateway's largest page; a search ends at the first short page or after this many pages. */
+const REFUND_LIST_PAGE_SIZE = 100;
+const REFUND_LIST_MAX_PAGES = 5;
+
 export interface RefundReconciliationResult {
   success: boolean;
   totalProcessed: number;
@@ -72,14 +76,14 @@ export interface RefundReconciliationResult {
   failedCount: number;
   skippedCount: number;
   /**
-   * FAMILIARISE_WEB-3V — the subset of `failedCount` whose gateway has no
-   * record of the refund id, or of a placeholder's order (unknown id, or a
-   * test-mode id read with live keys). Terminal: moved to FAILED, not polled.
+   * Rows left PENDING because the gateway did not answer for them under these
+   * keys: an unknown-id or 404 answer, a capture these keys cannot read as
+   * captured, or a refund listing that ran past the page bound.
    */
-  failedUnknownId: number;
+  unknownAtGateway: number;
   /**
-   * #1757 — the subset of `failedCount` retired because no live client exists
-   * for the row's gateway (no implementation) and it was over 24 h old.
+   * The subset of `failedCount` retired because no live client exists for the
+   * row's gateway (no implementation) and it was over 24 h old.
    */
   failedGatewayDisabled: number;
   /** SUCCEEDED refunds whose cascade the backstop pass re-drove. */
@@ -149,29 +153,112 @@ export interface ReconcilePendingRefundsOptions {
   startedAt?: number;
 }
 
+type ReservationSearch = {
+  match: RefundResult | null;
+  /** Gateway refunds of the reserved amount that carry no reservation id. */
+  unclaimedSameAmount: number;
+  /** False when the page bound was reached before a short page. */
+  complete: boolean;
+};
+
 /**
- * Map gateway refund status to Prisma RefundStatus
+ * Pages through the refunds of the captured gateway payment (the order when
+ * the row has no captured id) and returns the one carrying this reservation id.
  */
+async function searchReservedRefund(refund: {
+  id: string;
+  amountPaise: number;
+  payment: {
+    paymentIntent: string;
+    gatewayPaymentId: string | null;
+    paymentGateway: PaymentGateway;
+  };
+}): Promise<ReservationSearch> {
+  const target =
+    refund.payment.gatewayPaymentId ?? refund.payment.paymentIntent;
+  let unclaimedSameAmount = 0;
+  for (let page = 0; page < REFUND_LIST_MAX_PAGES; page++) {
+    const items = await listRefunds(
+      target,
+      refund.payment.paymentGateway,
+      REFUND_LIST_PAGE_SIZE,
+      page * REFUND_LIST_PAGE_SIZE,
+    );
+    const match = items.find((gr) => gr.metadata?.reservationId === refund.id);
+    if (match) return { match, unclaimedSameAmount, complete: false };
+    // An absent, empty or blank note names no reservation, so it claims nothing.
+    unclaimedSameAmount += items.filter((gr) => {
+      const noted = gr.metadata?.reservationId;
+      return (
+        gr.amount === refund.amountPaise &&
+        (typeof noted !== "string" || noted.trim() === "")
+      );
+    }).length;
+    if (items.length < REFUND_LIST_PAGE_SIZE) {
+      return { match: null, unclaimedSameAmount, complete: true };
+    }
+  }
+  return { match: null, unclaimedSameAmount, complete: false };
+}
+
+const fetchedCaptureSchema = razorpayFetchedPaymentSchema.extend({
+  id: z.string(),
+});
+
+/**
+ * True only when these keys read the row's captured gateway payment as
+ * captured; an empty refund listing proves absence only alongside this.
+ */
+async function gatewayShowsCapture(
+  gatewayPaymentId: string | null,
+): Promise<boolean> {
+  const client = getRazorpayClient();
+  if (!client || !gatewayPaymentId) return false;
+  try {
+    const fetched = fetchedCaptureSchema.safeParse(
+      await withRazorpaySdkTimeout("payments.fetch", () =>
+        client.payments.fetch(gatewayPaymentId),
+      ),
+    );
+    return (
+      fetched.success &&
+      fetched.data.id === gatewayPaymentId &&
+      fetched.data.status === "captured"
+    );
+  } catch (error) {
+    console.warn(
+      `Could not read gateway payment ${gatewayPaymentId}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
+}
+
+/** An unknown-id or 404 answer, which an id of the other key mode also gets. */
+function isUnknownAtGateway(error: unknown): boolean {
+  return (
+    isRazorpayUnknownOrderError(error) || isRazorpayUnknownRefundIdError(error)
+  );
+}
 
 /**
  * Find and reconcile stuck PENDING refunds. Two disjoint populations:
  *
- * 1. Placeholders (`pending_<uuid>`) — Phase 2 of the two-phase refund never
- *    reported back. Matched against the gateway EXACTLY by the reservation id
- *    we ride in the refund notes (#676 B1); a legacy row without gateway-side
- *    reservation notes may fall back to a single unambiguous amount match.
- *    A placeholder is FAILED only when the gateway listing SUCCEEDED and no
- *    refund carrying our reservation id exists after 24h — failing earlier or
- *    on heuristic guesses is what allowed the double-refund chain this cron
- *    was rewritten to close.
+ * 1. Placeholders (`pending_<uuid>`): the gateway call never reported back.
+ *    Bound only to the gateway refund carrying the reservation id we ride in
+ *    the refund notes. FAILED only when the row is over 24h old, the complete
+ *    listing of the capture's refunds holds no such refund and none of the
+ *    same amount without a note, and these keys read the capture as captured.
  *
- * 2. Real-id PENDING rows — the gateway accepted the refund but settlement
- *    confirmation (`refund.processed`) was lost. Polled by id until the
- *    gateway itself reports processed/failed; never aged out locally, because
- *    normal-speed refunds legitimately take 5–7 business days.
+ * 2. Real-id PENDING rows: the gateway accepted the refund but the settlement
+ *    confirmation was lost. Polled by id until the gateway itself reports
+ *    processed or failed; never aged out locally, because normal-speed refunds
+ *    take 5 to 7 business days.
+ *
+ * An unknown-id or 404 answer never fails a row: it stays PENDING and the run
+ * raises one standing finding.
  */
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-closed: money state must not double-run unlocked.
+// Locked at the core so every door shares one mutual exclusion; fail-closed.
 export async function reconcilePendingRefunds(
   opts: ReconcilePendingRefundsOptions = {},
 ): Promise<RefundReconciliationResult> {
@@ -195,13 +282,11 @@ async function reconcilePendingRefundsUnlocked(
   let reconciledCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
-  let failedUnknownId = 0;
   let failedGatewayDisabled = 0;
   let totalProcessed = 0;
   const retiredNoClient: string[] = [];
-  const failedUnknownOrder: string[] = [];
   const ambiguousPlaceholders: string[] = [];
-  const failedUnknownRefunds: string[] = [];
+  const unknownAtGateway: string[] = [];
 
   /**
    * A row on a gateway with no live client is FAILED/`GATEWAY_DISABLED` past
@@ -283,33 +368,8 @@ async function reconcilePendingRefundsUnlocked(
         continue;
       }
 
-      // Query gateway for actual refunds on this payment
-      const gatewayRefunds = await listRefunds(
-        refund.payment.paymentIntent,
-        refund.payment.paymentGateway,
-        20,
-      );
-
-      // Exact bind: we sent `reservationId` in the refund notes/metadata, so
-      // the gateway hands it straight back. This is identity, not a guess.
-      const exactMatch = gatewayRefunds.find(
-        (gr) => gr.metadata?.reservationId === refund.id,
-      );
-
-      // Legacy fallback (rows minted before #676 B1 rode the reservation id):
-      // bind only when exactly ONE unclaimed-by-reservation gateway refund
-      // matches the amount — never guess between multiple candidates.
-      const candidates = exactMatch
-        ? []
-        : gatewayRefunds.filter(
-            (gr) =>
-              gr.amount === refund.amountPaise &&
-              typeof gr.metadata?.reservationId !== "string",
-          );
-      const fallbackMatch =
-        !exactMatch && candidates.length === 1 ? candidates[0] : undefined;
-
-      const matchingRefund = exactMatch ?? fallbackMatch;
+      const search = await searchReservedRefund(refund);
+      const matchingRefund = search.match;
 
       if (matchingRefund) {
         const paymentId = refund.paymentId ?? refund.payment.id;
@@ -329,7 +389,7 @@ async function reconcilePendingRefundsUnlocked(
         );
         if (bound === "bound") {
           console.log(
-            `✅ Reconciled refund ${refund.id} -> ${matchingRefund.refundId} (${exactMatch ? "reservation-id" : "unambiguous-amount"} match, status: ${matchingRefund.status})`,
+            `✅ Reconciled refund ${refund.id} -> ${matchingRefund.refundId} (reservation-id match, status: ${matchingRefund.status})`,
           );
           reconciledCount++;
         } else {
@@ -343,30 +403,47 @@ async function reconcilePendingRefundsUnlocked(
         continue;
       }
 
-      // No matching refund found. Ambiguity first: multiple amount-matching
-      // candidates without reservation ids must NOT be aged into a failure
-      // (a wrong FAIL restores balance and invites a second gateway refund),
-      // and must not be guessed between either.
-      if (!exactMatch && fallbackMatch === undefined && candidates.length > 1) {
+      // A same-amount gateway refund without a reservation note may be this
+      // one: never adopt it on a guess and never age the row into a failure.
+      if (search.unclaimedSameAmount > 0) {
         console.warn(
-          `⚠️ Refund ${refund.id}: ${candidates.length} amount-matching gateway refunds without reservation ids; leaving PENDING for manual review`,
+          `⚠️ Refund ${refund.id}: ${search.unclaimedSameAmount} same-amount gateway refund(s) without a reservation id; leaving PENDING for manual review`,
         );
         ambiguousPlaceholders.push(refund.id);
         skippedCount++;
         continue;
       }
 
-      // The listing above SUCCEEDED, so absence here means the refund
-      // genuinely never landed — but only give up after the 24h window.
+      // Past the page bound the listing is not proof of absence.
+      if (!search.complete) {
+        unknownAtGateway.push(refund.id);
+        skippedCount++;
+        continue;
+      }
+
       const refundAge = Date.now() - refund.createdAt.getTime();
       const isVeryOld = refundAge > PLACEHOLDER_FAIL_AFTER_MS;
 
+      // An empty listing counts only when these keys can see the capture.
+      if (
+        isVeryOld &&
+        !(await gatewayShowsCapture(refund.payment.gatewayPaymentId))
+      ) {
+        unknownAtGateway.push(refund.id);
+        skippedCount++;
+        continue;
+      }
+
       if (isVeryOld) {
-        // CAS: a `refund.created` webhook may bind this row to SUCCEEDED
-        // between the read and this write — only FAIL a still-PENDING row.
+        // Only a row still PENDING under the placeholder id read above is
+        // failed: one a webhook or the binder settled or bound meanwhile is not.
         const claimed = await failRefund(refund.id, (tx) =>
           tx.refund.updateMany({
-            where: { id: refund.id, status: RefundStatus.PENDING },
+            where: {
+              id: refund.id,
+              status: RefundStatus.PENDING,
+              refundId: refund.refundId,
+            },
             data: {
               status: RefundStatus.FAILED,
               metadata: {
@@ -394,33 +471,9 @@ async function reconcilePendingRefundsUnlocked(
         skippedCount++;
       }
     } catch (error) {
-      // Order 404: no refund exists under these keys and a retry 404s before
-      // money moves, so past 24h FAILED is safe; younger rows wait.
-      if (isRazorpayUnknownOrderError(error)) {
-        if (
-          Date.now() - refund.createdAt.getTime() <=
-          PLACEHOLDER_FAIL_AFTER_MS
-        ) {
-          skippedCount++;
-          continue;
-        }
-        const claim = await failRefund(refund.id, (tx) =>
-          tx.refund.updateMany({
-            where: { id: refund.id, status: RefundStatus.PENDING },
-            data: {
-              status: RefundStatus.FAILED,
-              failureReason: `Gateway has no record of order ${refund.payment.paymentIntent} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
-              failedAt: new Date(),
-            },
-          }),
-        );
-        if (claim.count === 1) {
-          failedCount++;
-          failedUnknownId++;
-          failedUnknownOrder.push(refund.id);
-        } else {
-          skippedCount++;
-        }
+      if (isUnknownAtGateway(error)) {
+        unknownAtGateway.push(refund.id);
+        skippedCount++;
         continue;
       }
       const errorMessage =
@@ -482,6 +535,8 @@ async function reconcilePendingRefundsUnlocked(
                 data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
               });
               if (claim.count !== 1) return false;
+              // A row that was once failed gave its owed refund back; no-op otherwise.
+              await resettleOwedOnLateSuccess(tx, refund.id);
               await applyRefundCascade(tx, {
                 paymentId: refund.payment.id,
                 refundId: refund.id,
@@ -563,27 +618,9 @@ async function reconcilePendingRefundsUnlocked(
         skippedCount++;
       }
     } catch (error) {
-      if (isRazorpayUnknownRefundIdError(error)) {
-        // FAMILIARISE_WEB-3V — terminal, not transient; same FAILED shape as
-        // above, CAS on PENDING so a webhook that settled it is not undone.
-        const claim = await failRefund(refund.id, (tx) =>
-          tx.refund.updateMany({
-            where: { id: refund.id, status: RefundStatus.PENDING },
-            data: {
-              status: RefundStatus.FAILED,
-              failureReason: `Gateway has no record of refund id ${refund.refundId} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
-              failedAt: new Date(),
-            },
-          }),
-        );
-        if (claim.count === 1) {
-          failedCount++;
-          failedUnknownId++;
-          failedUnknownRefunds.push(refund.id);
-        }
-        console.error(
-          `❌ Real-id refund ${refund.id} (${refund.refundId}) unknown at gateway; marked FAILED`,
-        );
+      if (isUnknownAtGateway(error)) {
+        unknownAtGateway.push(refund.id);
+        skippedCount++;
         continue;
       }
       const errorMessage =
@@ -624,36 +661,27 @@ async function reconcilePendingRefundsUnlocked(
     );
   }
 
-  if (failedUnknownOrder.length > 0) {
-    reportSentryMessage(
-      `reconcile-pending-refunds: FAILED ${failedUnknownOrder.length} placeholder refund(s) whose order the gateway does not know`,
+  if (unknownAtGateway.length > 0) {
+    const message = `reconcile-pending-refunds: ${unknownAtGateway.length} PENDING refund(s) left PENDING because the gateway did not answer for them under these keys (unknown id, capture not readable as captured, or refund listing past the page bound); check the key mode and account before refunding again`;
+    await reportStandingFinding(
       {
-        subsystem: "payments",
-        op: "refund-reconcile.unknown-order",
-        expected: true,
-        level: "warning",
-        tags: { provider: "razorpay" },
-        extra: { failed: failedUnknownOrder },
+        key: "reconcile-pending-refunds:unknown-at-gateway",
+        ids: unknownAtGateway,
+        message,
       },
-    );
-  }
-
-  if (failedUnknownRefunds.length > 0) {
-    reportSentryMessage(
-      `reconcile-pending-refunds: FAILED ${failedUnknownRefunds.length} real-id refund(s) unknown at gateway`,
-      {
-        subsystem: "payments",
-        op: "refund-reconcile.unknown-id",
-        expected: true,
-        level: "warning",
-        tags: { provider: "razorpay" },
-        extra: { failed: failedUnknownRefunds },
-      },
+      () =>
+        reportSentryMessage(message, {
+          subsystem: "payments",
+          op: "refund-reconcile.unknown-at-gateway",
+          level: "error",
+          tags: { provider: "razorpay" },
+          extra: { refundIds: unknownAtGateway },
+        }),
     );
   }
 
   if (ambiguousPlaceholders.length > 0) {
-    const message = `Ambiguous placeholder refund(s) skipped in reconcile-pending-refunds (${ambiguousPlaceholders.length})`;
+    const message = `Ambiguous placeholder refund(s) skipped in reconcile-pending-refunds (${ambiguousPlaceholders.length}): a same-amount gateway refund carries no reservation id`;
     await reportStandingFinding(
       {
         key: "reconcile-pending-refunds:ambiguous",
@@ -682,7 +710,7 @@ async function reconcilePendingRefundsUnlocked(
     reconciledCount,
     failedCount,
     skippedCount,
-    failedUnknownId,
+    unknownAtGateway: unknownAtGateway.length,
     failedGatewayDisabled,
     redrivenCount: backstop.redriven,
     redriveFailedCount: backstop.failed,

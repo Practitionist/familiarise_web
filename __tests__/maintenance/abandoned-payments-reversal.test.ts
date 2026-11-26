@@ -104,6 +104,19 @@ const db = prisma as unknown as {
 const tx = db.__tx;
 const mockReverse = reverseCreditsForPayment as jest.Mock;
 
+/** When the fixture's hold lapsed; the expiry CAS restates it. */
+const LAPSED_AT = new Date("2026-01-01T00:00:00Z");
+/** The expiry CAS: the status, the order and the hold deadline the sweep read. */
+const EXPIRE_WHAT_WAS_READ = {
+  where: {
+    id: "pay_1",
+    paymentStatus: "PENDING",
+    paymentIntent: "order_abc",
+    expiresAt: LAPSED_AT,
+  },
+  data: { paymentStatus: "EXPIRED" },
+};
+
 /** One abandoned consultation with a single PENDING Razorpay payment. */
 function abandonedConsultation() {
   return {
@@ -115,6 +128,7 @@ function abandonedConsultation() {
         paymentIntent: "order_abc",
         paymentGateway: "RAZORPAY",
         paymentStatus: "PENDING",
+        expiresAt: LAPSED_AT,
       },
     ],
     consultation: { id: "cons_1" },
@@ -247,11 +261,9 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
   it("marks the payment EXPIRED rather than FAILED", async () => {
     await cleanupAbandonedPayments();
 
-    // Conditional on PENDING: a capture racing the sweep keeps SUCCEEDED.
-    expect(tx.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: "pay_1", paymentStatus: "PENDING" },
-      data: { paymentStatus: "EXPIRED" },
-    });
+    // Conditional on what the sweep read: a capture keeps SUCCEEDED, and a
+    // checkout re-minted on the row (new order or new deadline) is not expired.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith(EXPIRE_WHAT_WAS_READ);
     expect(tx.payment.update).not.toHaveBeenCalled();
   });
 
@@ -457,10 +469,7 @@ describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
     const result = await cleanupAbandonedPayments();
 
     expect(cancelRazorpayOrder).not.toHaveBeenCalled();
-    expect(tx.payment.updateMany).toHaveBeenCalledWith({
-      where: { id: "pay_1", paymentStatus: "PENDING" },
-      data: { paymentStatus: "EXPIRED" },
-    });
+    expect(tx.payment.updateMany).toHaveBeenCalledWith(EXPIRE_WHAT_WAS_READ);
     expect(result.errorCount).toBe(0);
     expect(result.success).toBe(true);
   });
@@ -480,13 +489,14 @@ describe("retireOrphanPendingPayment — multi-payment appointments (#1761)", ()
       paymentIntent: "order_def",
       paymentGateway: "RAZORPAY",
       paymentStatus: "SUCCEEDED",
+      expiresAt: LAPSED_AT,
     });
     db.appointment.findFirst.mockResolvedValue({
       ...appointment,
       _count: { payment: 2 },
     });
 
-    const result = await retireOrphanPendingPayment("pay_1");
+    const result = await retireOrphanPendingPayment("pay_1", "order_abc");
 
     expect(result.outcome).toBe("skipped");
     expect(result.errors[0]).toMatch(/apt_1/);

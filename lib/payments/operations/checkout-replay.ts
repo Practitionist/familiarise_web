@@ -5,8 +5,89 @@ import prisma from "@/lib/prisma";
 import type { checkoutSchema } from "@/schemas/checkout";
 import { isUnimplementedGateway } from "@/lib/payments/constants";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
+import { liveParticipant } from "@/lib/booking/participants";
+import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
+import {
+  AUTO_REFUNDED_PREFIX,
+  AUTO_REFUND_PENDING_PREFIX,
+  AUTO_REFUND_STUCK_PREFIX,
+  MANUAL_RECOVERY_PREFIX,
+  REFUND_STATUSES_RETURNING_MONEY,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 
 type CheckoutInput = z.infer<typeof checkoutSchema>;
+
+/** What became of a paid checkout, read from its own rows. */
+export type PaidReplayOutcome =
+  "booked" | "refunded" | "being_refunded" | "needs_support" | "ended";
+
+/**
+ * The outcome of a SUCCEEDED payment. A capture-race marker speaks first (it
+ * means the money funded no booking), then a full refund, then the buyer's
+ * live seat; a refund on its way or already paid explains a booking that ended.
+ * A zero-amount payment took no money, so its ended booking owes nothing back.
+ */
+function paidReplayOutcome(row: {
+  amount: number;
+  description: string | null;
+  refundOwedKey: string | null;
+  refunds: { status: string; amountPaise: number }[];
+  appointment: { deletedAt: Date | null; participants: unknown[] } | null;
+}): PaidReplayOutcome {
+  const marker = row.description ?? "";
+  if (marker.startsWith(AUTO_REFUND_PENDING_PREFIX)) return "being_refunded";
+  if (marker.startsWith(AUTO_REFUNDED_PREFIX)) return "refunded";
+  if (
+    marker.startsWith(AUTO_REFUND_STUCK_PREFIX) ||
+    marker.startsWith(MANUAL_RECOVERY_PREFIX)
+  ) {
+    return "needs_support";
+  }
+  const refundedPaise = row.refunds
+    .filter((r) => r.status === "SUCCEEDED")
+    .reduce((sum, r) => sum + r.amountPaise, 0);
+  if (row.amount > 0 && refundedPaise >= row.amount) return "refunded";
+  const live =
+    row.appointment !== null &&
+    row.appointment.deletedAt === null &&
+    row.appointment.participants.length > 0;
+  if (live) return "booked";
+  if (row.amount <= 0) return "ended";
+  if (
+    row.refundOwedKey !== null ||
+    row.refunds.some((r) => r.status === "PENDING")
+  ) {
+    return "being_refunded";
+  }
+  return refundedPaise > 0 ? "refunded" : "needs_support";
+}
+
+/** The refusal a replay answers for a paid checkout that has no live booking. */
+const UNBOOKED_REPLAY: Record<
+  Exclude<PaidReplayOutcome, "booked">,
+  { errorType: string; error: string }
+> = {
+  refunded: {
+    errorType: ErrorTypes.CHECKOUT_REFUNDED,
+    error:
+      "This payment was refunded, so nothing is booked. Refresh the page to book again.",
+  },
+  being_refunded: {
+    errorType: ErrorTypes.CHECKOUT_REFUND_IN_PROGRESS,
+    error:
+      "A refund for this payment is on its way, so this checkout is closed. You do not need to pay again; refresh the page to start a new booking.",
+  },
+  ended: {
+    errorType: ErrorTypes.CHECKOUT_BOOKING_ENDED,
+    error:
+      "This booking has ended and nothing was charged. Refresh the page to book again.",
+  },
+  needs_support: {
+    errorType: ErrorTypes.CHECKOUT_NEEDS_SUPPORT,
+    error:
+      "You were charged for this checkout but it has no active booking. Please contact support and do not pay again; we will put it right.",
+  },
+};
 
 // #828 — replay the original checkout response for a duplicate attempt. The
 // stored Payment carries enough for the client to reopen the gateway with the
@@ -31,6 +112,23 @@ export async function replayByIdempotencyKey(
       appointmentId: true,
       isMockPayment: true,
       expiresAt: true,
+      description: true,
+      refundOwedKey: true,
+      refunds: {
+        where: { status: { in: REFUND_STATUSES_RETURNING_MONEY } },
+        select: { status: true, amountPaise: true },
+      },
+      appointment: {
+        select: {
+          deletedAt: true,
+          // The caller's own seat or party row, while it is live.
+          participants: {
+            where: liveParticipant(userId),
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
     },
   });
   if (!existing) return null;
@@ -42,10 +140,25 @@ export async function replayByIdempotencyKey(
     return "fingerprint-mismatch";
   }
   if (existing.paymentStatus === "SUCCEEDED") {
+    const outcome = paidReplayOutcome({
+      ...existing,
+      amount: Number(existing.amount),
+    });
+    if (outcome !== "booked") {
+      return NextResponse.json(
+        {
+          ...UNBOOKED_REPLAY[outcome],
+          outcome,
+          timestamp: new Date().toISOString(),
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({
       success: true,
       reused: true,
       skipPayment: true,
+      outcome,
       appointmentId: existing.appointmentId ?? undefined,
       message: "This checkout was already completed.",
     });

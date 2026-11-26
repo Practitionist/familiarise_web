@@ -193,6 +193,9 @@ jest.mock("../../lib/prisma", () => {
       ),
     },
     refund: { findMany: jest.fn(async () => []) },
+    // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+    consultantEarnings: { findMany: jest.fn(async () => []) },
+    organizationEarnings: { findMany: jest.fn(async () => []) },
     appointment: { findMany: jest.fn(async () => []) },
     appointmentOccurrence: {
       findMany: jest.fn(async () => []),

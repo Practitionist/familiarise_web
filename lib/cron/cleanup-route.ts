@@ -1,3 +1,4 @@
+import { InvalidDateParamError } from "@/lib/cron/date-param";
 import { createHash, timingSafeEqual } from "node:crypto";
 // Native Node ESM workers require the explicit package file extension.
 import { NextResponse, type NextRequest } from "next/server.js";
@@ -326,6 +327,7 @@ function cleanupFailure(
   if (
     error instanceof InvalidLimitError ||
     error instanceof InvalidWindowStartError ||
+    error instanceof InvalidDateParamError ||
     error instanceof InvalidPeriodParamError
   ) {
     return {
