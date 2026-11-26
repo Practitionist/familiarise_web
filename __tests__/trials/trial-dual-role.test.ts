@@ -75,6 +75,11 @@ jest.mock("../../utils/appointmentlock", () => {
 const state = {
   planOwner: "cp-other",
   maxOpenRequests: null as number | null,
+  /** The expert's row as the share-locked read finds it; null reads as no row. */
+  lockedSettings: null as {
+    acceptingRequests: boolean;
+    maxOpenRequests: number | null;
+  } | null,
   openRequests: 0,
   learnerMembership: true as boolean,
 };
@@ -96,7 +101,18 @@ jest.mock("../../lib/prisma", () => {
   const count = jest.fn(async () => state.openRequests);
   const tx = {
     // The expert-standing read under a share lock; no row reads as standing.
-    $queryRaw: jest.fn(async () => []),
+    $queryRaw: jest.fn(async () =>
+      state.lockedSettings
+        ? [
+            {
+              verificationStatus: "VERIFIED",
+              deletedAt: null,
+              bookingMode: "INSTANT",
+              ...state.lockedSettings,
+            },
+          ]
+        : [],
+    ),
     appointment: { create: jest.fn() },
     trial: {
       create: (...a: unknown[]) => trialCreate(...(a as [])),
@@ -177,6 +193,7 @@ beforeEach(() => {
   session.user.consultantProfileId = "cp-dual";
   state.planOwner = "cp-other";
   state.maxOpenRequests = null;
+  state.lockedSettings = null;
   state.openRequests = 0;
   state.learnerMembership = true;
   lock.busy = false;
@@ -237,6 +254,21 @@ it("refuses at the cap with 409 CONSULTANT_AT_CAPACITY and still releases the lo
   expect((await res.json()).code).toBe("CONSULTANT_AT_CAPACITY");
   expect(trialCreate).not.toHaveBeenCalled();
   expect(lock.events).toEqual(["lock:cp-other", "unlock"]);
+});
+
+it("decides on the expert's settings as the locked read finds them: a cap lowered or a pause committed while the request waited refuses it", async () => {
+  state.maxOpenRequests = 5;
+  state.openRequests = 1;
+  state.lockedSettings = { acceptingRequests: true, maxOpenRequests: 1 };
+  const capped = await post();
+  expect(capped.status).toBe(409);
+  expect((await capped.json()).code).toBe("CONSULTANT_AT_CAPACITY");
+
+  state.lockedSettings = { acceptingRequests: false, maxOpenRequests: null };
+  const paused = await post();
+  expect(paused.status).toBe(409);
+  expect((await paused.json()).code).toBe("NOT_ACCEPTING_BOOKINGS");
+  expect(trialCreate).not.toHaveBeenCalled();
 });
 
 it("a busy cap lock answers 409 REQUEST_CAP_BUSY with a retry hint", async () => {

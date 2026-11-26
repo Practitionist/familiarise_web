@@ -61,7 +61,8 @@ export function requestDoorDb(
         visibility: "PUBLIC",
         organizationId: null,
         archivedAt: null,
-        consultantProfile: profileOf(),
+        // A snapshot: what the route read before its locks.
+        consultantProfile: { ...profileOf() },
       })),
     },
     consultation: {
@@ -76,6 +77,9 @@ export function requestDoorDb(
       {
         verificationStatus: profileOf().verificationStatus,
         deletedAt: profileOf().deletedAt,
+        acceptingRequests: profileOf().acceptingRequests,
+        bookingMode: profileOf().bookingMode,
+        maxOpenRequests: profileOf().maxOpenRequests,
       },
     ]),
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),

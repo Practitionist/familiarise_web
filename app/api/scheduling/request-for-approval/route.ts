@@ -591,25 +591,31 @@ export async function POST(req: NextRequest) {
             );
             // Standing, mode, cap and availability are read on this transaction, after
             // every lock, so the insert below commits against what they saw.
-            await assertExpertStandsInTx(
+            const standing = await assertExpertStandsInTx(
               tx,
               consultantProfileId,
               "This consultation",
             );
-            const mode = await tx.consultantProfile.findUnique({
-              where: { id: consultantProfileId },
-              select: { bookingMode: true },
-            });
-            if (mode?.bookingMode !== "REQUEST") {
+            // The pause, the mode and the cap are the locked row's: a change
+            // committed while this request waited for its locks decides.
+            const settings = standing ?? consultationPlan.consultantProfile;
+            const pausedNow = pausedRefusal(settings);
+            if (pausedNow) {
+              throw new RequestRefusal(409, {
+                error: pausedNow.message,
+                code: pausedNow.code,
+              });
+            }
+            if (settings.bookingMode !== "REQUEST") {
               throw new RequestRefusal(409, {
                 error: REQUEST_NOT_OFFERED_MESSAGE,
                 code: "REQUEST_NOT_OFFERED",
               });
             }
-            const atCapacity = await capacityRefusal(
-              tx,
-              consultationPlan.consultantProfile,
-            );
+            const atCapacity = await capacityRefusal(tx, {
+              id: consultantProfileId,
+              maxOpenRequests: settings.maxOpenRequests,
+            });
             if (atCapacity) {
               throw new RequestRefusal(409, {
                 error: atCapacity.message,

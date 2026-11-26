@@ -342,6 +342,13 @@ export async function GET(request: NextRequest) {
  * POST /api/trials
  * Request a new trial session
  */
+/** A paused expert takes no new 1:1 booking or trial. */
+const expertPausedError = () =>
+  new BookingRuleError(
+    "NOT_ACCEPTING_BOOKINGS",
+    "This expert is not taking new 1:1 bookings or trials right now. Pick another expert, or try again later.",
+  );
+
 export async function POST(request: NextRequest) {
   try {
     const authResult = await requireApiAuth();
@@ -441,12 +448,7 @@ export async function POST(request: NextRequest) {
 
     // A paused expert takes no new booking, a trial included.
     if (subscriptionPlan.consultantProfile.acceptingRequests === false) {
-      return bookingRuleResponse(
-        new BookingRuleError(
-          "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new 1:1 bookings or trials right now. Pick another expert, or try again later.",
-        ),
-      );
+      return bookingRuleResponse(expertPausedError());
     }
 
     if (!subscriptionPlan.trialEnabled) {
@@ -624,15 +626,21 @@ export async function POST(request: NextRequest) {
                 endsAt,
               });
               // Read under a share lock, so a reject that lands meanwhile waits for this write.
-              await assertExpertStandsInTx(
+              const standing = await assertExpertStandsInTx(
                 tx,
                 consultantProfileId,
                 "This trial",
               );
-              const atCapacity = await capacityRefusal(
-                tx,
-                subscriptionPlan.consultantProfile,
-              );
+              // The pause and the cap are the locked row's: a change committed
+              // while this request waited for its locks decides.
+              const settings = standing ?? subscriptionPlan.consultantProfile;
+              if (settings.acceptingRequests === false) {
+                throw expertPausedError();
+              }
+              const atCapacity = await capacityRefusal(tx, {
+                id: consultantProfileId,
+                maxOpenRequests: settings.maxOpenRequests,
+              });
               if (atCapacity) {
                 throw new Refusal({
                   code: atCapacity.code,

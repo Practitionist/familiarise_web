@@ -191,6 +191,30 @@ describe("consultant request gate", () => {
     expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
   });
 
+  it("a pause committed while the request waits for its lock → 409 CONSULTANT_PAUSED, nothing written", async () => {
+    mockLockRequestCap.mockImplementationOnce(async () => {
+      mockProfile.acceptingRequests = false;
+      return { key: "request-cap" };
+    });
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONSULTANT_PAUSED");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+  });
+
+  it("a cap lowered while the request waits is the cap that decides", async () => {
+    mockLockRequestCap.mockImplementationOnce(async () => {
+      mockProfile.maxOpenRequests = 1;
+      return { key: "request-cap" };
+    });
+    // The per-consultee count answers first (0), then the consultant count.
+    mockConsultationCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONSULTANT_AT_CAPACITY");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+  });
+
   it("at cap → 409 CONSULTANT_AT_CAPACITY, counted inside the slot lock", async () => {
     mockProfile.maxOpenRequests = 3;
     // The per-consultee count answers first (0), then the consultant count.

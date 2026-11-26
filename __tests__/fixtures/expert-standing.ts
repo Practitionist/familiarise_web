@@ -2,6 +2,9 @@
 export interface StandingFacts {
   verificationStatus: string;
   deletedAt: Date | null;
+  acceptingRequests?: boolean;
+  bookingMode?: "INSTANT" | "REQUEST";
+  maxOpenRequests?: number | null;
 }
 
 export const VERIFIED_STANDING: StandingFacts = {
@@ -15,6 +18,9 @@ export function standingRead(facts: StandingFacts = VERIFIED_STANDING) {
     {
       verificationStatus: facts.verificationStatus,
       deletedAt: facts.deletedAt,
+      acceptingRequests: facts.acceptingRequests ?? true,
+      bookingMode: facts.bookingMode ?? "INSTANT",
+      maxOpenRequests: facts.maxOpenRequests ?? null,
     },
   ]);
 }
