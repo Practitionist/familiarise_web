@@ -187,7 +187,7 @@ export default function RefundPolicyPage() {
                 <ul>
                   <li>{REFUND_POLICY_COPY.subscription}</li>
                   <li>{REFUND_POLICY_COPY.freezeRule}</li>
-                  <li>{REFUND_POLICY_COPY.expertCancel}</li>
+                  <li>{REFUND_POLICY_COPY.subscriptionExpertCancel}</li>
                 </ul>
               </div>
 
