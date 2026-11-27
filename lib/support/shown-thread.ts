@@ -6,6 +6,7 @@
 
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { visibleCaseWhere } from "./case-access";
 
 export const SHOWN_THREAD_SELECT = {
   id: true,
@@ -40,6 +41,13 @@ export const SHOWN_THREAD_SELECT = {
   },
 } satisfies Prisma.SupportCaseSelect;
 
+/**
+ * The case read policy for a customer page: an organisation-owned case is shown only while the
+ * viewer still holds that organisation's support permission, whoever filed it.
+ */
+const readableByCustomer = (userId: string) =>
+  visibleCaseWhere({ userId, role: "CONSULTEE" });
+
 /** What the page names: the case it shows now, or the session it was opened for. */
 export interface ShownThreadView {
   caseId?: string;
@@ -55,9 +63,11 @@ export async function readShownThread(
   userId: string,
   view: ShownThreadView,
 ) {
+  const readable = await readableByCustomer(userId);
   const newest = (where: Prisma.SupportCaseWhereInput) =>
     prisma.supportCase.findFirst({
       where: {
+        AND: [readable],
         appointmentId,
         requesterUserId: userId,
         submitterUserId: userId,
@@ -87,6 +97,7 @@ export async function readOpenSessionReports(
 ) {
   const rows = await prisma.supportCase.findMany({
     where: {
+      AND: [await readableByCustomer(userId)],
       appointmentId,
       requesterUserId: userId,
       submitterUserId: userId,

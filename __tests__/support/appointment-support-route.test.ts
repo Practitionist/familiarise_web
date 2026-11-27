@@ -57,6 +57,8 @@ jest.mock("../../lib/prisma", () => {
         findMany: jest.fn(async () => []),
       },
       appointmentOccurrence: memTable([], "occ"),
+      // The thread readers apply the case read policy, which reads the viewer's memberships; none here.
+      membership: { findMany: jest.fn(async () => []) },
     },
   };
 });
@@ -163,6 +165,9 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
       requesterUserId: "u1",
       submitterUserId: "u1",
       deletedAt: null,
+      // A person's own case, as the read policy sees every real row.
+      ownershipScope: "PERSONAL",
+      externalRequesterEmail: null,
       activeChannel: "SELF_SERVE",
       messages: [],
     };
