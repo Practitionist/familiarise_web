@@ -432,3 +432,68 @@ it("a turn still pending when the page moves to another session completes into t
   )?.thread;
   expect(threadA?.messages.map((m) => m.body)).toContain("Noted on case-a-new");
 });
+
+it("keeps a session's action cards and unsent messages with that session's thread: another session's page shows none of them, and they are there again on return", async () => {
+  let turns = 0;
+  global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      // The first turn is answered with an action card; the second never reaches the server.
+      if (turns++ > 0)
+        return { ok: false, status: 503, json: async () => ({}) };
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            ...turnResult("case-a", "occ-a"),
+            actions: [{ kind: "LINK", label: "Open the booking", href: "/x" }],
+          },
+        }),
+      };
+    }
+    const occurrence = String(url).includes("occ-b") ? "occ-b" : "occ-a";
+    return {
+      ok: true,
+      json: async () => ({
+        data: shown(occurrence === "occ-b" ? "case-b" : "case-a", occurrence)
+          .thread,
+        intents: [],
+        booking: null,
+      }),
+    };
+  }) as unknown as typeof fetch;
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const page = renderHook(
+    ({ occurrenceId }: { occurrenceId: string }) =>
+      useSupportThread("appointment", { occurrenceId }),
+    {
+      initialProps: { occurrenceId: "occ-a" },
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    },
+  );
+  await waitFor(() => expect(page.result.current.thread?.id).toBe("case-a"));
+  act(() => {
+    page.result.current.submitTurn({ userMessage: "The call dropped" });
+  });
+  await waitFor(() => expect(page.result.current.lastActions).toHaveLength(1));
+  act(() => {
+    page.result.current.submitTurn({ userMessage: "Are you there?" });
+  });
+  await waitFor(() =>
+    expect(Object.values(page.result.current.failedTurns)).toHaveLength(1),
+  );
+
+  page.rerender({ occurrenceId: "occ-b" });
+  await waitFor(() => expect(page.result.current.thread?.id).toBe("case-b"));
+  expect(page.result.current.lastActions).toEqual([]);
+  expect(page.result.current.failedTurns).toEqual({});
+
+  page.rerender({ occurrenceId: "occ-a" });
+  expect(page.result.current.lastActions).toHaveLength(1);
+  expect(
+    Object.values(page.result.current.failedTurns).map((f) => f.body),
+  ).toEqual(["Are you there?"]);
+});

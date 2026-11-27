@@ -298,6 +298,21 @@ export function supportHandoffIndex(
   return isHuman ? messages.length : -1;
 }
 
+/** What one thread's page shows beyond its messages: the last answer's cards and reply-by line, and the turns that did not send. */
+type ThreadPage = {
+  actions: SupportAction[];
+  outcomeId: string | null;
+  replyByAt: string | null;
+  failedTurns: Record<string, { body: string; vars: TurnVars }>;
+};
+
+const EMPTY_PAGE: ThreadPage = {
+  actions: [],
+  outcomeId: null,
+  replyByAt: null,
+  failedTurns: {},
+};
+
 export function useSupportThread(
   appointmentId: string,
   {
@@ -317,16 +332,33 @@ export function useSupportThread(
     enabled?: boolean;
   } = {},
 ) {
-  const [lastActions, setLastActions] = useState<SupportAction[]>([]);
-  const [lastOutcomeId, setLastOutcomeId] = useState<string | null>(null);
-  const [lastReplyByAt, setLastReplyByAt] = useState<string | null>(null);
-  const [failedTurns, setFailedTurns] = useState<
-    Record<string, { body: string; vars: TurnVars }>
-  >({});
+  // Per thread, so a page that moves to another session shows that session's own cards and unsent messages.
+  const [pages, setPages] = useState<Record<string, ThreadPage>>({});
   const { toast } = useToast();
   const clock = useZoneClock();
   const qc = useQueryClient();
   const queryKey: ThreadKey = supportKeys.thread(appointmentId, occurrenceId);
+  const {
+    actions: lastActions,
+    outcomeId: lastOutcomeId,
+    replyByAt: lastReplyByAt,
+    failedTurns,
+  } = pages[hashKey(queryKey)] ?? EMPTY_PAGE;
+  const patchPage = (key: ThreadKey, patch: (page: ThreadPage) => ThreadPage) =>
+    setPages((all) => ({
+      ...all,
+      [hashKey(key)]: patch(all[hashKey(key)] ?? EMPTY_PAGE),
+    }));
+  // An unsent turn stays with the thread it was sent from, with its retry.
+  const keepFailedTurn = (
+    sentFrom: ThreadKey,
+    id: string,
+    failed: ThreadPage["failedTurns"][string],
+  ) =>
+    patchPage(sentFrom, (page) => ({
+      ...page,
+      failedTurns: { ...page.failedTurns, [id]: failed },
+    }));
 
   // Undo the optimistic bubble in the thread the turn was sent from. A turn sent
   // before the first GET resolves has NO snapshot to restore, so the pending
@@ -418,15 +450,13 @@ export function useSupportThread(
     onSuccess: (result, vars, context) => {
       // These callbacks are the latest render's, so `queryKey` is the page shown now, not the sender's.
       const sentFrom = context?.sentFrom ?? queryKey;
-      const stillShown = hashKey(sentFrom) === hashKey(queryKey);
       // The server took the request but refused the write: treat it exactly
       // like a failure, or the bubble sits there looking delivered.
       if (result.accepted === false) {
         const id = context?.optimisticId;
         const said = vars.userMessage ?? vars.chosenLabel;
         rollbackOptimistic(sentFrom, context?.previous, id);
-        if (id && said && stillShown)
-          setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
+        if (id && said) keepFailedTurn(sentFrom, id, { body: said, vars });
         toast({
           title: "Support",
           description:
@@ -449,15 +479,18 @@ export function useSupportThread(
         shownCase !== result.threadId
           ? result.threadId
           : undefined;
-      // The actions and reply-by line belong to the page shown now; another session's page keeps its own.
-      if (!forOtherCase && stillShown) {
-        setLastActions(result.actions ?? []);
-        if (result.outcomeId !== undefined) {
-          setLastOutcomeId(result.outcomeId ?? null);
-        }
-        if (result.replyByAt !== undefined) {
-          setLastReplyByAt(result.replyByAt ?? null);
-        }
+      // The actions and reply-by line belong to the thread the turn was sent from; another session's page keeps its own.
+      if (!forOtherCase) {
+        patchPage(sentFrom, (page) => ({
+          ...page,
+          actions: result.actions ?? [],
+          ...(result.outcomeId !== undefined && {
+            outcomeId: result.outcomeId ?? null,
+          }),
+          ...(result.replyByAt !== undefined && {
+            replyByAt: result.replyByAt ?? null,
+          }),
+        }));
       }
       const said = vars.userMessage ?? vars.chosenLabel;
       qc.setQueryData<ThreadData>(sentFrom, (old) => {
@@ -513,11 +546,12 @@ export function useSupportThread(
         });
         return;
       }
-      if (id && said) rollbackOptimistic(sentFrom, context?.previous, id);
-      // A retry bubble belongs to the thread it was sent from; on another session's page the failure is only said.
-      if (id && said && stillShown) {
-        setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
-      } else {
+      if (id && said) {
+        rollbackOptimistic(sentFrom, context?.previous, id);
+        keepFailedTurn(sentFrom, id, { body: said, vars });
+      }
+      // The retry bubble is on the thread it was sent from; a page showing another session is told instead.
+      if (!(id && said && stillShown)) {
         toast({
           title: "Support",
           description: e instanceof Error ? e.message : "Please try again.",
@@ -634,7 +668,10 @@ export function useSupportThread(
     // Check the in-flight guard BEFORE dropping the entry, or a Retry pressed
     // during another send erases the message and never resends it.
     if (!failed || inFlight.current) return;
-    setFailedTurns(({ [id]: _gone, ...rest }) => rest);
+    patchPage(queryKey, (page) => {
+      const { [id]: _gone, ...rest } = page.failedTurns;
+      return { ...page, failedTurns: rest };
+    });
     submitTurn(failed.vars);
   };
 
