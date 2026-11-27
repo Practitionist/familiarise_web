@@ -2294,7 +2294,7 @@ async function expirePaymentPendingRequests(
     for (const consultation of staleConsultations) {
       if (run.pastDeadline()) break;
       try {
-        // #1775 — the per-row lapse is the shared core the consultant's
+        // The per-row lapse is the shared core the consultant's
         // Withdraw also calls; a lost CAS is `moved: 0`, never a throw.
         const { moved, holdNotices } = await prisma.$transaction(
           (tx) =>
@@ -2315,7 +2315,7 @@ async function expirePaymentPendingRequests(
         }
         consultationsExpired += 1;
         await flushBackupInterestNotices(holdNotices);
-        // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
+        // The fallback lapse notifies like the 24 h sweep.
         const notice = expiryNoticeFor(
           "consultation",
           consultation,
