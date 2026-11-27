@@ -22,16 +22,14 @@ import {
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { lockHostTimeInTx } from "@/lib/booking/allocation/host-time-locks";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { notifyNewBookingRequest } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import type { StagedTrigger } from "@/lib/novu/outbox";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import {
-  stageNewBookingRequestEmail,
-  type StagedRecipientEmail,
-} from "@/lib/email/senders/booking";
+  prepareNewRequestNotices,
+  stageNewRequestNotices,
+  type StagedRequestNotices,
+} from "@/lib/booking/request-notices";
 import { PENDING_CONSULTATION_EXPIRATION_HOURS } from "@/scripts/appointments/expire-stale-requests";
-import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { recordParticipants } from "@/lib/booking/participants";
@@ -308,6 +306,8 @@ export async function POST(req: NextRequest) {
     await ensureConsulteeProfile(prisma, session.user.id);
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },
+      // The name the expert's notice shows.
+      include: { user: { select: { name: true } } },
     });
 
     if (!consulteeProfile) {
@@ -332,7 +332,8 @@ export async function POST(req: NextRequest) {
             maxOpenRequests: true,
             verificationStatus: true,
             deletedAt: true,
-            user: { select: { id: true } },
+            // The id seats the expert; the name greets them in the request's notice.
+            user: { select: { id: true, name: true } },
           },
         },
       },
@@ -468,8 +469,7 @@ export async function POST(req: NextRequest) {
     let consulteeLock: Awaited<ReturnType<typeof lockConsulteeBooking>> | null =
       null;
     let lock: SlotBatchGrant | undefined;
-    let stagedBell: StagedTrigger | undefined;
-    let stagedEmailRows: StagedRecipientEmail[] = [];
+    let stagedNotices: StagedRequestNotices | undefined;
     let createdConsultation:
       Awaited<ReturnType<typeof prisma.consultation.create>> | undefined;
 
@@ -571,9 +571,32 @@ export async function POST(req: NextRequest) {
         // say about. The nested create was already atomic on its own; the
         // transaction is what extends that atomicity to the audit row. The
         // budget sits well inside the 60 s slot lock held above.
+        // The expert's notices are read and rendered here, outside the
+        // transaction, and staged inside it. ADR 23: one recipient with a
+        // known side gets a precise route.
+        const reviewUrl = scopedHref({
+          organizationId: organizationId ?? null,
+          surface: "requests",
+          personal: { kind: "consultant", profileId: consultantProfileId },
+        });
+        const sweepExpiry = new Date(
+          Date.now() + PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
+        );
+        const preparedNotices = await prepareNewRequestNotices({
+          consultantUserId: consultationPlan.consultantProfile.user.id,
+          consultantName:
+            consultationPlan.consultantProfile.user.name || "Consultant",
+          consulteeName: consulteeProfile.user.name || "A consultee",
+          planTitle: consultationPlan.title,
+          organizationId: organizationId ?? null,
+          startsAt: startTime,
+          respondBy: sweepExpiry < startTime ? sweepExpiry : startTime,
+          reviewUrl,
+        });
+
         // Re-armed for this one attempt; a grant that is no longer ours writes nothing.
         await renewConsulteeBooking(consulteeLock);
-        const consultation = await prisma.$transaction(
+        const requested = await prisma.$transaction(
           async (tx) => {
             // The database arbitrates the window before any row is locked or read.
             await lockHostTimeInTx(
@@ -727,10 +750,18 @@ export async function POST(req: NextRequest) {
                 organizationId: created.appointment?.organizationId ?? null,
               },
             );
-            return created;
+            // The notices commit with the request, keyed by it.
+            const notices = await stageNewRequestNotices(
+              tx,
+              created.id,
+              preparedNotices,
+            );
+            return { created, notices };
           },
           { maxWait: 10_000, timeout: 15_000 },
         );
+        const consultation = requested.created;
+        stagedNotices = requested.notices;
 
         console.log(
           JSON.stringify({
@@ -743,51 +774,6 @@ export async function POST(req: NextRequest) {
           }),
         );
 
-        // ADR 23 — single recipient with a known side resolves to a precise route rather than the /dashboard bounce.
-        const requestOrgId = consultation.appointment?.organizationId ?? null;
-        const reviewUrl = scopedHref({
-          organizationId: requestOrgId,
-          surface: "requests",
-          personal: {
-            kind: "consultant",
-            profileId: consultation.consultationPlan.consultantProfile.id,
-          },
-        });
-        const sweepExpiry = new Date(
-          consultation.requestedAt.getTime() +
-            PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
-        );
-        const [bellResult, emailRows] = await Promise.all([
-          notifyNewBookingRequest(
-            consultation.consultationPlan.consultantProfile.user.id,
-            {
-              ...notificationScope(requestOrgId),
-              consulteeName:
-                consultation.requestedBy.user.name || "A consultee",
-              planTitle: consultation.consultationPlan.title,
-              appointmentType: "CONSULTATION",
-              requestedDateTime: startTime.toISOString(),
-              dashboardUrl: reviewUrl,
-            },
-            { deferAttempt: true },
-          ),
-          stageNewBookingRequestEmail({
-            requestId: consultation.id,
-            consultantUserId:
-              consultation.consultationPlan.consultantProfile.user.id,
-            consultantName:
-              consultation.consultationPlan.consultantProfile.user.name ||
-              "Consultant",
-            consulteeName: consultation.requestedBy.user.name || "A consultee",
-            planTitle: consultation.consultationPlan.title,
-            appointmentType: "CONSULTATION",
-            requestedAt: startTime,
-            respondBy: sweepExpiry < startTime ? sweepExpiry : startTime,
-            reviewUrl,
-          }).catch(() => []),
-        ]);
-        stagedBell = bellResult?.staged;
-        stagedEmailRows = emailRows;
         createdConsultation = consultation;
       } catch (lockError) {
         if (lockError instanceof RequestRefusal) {
@@ -874,10 +860,10 @@ export async function POST(req: NextRequest) {
 
     await flushNotificationsAfter(
       {
-        bells: [stagedBell],
+        bells: stagedNotices?.bells ?? [],
         emails: [
           {
-            rows: stagedEmailRows,
+            rows: stagedNotices?.emails ?? [],
             emailType: "NEW_BOOKING_REQUEST",
             budgetMs: EMAIL_BUDGET_MS.REQUEST,
           },

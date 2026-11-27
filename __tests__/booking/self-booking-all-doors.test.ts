@@ -54,9 +54,12 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
       mockCheckSlotAvailability(...(a as []));
   },
 }));
-jest.mock("../../lib/novu", () => ({
-  notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
+// The expert's notices are pinned in consultant-request-gate.test.ts.
+jest.mock("../../lib/booking/request-notices", () => ({
+  prepareNewRequestNotices: jest.fn(async () => ({})),
+  stageNewRequestNotices: jest.fn(async () => ({ bells: [], emails: [] })),
 }));
+jest.mock("../../lib/novu", () => ({}));
 jest.mock("../../lib/novu/workflows", () => ({
   ...jest.requireActual("../../lib/novu/workflows"),
   notificationScope: () => ({ organizationId: null, scope: "personal" }),

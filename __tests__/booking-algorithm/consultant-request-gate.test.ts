@@ -69,8 +69,24 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 jest.mock("../../lib/booking/allocation/coverage", () =>
   jest.requireActual("../fixtures/request-door-hours"),
 );
-jest.mock("../../lib/novu", () => ({
-  notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/novu", () => ({}));
+// The expert's notices: prepared before the transaction, staged inside it.
+const PREPARED_NOTICES = { bells: [], emails: { prepared: {}, screened: [] } };
+const STAGED_NOTICES = {
+  bells: [{ id: "bell_1" }],
+  emails: [{ staged: { id: "mail_1" } }],
+};
+const mockPrepareNotices = jest.fn(
+  async (..._args: unknown[]) => PREPARED_NOTICES,
+);
+const mockStageNotices = jest.fn(async (..._args: unknown[]) => STAGED_NOTICES);
+jest.mock("../../lib/booking/request-notices", () => ({
+  prepareNewRequestNotices: (...a: unknown[]) => mockPrepareNotices(...a),
+  stageNewRequestNotices: (...a: unknown[]) => mockStageNotices(...a),
+}));
+const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: (...a: unknown[]) => mockFlush(...a),
 }));
 jest.mock("../../lib/novu/workflows", () => ({
   ...jest.requireActual("../../lib/novu/workflows"),
@@ -364,6 +380,53 @@ describe("request-for-approval consultant projection", () => {
   });
 });
 
+describe("request-for-approval expert notices", () => {
+  it("stages the notices in the request's transaction, keyed by the request, and sends them after the commit", async () => {
+    const transaction = (mockedPrisma as unknown as { $transaction: jest.Mock })
+      .$transaction;
+    // A transaction client distinct from the global one, with the same models.
+    const tx: unknown = Object.create(mockedPrisma);
+    transaction.mockImplementationOnce(
+      async (fn: (client: unknown) => unknown) => fn(tx),
+    );
+
+    const res = await POST(request());
+    expect(res.status).toBe(201);
+
+    // Read and rendered before the transaction opens; staged on its client.
+    expect(mockPrepareNotices.mock.invocationCallOrder[0]).toBeLessThan(
+      transaction.mock.invocationCallOrder[0],
+    );
+    expect(mockPrepareNotices.mock.calls[0][0]).toMatchObject({
+      consultantUserId: "user_consultant",
+      planTitle: "Plan",
+      organizationId: null,
+    });
+    expect(mockStageNotices).toHaveBeenCalledTimes(1);
+    // Written on the transaction's client, never the global one.
+    const [client, requestId, prepared] = mockStageNotices.mock.calls[0];
+    expect(client).toBe(tx);
+    expect(client).not.toBe(mockedPrisma);
+    expect(requestId).toBe("req_1");
+    expect(prepared).toBe(PREPARED_NOTICES);
+    expect(mockFlush.mock.calls[0][0]).toMatchObject({
+      bells: STAGED_NOTICES.bells,
+      emails: [
+        { rows: STAGED_NOTICES.emails, emailType: "NEW_BOOKING_REQUEST" },
+      ],
+    });
+  });
+
+  it("a refused request stages and sends nothing", async () => {
+    mockProfile.maxOpenRequests = 1;
+    mockConsultationCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect(mockStageNotices).not.toHaveBeenCalled();
+    expect(mockFlush).not.toHaveBeenCalled();
+  });
+});
+
 describe("request-for-approval Idempotency-Key", () => {
   const SLOT = "2030-01-01T10:00:00.000Z";
   const original = () => ({
@@ -395,6 +458,9 @@ describe("request-for-approval Idempotency-Key", () => {
     );
     expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
     expect(mockLockSlotBooking).not.toHaveBeenCalled();
+    // The first submit staged the expert's notices; a replay sends nothing again.
+    expect(mockStageNotices).not.toHaveBeenCalled();
+    expect(mockFlush).not.toHaveBeenCalled();
   });
 
   it("the same key with another time is refused, not replayed", async () => {
