@@ -198,6 +198,34 @@ describe("the host's whole-class cancel", () => {
     expect(await refundedPaise(buyer.paymentId)).toBe(40_000 + 20_000);
   });
 
+  it("still waits for the verdict when the seat's payment is under a dispute: nothing is cancelled and no refund is stamped owed", async () => {
+    const { host, cls, buyer } = await seedPendingVoid();
+    await prisma.dispute.create({
+      data: {
+        paymentId: buyer.paymentId,
+        amountPaise: BigInt(SHAPE.price),
+        reason: "fraud",
+        status: "NEEDS_RESPONSE",
+        disputeId: `disp_dbtier_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+      },
+    });
+
+    const refused = await hostCancels(host, cls.appointmentId);
+
+    expect(refused).toMatchObject({
+      status: 409,
+      body: { code: "CANCEL_WAITS_FOR_VERDICT" },
+    });
+    expect(await classStatus(cls.classId)).toBe("SCHEDULED");
+    expect(
+      await prisma.payment.findUniqueOrThrow({
+        where: { id: buyer.paymentId },
+        select: { refundOwedKey: true },
+      }),
+    ).toMatchObject({ refundOwedKey: null });
+  });
+
   it("leaves the void out once ops relabel it held", async () => {
     const { host, cls, buyer, voidId } = await seedPendingVoid();
     await relabelHeld(voidId);
