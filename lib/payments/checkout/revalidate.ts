@@ -16,6 +16,7 @@ import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { verifyPlanExistsInsideLock } from "@/lib/payments/checkout/locks";
+import { CHECKOUT_PRE_COMMIT_TX_OPTIONS } from "@/lib/payments/checkout/order-reuse";
 import {
   assertConsulteeHasNoOverlappingSession,
   validateSlotAvailability,
@@ -542,5 +543,5 @@ export async function revalidateInsideLock(
     // wallet, the PaymentLeg source, whose cancellation ladder binds) reads
     // the value this transaction saw rather than the one it hoped for.
     return freshOrgFunding;
-  });
+  }, CHECKOUT_PRE_COMMIT_TX_OPTIONS);
 }
