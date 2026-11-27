@@ -692,7 +692,7 @@ describe("a proposed consultant no-show", () => {
     expect(row("a").outcomeConfirmedAt).toBeNull();
   });
 
-  it("guards another proposed session of the booking only when this page judged it strong, closed and undisputed too", async () => {
+  it("guards another proposed session of the booking only when this page judged it strong, closed or agreed, and undisputed too", async () => {
     occurrences.rows.push(
       proposal("a"),
       proposal("b"),
@@ -706,10 +706,19 @@ describe("a proposed consultant no-show", () => {
         },
       }),
     );
+    // Its window is still open; the learner's counted agreement qualifies it early.
+    occurrences.rows.push(
+      proposal("agreed", {
+        outcomeAt: hoursAgo(5),
+        supportCases: [filed("provider_no_show", "priya")],
+      }),
+    );
     await confirmClosedOutcomes(NOW, () => false);
-    const [id, { siblingGuard }] = jest.mocked(confirmConsultantNoShow).mock
-      .calls[0];
-    expect(id).toBe("a");
+    const call = jest
+      .mocked(confirmConsultantNoShow)
+      .mock.calls.find(([id]) => id === "a");
+    const { siblingGuard } = call![1];
+    expect(siblingGuard("agreed")).not.toBeNull();
     expect(matchesWhere(row("b"), siblingGuard("b") ?? {})).toBe(true);
     expect(matchesWhere(row("a"), siblingGuard("b") ?? {})).toBe(false);
     expect(siblingGuard("disputed")).toBeNull();
