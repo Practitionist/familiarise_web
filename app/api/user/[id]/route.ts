@@ -484,6 +484,10 @@ async function executeUserHardDeleteOrFallbackScrub(
   let endedSessions: EndedSessions[] = [];
   const removedCollaborations = await prisma
     .$transaction(async (tx) => {
+      // Read first, before any write: a booking or hosted session that
+      // appeared since the door's check stops the delete with nothing changed.
+      const block = await erasureBookingBlock(tx, id);
+      if (block) throw new ErasureBlockedByBookingsError(block);
       const removed = await endCollaborationsForUser(tx, id, {
         endedByUserId: null,
       });
@@ -568,7 +572,7 @@ export async function DELETE(
 
     return await executeUserHardDeleteOrFallbackScrub(id);
   } catch (error) {
-    // A booking landed after the checks above: the scrub rolled back whole.
+    // A booking landed after the checks above: the scrub or the delete rolled back whole.
     if (error instanceof ErasureBlockedByBookingsError) {
       return bookingBlockResponse(error.block);
     }

@@ -10,15 +10,18 @@
  */
 
 const mockScrub = jest.fn(async () => ({ vendorFailures: [] as string[] }));
-const mockBookingBlock = jest.fn(
-  async (): Promise<null | { kind: "held"; held: Record<string, number> }> =>
-    null,
-);
+type Block = { kind: "held"; held: Record<string, number> };
+const mockBookingBlock = jest.fn(async (): Promise<null | Block> => null);
+const mockEndCollaborations = jest.fn(async () => []);
 jest.mock("../../lib/compliance/erasure/scrub-user", () => ({
   derivePseudonym: () => "pseudo-1",
   eraseStreamPrincipalFootprint: jest.fn(async () => undefined),
   erasureBookingBlock: () => mockBookingBlock(),
-  ErasureBlockedByBookingsError: class extends Error {},
+  ErasureBlockedByBookingsError: class extends Error {
+    constructor(readonly block: Block) {
+      super("blocked");
+    }
+  },
   hasMoneyInFlight: () => false,
   moneyInFlightForUser: jest.fn(async () => ({})),
   scrubUser: () => mockScrub(),
@@ -43,7 +46,7 @@ jest.mock("../../lib/novu/subscriber", () => ({
   deleteSubscriber: jest.fn(async () => true),
 }));
 jest.mock("../../lib/collaborators/ending", () => ({
-  endCollaborationsForUser: jest.fn(async () => []),
+  endCollaborationsForUser: () => mockEndCollaborations(),
   afterCollaborationEnded: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/support/erasure", () => ({
@@ -139,5 +142,21 @@ it("refuses a learner who still holds a class or webinar seat, with nothing eras
     counts: { activeEventSeats: 1 },
   });
   expect(mockScrub).not.toHaveBeenCalled();
+  expect(mockUserDelete).not.toHaveBeenCalled();
+});
+
+it("a booking that lands after the check stops the hard delete before anything is written", async () => {
+  // The door's check sees nothing; the delete's own transaction sees the booking.
+  mockBookingBlock.mockResolvedValueOnce(null).mockResolvedValueOnce({
+    kind: "held",
+    held: { activeConsultations: 1 },
+  });
+  const res = await del();
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({
+    code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
+    counts: { activeConsultations: 1 },
+  });
+  expect(mockEndCollaborations).not.toHaveBeenCalled();
   expect(mockUserDelete).not.toHaveBeenCalled();
 });
