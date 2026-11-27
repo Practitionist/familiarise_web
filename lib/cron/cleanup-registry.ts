@@ -2023,16 +2023,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "reconcile-refunds": {
     meta: {
       title: "Reconcile pending refunds",
-      description: "Sync pending refund status with Razorpay",
+      description:
+        "Sync pending refund status with Razorpay and import gateway refunds the database does not hold",
       category: "Refunds",
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now, outOfTime) => {
-        const { hasPendingRefundWork } =
-          await import("@/scripts/refunds/reconcile-pending-refunds");
-        return hasPendingRefundWork(db, now, outOfTime);
-      },
+      alwaysRun:
+        "Lists Razorpay's refunds to find ones with no row here; vendor state, no row marks the work.",
     },
     build: () =>
       cleanupRoute({
@@ -2051,6 +2049,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           redrivenCount: r.redrivenCount,
           redriveFailedCount: r.redriveFailedCount,
           redriveDeadLettered: r.redriveDeadLettered,
+          discovery: r.discovery,
           errors: r.errors.slice(0, 5),
         }),
         failureMessage: "Failed to reconcile refunds",

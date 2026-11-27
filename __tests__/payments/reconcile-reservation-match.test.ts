@@ -117,6 +117,11 @@ const mockSettleSeat = jest.fn(async (..._a: unknown[]) => ({
 jest.mock("../../lib/payments/operations/refund-seat", () => ({
   settleRefundSeatTx: (...a: unknown[]) => mockSettleSeat(...a),
 }));
+// The discovery pass has its own suite; here it is a quiet pass unless a test says otherwise.
+const mockDiscover = jest.fn();
+jest.mock("../../lib/payments/discovery/refund-discovery", () => ({
+  discoverGatewayRefunds: (...a: unknown[]) => mockDiscover(...a),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
   // matcher semantics.
@@ -223,14 +228,75 @@ const unknownId = () =>
     "input_validation_failed",
   );
 
+const quietDiscovery = {
+  listed: 0,
+  imported: 0,
+  alreadyKnown: 0,
+  unknownPayment: 0,
+  gatewayFailed: 0,
+  noRefundRow: 0,
+  errors: [] as string[],
+  stoppedShort: null,
+  checkpoint: '{"since":1764244800,"window":null,"cutRuns":0}',
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDiscover.mockResolvedValue(quietDiscovery);
   refundTable.findUnique.mockResolvedValue(null);
   refundTable.findMany.mockResolvedValue([]);
   // The stranded-refund backstop pass finds nothing unless a test says so.
   mockStrandedIds.mockResolvedValue([]);
   // These keys read the capture unless a test says otherwise.
   mockFetchPayment.mockResolvedValue(capturedPayment());
+});
+
+describe("reconcilePendingRefunds — discovery pass", () => {
+  test("returns the pass's counts, keeps its position as the run's checkpoint, and fails the run on its errors", async () => {
+    mockDiscover.mockResolvedValue({
+      ...quietDiscovery,
+      listed: 3,
+      imported: 1,
+      alreadyKnown: 2,
+      errors: ["Refund rfnd_bad: could not serialize access"],
+      stoppedShort: { bound: "pages", pagesHandled: 3 },
+    });
+
+    const startedAt = Date.now();
+    const result = await reconcilePendingRefunds({ startedAt });
+
+    expect(result.discovery).toEqual({
+      listed: 3,
+      imported: 1,
+      alreadyKnown: 2,
+      unknownPayment: 0,
+      gatewayFailed: 0,
+      noRefundRow: 0,
+      stoppedShort: { bound: "pages", pagesHandled: 3 },
+    });
+    expect(result.checkpoint).toBe(quietDiscovery.checkpoint);
+    expect(result.errors).toEqual([
+      "Refund rfnd_bad: could not serialize access",
+    ]);
+    expect(result.success).toBe(false);
+
+    // The pass stops starting hand-overs 14 s into the run.
+    const outOfTime = mockDiscover.mock.calls[0][0] as () => boolean;
+    expect(outOfTime()).toBe(false);
+    jest.spyOn(Date, "now").mockReturnValue(startedAt + 14_000);
+    expect(outOfTime()).toBe(true);
+    jest.restoreAllMocks();
+  });
+
+  test("a pass that throws is one error and records no checkpoint, so the stored position stands", async () => {
+    mockDiscover.mockRejectedValue(new Error("connection terminated"));
+
+    const result = await reconcilePendingRefunds();
+
+    expect(result.discovery).toBeNull();
+    expect(result).not.toHaveProperty("checkpoint");
+    expect(result.errors).toEqual(["Refund discovery: connection terminated"]);
+  });
 });
 
 describe("reconcilePendingRefunds placeholder matching", () => {

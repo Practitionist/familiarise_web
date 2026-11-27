@@ -104,6 +104,7 @@ From [Official Razorpay Refund Entity Docs](https://razorpay.com/docs/api/refund
 An unknown-id or 404 answer (`isRazorpayUnknownRefundIdError`, `isRazorpayUnknownOrderError`) never fails a row in either pass, because an id of the other key mode gets the same answer: the row stays `PENDING` and the run raises one standing finding.
 
 3. **Pass 3 (`redriveStrandedRefunds`)**: Replays `SUCCEEDED` rows with `cascadedAt: null` (>10 min old) through `applyRefundCascade`.
+4. **Discovery pass (`discoverGatewayRefunds`, `lib/payments/discovery/refund-discovery.ts`)**: lists the account's refunds created since the job's checkpoint (section 7) and hands each one with no `Refund` row under its gateway id to `handleRefundCreated`, so a dashboard refund or one whose webhook was lost is imported as its webhook would have imported it. It never hands over a gateway-`failed` refund and never creates a refund. `docs/finance/30-refunds-disputes/01-refunds.md` has the window, bounds and reporting.
 
 ---
 
@@ -111,7 +112,7 @@ An unknown-id or 404 answer (`isRazorpayUnknownRefundIdError`, `isRazorpayUnknow
 
 Read from `node_modules/razorpay` 2.9.8 (`dist/resources/refunds.js`, `dist/types/refunds.d.ts`) on 2026-11-27. Nothing here has been checked against the gateway.
 
-`listRazorpayRefundsCreatedBetween` (`lib/payments/core/razorpay.ts`) calls `refunds.all({ from, to, count, skip })` behind `withRazorpaySdkTimeout` and parses each item with `razorpayListedRefundPageSchema`; one malformed item rejects the page.
+`listRazorpayRefundsCreatedBetween` (`lib/payments/core/razorpay.ts`), read by the discovery pass above, calls `refunds.all({ from, to, count, skip })` behind `withRazorpaySdkTimeout` and parses each item with `razorpayListedRefundPageSchema`; one malformed item rejects the page.
 
 | Point                   | What the SDK shows                                                                                                                                                    | Not shown anywhere we can read                                               |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
