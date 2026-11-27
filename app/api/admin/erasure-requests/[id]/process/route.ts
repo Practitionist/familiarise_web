@@ -14,11 +14,38 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
+  describeLiveBookings,
+  erasureBookingBlock,
+  ErasureBlockedByBookingsError,
   hasMoneyInFlight,
   moneyInFlightForUser,
   scrubUser,
   soleOwnerOrganizationsForUser,
+  type ErasureBookingBlock,
 } from "@/lib/compliance/erasure/scrub-user";
+
+/** The operator's 409 for a user who still hosts or holds a live booking: what is live, and what to do. */
+function bookingBlockResponse(block: ErasureBookingBlock): NextResponse {
+  if (block.kind === "hosted") {
+    const { hosted } = block;
+    return NextResponse.json(
+      {
+        error: `Erasure is blocked while this user still hosts live bookings (${hosted.details ?? `${hosted.total} open`}). Cancel each one through its cancel door, or wait for it to finish, then process this request again. Erasure never cancels a booking itself.`,
+        code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+        breakdown: hosted.breakdown,
+      },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json(
+    {
+      error: `Erasure is blocked while this user still holds live bookings (${describeLiveBookings(block.held)}). Cancel each booking through its cancel door, and release a class or webinar seat from its roster, then process this request again. Erasure never cancels a booking itself.`,
+      code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
+      counts: block.held,
+    },
+    { status: 409 },
+  );
+}
 
 export async function POST(
   _req: NextRequest,
@@ -71,6 +98,11 @@ export async function POST(
     );
   }
 
+  // Erasure never cancels a booking: what the user still hosts or holds would
+  // outlive an account that can no longer sign in, so the operator ends it first.
+  const block = await erasureBookingBlock(prisma, request.userId);
+  if (block) return bookingBlockResponse(block);
+
   // Move PENDING → IN_PROGRESS so a second admin clicking the same
   // button doesn't double-execute. The partial-unique index allows
   // both PENDING and IN_PROGRESS to count as "open"; the explicit
@@ -118,6 +150,14 @@ export async function POST(
       pseudonymousId: result.pseudonymousId,
     });
   } catch (err) {
+    // A booking landed after the check above: the scrub rolled back whole.
+    if (err instanceof ErasureBlockedByBookingsError) {
+      await prisma.erasureRequest.update({
+        where: { id },
+        data: { status: "PENDING" },
+      });
+      return bookingBlockResponse(err.block);
+    }
     // Flip back to PENDING so the queue picks it up again; record the
     // error in `notes` so the admin sees what blew up.
     await prisma.erasureRequest.update({

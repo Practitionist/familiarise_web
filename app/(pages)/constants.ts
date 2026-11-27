@@ -17,8 +17,8 @@ export const GRIEVANCE_OFFICER = {
 
 export const POLICY_DATES = {
   privacyLastUpdated: "November 9, 2026",
-  termsLastUpdated: "November 9, 2026",
-  refundLastUpdated: "October 28, 2026",
+  termsLastUpdated: "November 25, 2026",
+  refundLastUpdated: "November 25, 2026",
   grievanceLastUpdated: "October 21, 2026",
   reviewsPolicyLastUpdated: "October 2026",
   howWeRankLastUpdated: "November 9, 2026",

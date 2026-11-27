@@ -32,6 +32,7 @@ import {
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
 import { liftBlockTx } from "@/lib/booking/seat-removal-lift";
+import { releasedSeatOwedTx } from "@/lib/payments/operations/event-refunds";
 import type { SeatHistoryReason } from "@/lib/booking/seat-history";
 import { activeHolds, caseHoldEvents, holdPaymentForCase } from "./case-holds";
 import { stageCaseNotice } from "./case-notice";
@@ -85,7 +86,7 @@ function removalCaseBody(
   if (input.note) lines.push(`Host's note: ${input.note}`);
   lines.push(
     "",
-    `Support decides within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours. Reply here to give your side. If the removal is overturned, or support does not decide in time, whatever is still unrefunded on your seat is refunded to where you paid from.`,
+    `Support decides within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours. Reply here to give your side. If the removal is overturned, whatever is still unrefunded on your seat is refunded to where you paid from. If support does not decide in time, the sessions that had not been delivered when you were removed are refunded there.`,
   );
   return lines.join("\n");
 }
@@ -495,7 +496,7 @@ interface ConductRemovalRemedy {
   caseId: string;
   appointmentId: string;
   userId: string;
-  /** Null when nothing is owed: a free seat, no payment, a later sale's order, or another door's refund holding it. */
+  /** Null when nothing is owed: a free seat, no payment, every session delivered, a later sale's order, or another door's refund holding it. */
   marker: RefundOwedMarker | null;
   /** The unblock intent's generation; null when only the money is owed. */
   unblockGeneration: Date | null;
@@ -622,7 +623,7 @@ export async function removalCaseRefundsPaymentTx(
   return (await db.payment.count({ where: { ...where, id: paymentId } })) > 0;
 }
 
-/** Stamps the seat's unrefunded balance as owed, keyed on the removal case so it is refunded once. */
+/** Stamps what a lapsed removal owes the seat, keyed on the removal case so it is refunded once. */
 async function stampRemovalRefundTx(
   tx: Tx,
   caseId: string,
@@ -640,6 +641,8 @@ async function stampRemovalRefundTx(
       originalAmount: true,
       paymentIntent: true,
       refundOwedKey: true,
+      createdAt: true,
+      ...REFUNDABLE_BALANCE_SELECT,
     },
   });
   if (
@@ -652,9 +655,18 @@ async function stampRemovalRefundTx(
   ) {
     return null;
   }
+  // Measured at the removal: the class kept running without the learner.
+  const owed = await releasedSeatOwedTx(tx, {
+    appointmentId: target.appointmentId,
+    userId: target.userId,
+    payment,
+    releasedAt: target.removedAt,
+    cause: "conduct-removal-lapse",
+  });
+  if (!owed) return null;
   const marker: RefundOwedMarker = {
     paymentId: payment.id,
-    amountPaise: null,
+    amountPaise: owed.amountPaise,
     key: `${conductRemovalRefundKey(caseId)}:pay:${payment.id}`,
     reason,
   };
@@ -943,7 +955,7 @@ async function lapseRemovalTx(
     await postCaseMessageTx(
       tx,
       caseId,
-      `Support did not decide within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours, so whatever is still unrefunded on your seat is being returned to where you paid from.`,
+      `Support did not decide within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours, so the sessions that had not been delivered when you were removed are being refunded to where you paid from.`,
       false,
       now,
     );
@@ -955,7 +967,7 @@ interface ConductRemovalDeadlineResult {
   lapsed: number;
 }
 
-/** The SLA sweep's arm: a removal undecided at 72 hours owes its unrefunded balance, once per case. */
+/** The SLA sweep's arm: a removal undecided at 72 hours owes the seat its undelivered sessions, once per case. */
 export async function sweepConductRemovalDeadlines(opts: {
   limit: number;
   now: Date;

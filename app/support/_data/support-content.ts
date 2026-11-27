@@ -677,7 +677,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Do not charge back first",
         paragraphs: [
-          "Report a problem before asking your bank to reverse a charge. A chargeback (payment dispute) freezes the amount on both sides, blocks further booking actions on the appointment while the chargeback is open, and may lead to account suspension. We usually fix billing problems faster than banks do.",
+          "Report a problem before asking your bank to reverse a charge. A chargeback (payment dispute) freezes the amount on both sides, blocks cancelling or rescheduling a one-to-one booking while the chargeback is open, holds back any refund on that payment until the bank decides, and may lead to account suspension. We usually fix billing problems faster than banks do.",
         ],
       },
     ],
@@ -1524,7 +1524,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Service complaints vs chargebacks",
         paragraphs: [
-          "Reporting a problem with a booking is a service complaint. A payment dispute (chargeback) is when you ask your bank to reverse a charge. Report a problem first: it's usually faster, and a chargeback freezes the amount and pauses actions on the booking.",
+          "Reporting a problem with a booking is a service complaint. A payment dispute (chargeback) is when you ask your bank to reverse a charge. Report a problem first: it's usually faster, and a chargeback freezes the amount and pauses changes to a one-to-one booking.",
         ],
       },
     ],
