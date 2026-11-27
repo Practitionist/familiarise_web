@@ -213,6 +213,71 @@ describe("a voided session not yet settled", () => {
   });
 });
 
+describe("a voided session whose verdict is not yet confirmed", () => {
+  it("refuses the learner's and the expert's cancel with nothing committed, then prices the cancel in full once the verdict is confirmed", async () => {
+    const startsAt = new Date(Date.now() - 3 * HOUR_MS);
+    const { host, booking, payment } = await seedPaid({
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR_MS),
+    });
+    const verdictAt = new Date(Date.now() - HOUR_MS);
+    await prisma.appointmentOccurrence.update({
+      where: { id: booking.occurrenceId },
+      data: {
+        completionStatus: "VOIDED",
+        voidedAt: verdictAt,
+        outcome: "CUT_SHORT",
+        outcomeAt: verdictAt,
+      },
+    });
+    const asBuyer = sessionUser.current;
+    const sessionOf = () =>
+      prisma.appointmentOccurrence.findUniqueOrThrow({
+        where: { id: booking.occurrenceId },
+        select: { completionStatus: true, seatsSettledAt: true },
+      });
+
+    const learner = await cancelRequest(booking.appointmentId);
+    sessionUser.current = {
+      id: host.userId,
+      role: "CONSULTANT",
+      consulteeProfileId: null,
+      consultantProfileId: host.consultantProfileId,
+      name: "Host",
+    };
+    const expert = await cancelRequest(booking.appointmentId);
+    sessionUser.current = asBuyer;
+
+    for (const res of [learner, expert]) {
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        code: "CANCEL_WAITS_FOR_VERDICT",
+      });
+    }
+    expect(await statusOf(booking.consultationId!)).toBe("APPROVED");
+    expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+    expect(await sessionOf()).toMatchObject({ seatsSettledAt: null });
+
+    await prisma.appointmentOccurrence.update({
+      where: { id: booking.occurrenceId },
+      data: { outcomeConfirmedAt: new Date() },
+    });
+    const res = await cancelRequest(booking.appointmentId);
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).refund.refundPct).toBe(100);
+    expect(await statusOf(booking.consultationId!)).toBe("CANCELLED");
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: payment.id, amountPaise: 100_000 }),
+    );
+    expect(await sessionOf()).toMatchObject({
+      completionStatus: "VOIDED",
+      seatsSettledAt: expect.any(Date),
+    });
+  });
+});
+
 describe("discount use on an unpaid end", () => {
   async function seedUnpaidWithCode() {
     const host = await seedHost();

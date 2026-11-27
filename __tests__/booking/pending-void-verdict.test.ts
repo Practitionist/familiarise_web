@@ -63,3 +63,22 @@ it("names the session and its window's close for each remedy, in the reader's zo
     "We're confirming what happened in your 12 Nov session. Its refund waits until it's settled; the report window closes 14 Nov, 5:15 pm IST, and if it needs a review our team will decide.",
   );
 });
+
+it("tells whoever cancels a consultation what waits, by when, and that the session is refunded in full once confirmed", () => {
+  const wait = {
+    sessionStartsAt: new Date("2026-11-12T04:30:00Z"),
+    settlesBy: new Date("2026-11-14T11:45:00Z"),
+  };
+  const open = new Date("2026-11-13T00:00:00Z");
+  const passed = new Date("2026-11-15T00:00:00Z");
+  expect(
+    pendingVerdictMessage(wait, "Asia/Kolkata", open, "cancelBooking"),
+  ).toBe(
+    "We're confirming what happened in the 12 Nov session. You can cancel this booking once that's confirmed, with the session then refunded in full; the report window closes 14 Nov, 5:15 pm IST, and if it needs a review our team will decide.",
+  );
+  expect(
+    pendingVerdictMessage(wait, "Asia/Kolkata", passed, "cancelBooking"),
+  ).toBe(
+    "We're confirming what happened in the 12 Nov session. Our team is reviewing it, and you can cancel this booking once that's confirmed, with the session then refunded in full.",
+  );
+});

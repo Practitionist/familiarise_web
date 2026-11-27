@@ -30,6 +30,8 @@ const makeTx = () => ({
   consultantEarnings: { findMany: async () => [] },
   organizationEarnings: { findMany: async () => [] },
   consultation: { findUnique: async () => ({ status: "SCHEDULED" }) },
+  // The pending-void gate's read: no void of this booking waits on a verdict.
+  appointmentOccurrence: { findMany: async () => [] },
   streamRevocationRetry: createMockRevocationRetryTable(),
 });
 

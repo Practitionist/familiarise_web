@@ -201,6 +201,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { GET as previewHandler } from "@/app/api/appointments/[appointmentId]/cancel/preview/route";
 import type { RefundTier } from "@/lib/payments/operations/cancellation-policy";
+import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
 import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
 
 const HOUR = 3_600_000;
@@ -316,6 +317,10 @@ type Case = {
   actor: "consultee" | "consultant" | "operator";
   /** A session that ended this many hours ago and was voided: cut short, confirmed, not settled. */
   voidedHoursAgo?: number;
+  /** The void's cut-short verdict is still waiting for its confirmation. */
+  voidUnconfirmed?: boolean;
+  /** The plan price before discounts and credits; zero on a booking that cost nothing. */
+  listPricePaise?: number;
 };
 
 /** The booking as the database answers it, before and after the cancel tx. */
@@ -340,6 +345,9 @@ function bookingRows(c: Case) {
         {
           id: "pay-1",
           amount: c.grossPaise,
+          ...(c.listPricePaise !== undefined && {
+            originalAmount: c.listPricePaise,
+          }),
           paymentIntent: c.paymentIntent ?? "pi_gateway_1",
           refunds: c.priorRefundPaise
             ? [{ amountPaise: c.priorRefundPaise, status: "SUCCEEDED" }]
@@ -359,7 +367,11 @@ function bookingRows(c: Case) {
                 ordinal: 1,
                 completionStatus: "VOIDED",
                 outcome: "CUT_SHORT",
-                outcomeConfirmedAt: new Date(Date.now() - HOUR),
+                outcomeAt: new Date(Date.now() - 2 * HOUR),
+                outcomeConfirmedAt: c.voidUnconfirmed
+                  ? null
+                  : new Date(Date.now() - HOUR),
+                deletedAt: null,
                 seatsSettledAt: null,
               },
             ]
@@ -792,6 +804,113 @@ describe("a consultation whose only session was voided and is not settled", () =
 
     expect(cancelRes.status).toBe(409);
     expect(cancelled.code).toBe("BOOKING_CHANGED");
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("a consultation whose voided session still waits for its verdict", () => {
+  const prismaOccurrences = (
+    jest.requireMock("../../lib/prisma").default as {
+      appointmentOccurrence: { findMany: jest.Mock };
+    }
+  ).appointmentOccurrence;
+  const waiting = (actor: Case["actor"], over: Partial<Case> = {}): Case => ({
+    name: "cut short, unconfirmed",
+    kind: "consultation",
+    policy: DEFAULT_POLICY,
+    liveSlotHours: [],
+    voidedHoursAgo: 30,
+    voidUnconfirmed: true,
+    grossPaise: 100_000,
+    actor,
+    ...over,
+  });
+  /** The pending-void gate's own read, on whichever client the door uses. */
+  const gateRead =
+    (c: Case) => async (args: { where?: { completionStatus?: unknown } }) =>
+      args.where?.completionStatus === "VOIDED"
+        ? bookingRows(c)[0].occurrences.filter(
+            (o) => o.completionStatus === "VOIDED",
+          )
+        : [];
+  const arm = (c: Case) => {
+    txStub.appointmentOccurrence.findMany.mockImplementation(gateRead(c));
+    prismaOccurrences.findMany.mockImplementation(gateRead(c));
+  };
+  afterEach(() => {
+    prismaOccurrences.findMany.mockReset().mockResolvedValue([]);
+  });
+
+  it.each(["consultee", "consultant"] as const)(
+    "refuses the %s at the preview and at the cancel with one sentence, and commits nothing",
+    async (actor) => {
+      const c = waiting(actor);
+      arm(c);
+
+      const { previewRes, preview, cancelRes, cancelled } =
+        await quoteThenCancel(c);
+
+      expect(previewRes.status).toBe(409);
+      expect(cancelRes.status).toBe(409);
+      expect(preview.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.error).toBe(preview.error);
+      expect(cancelled.error).toContain(
+        "You can cancel this booking once that's confirmed, with the session then refunded in full",
+      );
+      expect(txStub.consultation.updateMany).not.toHaveBeenCalled();
+      expect(txStub.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
+      expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses platform staff the same way", async () => {
+    const c = waiting("consultee");
+    arm(c);
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "admin-1",
+        name: "Ops",
+        role: "ADMIN",
+        twoFactorEnabled: true,
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    });
+    mockAppointmentFindUnique.mockResolvedValue(appointmentRow(c.kind));
+    mockAppointmentFindMany.mockImplementation(async () => bookingRows(c));
+
+    const previewRes = await previewHandler(
+      new Request(`http://localhost/api/appointments/${APPT}/cancel/preview`),
+      makeParams(APPT),
+    );
+    const request = new Request(
+      `http://localhost/api/appointments/${APPT}/cancel`,
+      { method: "POST" },
+    );
+    grantPlatformCancel(request, "ops-1");
+    const cancelRes = await cancelHandler(request as never, makeParams(APPT));
+
+    expect(previewRes.status).toBe(409);
+    expect((await previewRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(cancelRes.status).toBe(409);
+    expect((await cancelRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(txStub.consultation.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("lets a booking that cost nothing be cancelled: no refund waits on the verdict", async () => {
+    const c = waiting("consultee", {
+      grossPaise: 0,
+      listPricePaise: 0,
+      paymentIntent: "free_1730000000_cons",
+    });
+    arm(c);
+
+    const { previewRes, cancelRes } = await quoteThenCancel(c);
+
+    expect(previewRes.status).toBe(200);
+    expect(cancelRes.status).toBe(200);
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 });

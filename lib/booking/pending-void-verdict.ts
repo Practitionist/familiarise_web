@@ -1,8 +1,8 @@
 /**
- * Every class remedy that prices or refunds a void (the series exit, an
- * ordinary leave, the host's whole-class cancel, a make-up skip) waits while a
- * void it covers carries a negative verdict nobody confirmed, so no remedy pays
- * for a session that may yet be held. Pure and client-safe: this is the
+ * Every remedy that prices or refunds a void (a class's series exit, ordinary
+ * leave, whole-class cancel and make-up skip, and a consultation's cancel) waits
+ * while a void it covers carries a negative verdict nobody confirmed, so no remedy
+ * pays for a session that may yet be held. Pure and client-safe: this is the
  * in-memory twin of `UNCONFIRMED_NEGATIVE_VOID`, shared by the doors and the pages.
  */
 import type { OccurrenceOutcome } from "@prisma/client";
@@ -53,7 +53,7 @@ export function pendingVoidVerdict(
 }
 
 /** The remedy that waits, in the sentence the person reads. */
-export type PendingVoidAction = "leave" | "cancel" | "skip";
+export type PendingVoidAction = "leave" | "cancel" | "cancelBooking" | "skip";
 
 const WHAT_WAITS: Record<
   PendingVoidAction,
@@ -68,6 +68,13 @@ const WHAT_WAITS: Record<
     whose: "the",
     open: "You can cancel the class once it's settled",
     passed: "you can cancel the class once it's settled",
+  },
+  // A consultation's cancel, read by the learner, the expert or staff.
+  cancelBooking: {
+    whose: "the",
+    open: "You can cancel this booking once that's confirmed, with the session then refunded in full",
+    passed:
+      "you can cancel this booking once that's confirmed, with the session then refunded in full",
   },
   skip: {
     whose: "your",

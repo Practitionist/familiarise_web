@@ -23,7 +23,10 @@ import {
   classSeriesLedgers,
   quoteWholeEventRefunds,
 } from "@/lib/payments/operations/event-refunds";
-import { fundingRailForIntent } from "@/lib/payments/funding-rail";
+import {
+  fundingRailForIntent,
+  isPriceFreePayment,
+} from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import prisma from "@/lib/prisma";
@@ -112,6 +115,7 @@ async function quoteWholeEventRefund(
 async function quoteIndividualBooking(
   appointment: PreviewAppointment,
   isConsultantInitiated: boolean,
+  readerUserId: string,
 ) {
   const bookingRef = {
     appointmentId: appointment.id,
@@ -127,6 +131,24 @@ async function quoteIndividualBooking(
     isConsultantInitiated ? "host" : "buyer",
   );
   if (windowRefusal) throw windowRefusal;
+  // The cancel itself refuses while a consultation's void waits for its verdict, with the same sentence.
+  if (
+    appointment.consultationId &&
+    ctx.paidPayment &&
+    !isPriceFreePayment(ctx.paidPayment)
+  ) {
+    const pending = await pendingVoidRefusal(prisma, {
+      appointmentId: appointment.id,
+      readerUserId,
+      action: "cancelBooking",
+    });
+    if (pending) {
+      throw new Refusal({
+        code: "CANCEL_WAITS_FOR_VERDICT",
+        userMessage: pending,
+      });
+    }
+  }
 
   // The context deliberately ignores zero-amount payments, so a booking paid
   // entirely in referral credits reads as unpaid there. Its `free_` intent is
@@ -357,7 +379,11 @@ export async function GET(
     }
 
     return NextResponse.json(
-      await quoteIndividualBooking(appointment, actor.isConsultantInitiated),
+      await quoteIndividualBooking(
+        appointment,
+        actor.isConsultantInitiated,
+        session.user.id,
+      ),
       NO_STORE,
     );
   } catch (error) {

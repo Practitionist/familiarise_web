@@ -1,6 +1,6 @@
 /**
- * The class remedy doors' one read of the pending-void gate: on the caller's
- * transaction or lock, the series' (or one source session's) unconfirmed
+ * The remedy doors' one read of the pending-void gate: on the caller's
+ * transaction or lock, the booking's (or one source session's) unconfirmed
  * negative void, as the sentence the person reads in their zone.
  */
 import type { Tx } from "@/lib/prisma";

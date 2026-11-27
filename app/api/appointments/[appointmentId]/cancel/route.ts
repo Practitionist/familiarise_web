@@ -945,15 +945,19 @@ export async function POST(
                 isConsultantInitiated ? "host" : "buyer",
               );
               if (windowRefusal) throw windowRefusal;
-              // A class void whose verdict is unconfirmed may yet be held, so the whole-class refund waits for it; an all-free class cancels.
-              if (
-                appointment.class &&
-                (await anySeatCarriesMoney(tx, appointmentId))
-              ) {
+              // A void whose negative verdict is unconfirmed may yet be held, so a class's or a
+              // consultation's cancel waits for it; a booking that cost nothing cancels.
+              const paidPayment = bookingCtx?.paidPayment ?? null;
+              const waitsOnVerdict = appointment.class
+                ? await anySeatCarriesMoney(tx, appointmentId)
+                : !!appointment.consultation &&
+                  paidPayment !== null &&
+                  !isPriceFreePayment(paidPayment);
+              if (waitsOnVerdict) {
                 const pending = await pendingVoidRefusal(tx, {
                   appointmentId,
                   readerUserId: session.user.id,
-                  action: "cancel",
+                  action: appointment.class ? "cancel" : "cancelBooking",
                 });
                 if (pending) {
                   throw new Refusal({
@@ -963,7 +967,6 @@ export async function POST(
                   });
                 }
               }
-              const paidPayment = bookingCtx?.paidPayment ?? null;
               // The quote is pure and runs before the CAS, so a click bound to a
               // stale figure is refused with nothing committed.
               const quoted =
