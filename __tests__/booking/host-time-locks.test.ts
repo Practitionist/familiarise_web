@@ -6,7 +6,7 @@ import {
   lockHostTimeInTx,
   type HeldHostTime,
 } from "@/lib/booking/allocation/host-time-locks";
-import { slotBatchKeys } from "@/utils/appointmentlock";
+import { learnerTimeKeys, slotBatchKeys } from "@/utils/appointmentlock";
 
 jest.mock("@/lib/redis", () => ({
   __esModule: true,
@@ -140,5 +140,53 @@ describe("lockHostTimeInTx", () => {
     const { tx, $queryRaw } = txReturning([]);
     await lockHostTimeInTx(tx, [], refusal);
     expect($queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe("a learner's own time in a 1:1", () => {
+  const LEARNER = "user_learner";
+  const hostEntries = [
+    {
+      consultantProfileId: HOST,
+      startsAt: "2027-03-01T10:15:00.000Z",
+      endsAt: "2027-03-01T10:45:00.000Z",
+    },
+  ];
+  const learnerTimes = [
+    {
+      userId: LEARNER,
+      startsAt: "2027-03-01T10:15:00.000Z",
+      endsAt: "2027-03-01T10:45:00.000Z",
+    },
+  ];
+
+  it("maps to one atom per half-hour, keyed by the learner's user id, whoever the expert is", () => {
+    expect(learnerTimeKeys(learnerTimes)).toEqual([
+      `learner-time:${LEARNER}:2027-03-01T10:00:00.000Z`,
+      `learner-time:${LEARNER}:2027-03-01T10:30:00.000Z`,
+    ]);
+  });
+
+  it("is taken in the same statement as the expert's atoms, one sorted list", async () => {
+    const { tx, $queryRaw } = txReturning([]);
+    await lockHostTimeInTx(tx, hostEntries, refusal, learnerTimes);
+    expect($queryRaw).toHaveBeenCalledTimes(1);
+    expect($queryRaw.mock.calls[0][1]).toEqual([
+      ...learnerTimeKeys(learnerTimes),
+      ...slotBatchKeys(hostEntries),
+    ]);
+  });
+
+  it("a held learner atom names the learner, not an expert", async () => {
+    const { tx } = txReturning([{ i: 1 }]);
+    await expect(
+      lockHostTimeInTx(tx, hostEntries, refusal, learnerTimes),
+    ).rejects.toMatchObject({
+      held: {
+        learnerUserId: LEARNER,
+        consultantProfileId: null,
+        startsAt: new Date("2027-03-01T10:00:00.000Z"),
+      },
+    });
   });
 });

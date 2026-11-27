@@ -620,6 +620,7 @@ export async function POST(request: NextRequest) {
           .$transaction(
             async (tx) => {
               await lockTrialPickInTx(tx, {
+                consulteeUserId,
                 consultantProfileId,
                 buyerConsultantProfileId: buyerConsultantProfile?.id,
                 startsAt,

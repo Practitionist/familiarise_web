@@ -179,7 +179,8 @@ The consultee's cycle-done notice says "Your latest {plan} sessions are done" an
  Layer 2  Postgres arbitration and isolation
           every writer that makes host time busy opens its write
             transaction with pg_try_advisory_xact_lock on the same
-            (profile, half-hour) atoms; a held atom → the door's 409,
+            (profile, half-hour) atoms, and a 1:1 on the learner's
+            (user, half-hour) atoms; a held atom → the door's 409,
             no wait; the locks end with the transaction
           checkout + capture = SERIALIZABLE (+ retry P2034/40P01)
           allocation / cancel / reschedule = READ COMMITTED

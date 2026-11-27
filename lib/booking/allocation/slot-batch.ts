@@ -123,13 +123,16 @@ export async function lockPickedSlots(
 
 /**
  * The write transaction's first statement: Postgres try-locks over the atoms of
- * the Redis batch, before the event's advisory lock and every row lock. A held
- * picked time answers TIMES_TAKEN naming it; auto mode passes its own race.
+ * the Redis batch and, for a 1:1, the learner's own time, before the event's
+ * advisory lock and every row lock. A held picked time answers TIMES_TAKEN
+ * naming it; auto mode passes its own race. A webinar or class has no
+ * `learnerUserId`.
  */
 export async function lockAllocationTimesInTx(
   tx: Pick<Tx, "$queryRaw">,
   slotStarts: readonly Date[],
   profileIds: readonly string[],
+  learnerUserId: string | null | undefined,
   refusal: (held: HeldHostTime) => Error = (held) =>
     new SlotsTakenError([held.startsAt.toISOString()]),
 ): Promise<void> {
@@ -137,6 +140,13 @@ export async function lockAllocationTimesInTx(
     tx,
     allocationBatchEntries(slotStarts, profileIds),
     refusal,
+    learnerUserId
+      ? slotStarts.map((startsAt) => ({
+          userId: learnerUserId,
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + SCHEDULING_INTERVAL_MS),
+        }))
+      : [],
   );
 }
 

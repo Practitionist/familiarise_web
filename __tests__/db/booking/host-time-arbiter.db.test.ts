@@ -7,7 +7,9 @@
  *  - checkout × request-for-approval, on the calendar of an expert who is the
  *    host of one and the requester of the other (both orders);
  *  - checkout × reschedule acceptance on one host (both orders);
- *  - allocator × class creation on one host (both orders).
+ *  - allocator × class creation on one host (both orders);
+ *  - checkout × request-for-approval by one learner with two different
+ *    experts: the learner's own time is the only thing the two share.
  */
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -71,9 +73,14 @@ jest.mock("../../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,
 }));
 
-/** The Redis slot tier has lapsed: every batch is granted, renewed and released. */
+/**
+ * The Redis slot tier and the consultee key have lapsed: every batch and every
+ * consultee grant is given, renewed and released, so one learner's two
+ * bookings reach their transactions together.
+ */
 jest.mock("../../../utils/appointmentlock", () => {
   const actual = jest.requireActual("../../../utils/appointmentlock");
+  const CONSULTEE = "consultee-booking:";
   const granted = (entries: unknown[]) =>
     actual.slotBatchKeys(entries).map((key: string) => ({
       key,
@@ -92,6 +99,17 @@ jest.mock("../../../utils/appointmentlock", () => {
     extendSlotInterval: async () => true,
     unlockSlotInterval: async () => undefined,
     unlockSlotBooking: async () => undefined,
+    lockConsulteeBooking: async (userId: string) => ({
+      key: `${CONSULTEE}${userId}`,
+      value: "lapsed",
+      ttl: 60_000,
+      acquiredAt: Date.now(),
+      client: {},
+    }),
+    renewConsulteeBooking: async () => undefined,
+    unlockConsulteeBooking: async () => undefined,
+    extendLock: async (lock: { key: string }, ttl?: number) =>
+      lock.key.startsWith(CONSULTEE) ? true : actual.extendLock(lock, ttl),
   };
 });
 
@@ -484,5 +502,57 @@ describe("allocator × class creation on one host", () => {
     });
     expect(await scheduledClasses(host)).toBe(1);
     expect(await overlappingOccupyingPairs(host.consultantProfileId)).toBe(0);
+  }, 45_000);
+});
+
+describe("one learner × two experts at one time", () => {
+  it("a checkout holding the learner's time: their request to another expert is refused as their own clash", async () => {
+    const hostA = await seedHost();
+    await publishEveryHour(hostA);
+    const planA = await seedConsultationPlan(hostA, "Arbiter learner checkout");
+    const hostB = await seedHost();
+    await publishEveryHour(hostB);
+    await prisma.consultantProfile.update({
+      where: { id: hostB.consultantProfileId },
+      data: { acceptingRequests: true, bookingMode: "REQUEST" },
+    });
+    const planB = await seedConsultationPlan(hostB, "Arbiter learner request");
+    const learner = await seedBuyer();
+    const startsAt = futureAt(11, 10);
+    const rowB = await prisma.availabilityWindowCustom.findFirstOrThrow({
+      where: { consultantProfileId: hostB.consultantProfileId },
+      select: { id: true },
+    });
+
+    const paused = gate();
+    checkoutGate.current = paused;
+    const buying = checkout(planA.id, startsAt, learner);
+    await parked(paused, buying);
+    sessionUser.current = { id: learner.userId };
+    const requested = await requestForApproval(
+      new NextRequest("https://x.test/api/scheduling/request-for-approval", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": randomUUID(),
+        },
+        body: JSON.stringify({
+          consultantProfileId: hostB.consultantProfileId,
+          consultationPlanId: planB.id,
+          availabilityWindowCustomId: rowB.id,
+          startsAt: startsAt.toISOString(),
+          endsAt: new Date(startsAt.getTime() + HOUR_MS).toISOString(),
+        }),
+      }),
+    );
+    paused.open();
+
+    await expect(buying).resolves.toBeDefined();
+    expect(requested.status).toBe(409);
+    const body = await requested.json();
+    expect(body.code).toBe("SLOT_TAKEN");
+    expect(body.error).toMatch(/already have a session/i);
+    expect(await occupyingAt(hostA, startsAt)).toBe(1);
+    expect(await occupyingAt(hostB, startsAt)).toBe(0);
   }, 45_000);
 });

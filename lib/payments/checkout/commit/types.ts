@@ -4,7 +4,7 @@ import type { CheckoutInput } from "@/schemas/checkout";
 import type { calculateAmountAndValidate } from "@/lib/payments/checkout/pricing";
 import type { OrgFundingGate } from "@/lib/payments/checkout/org-funding";
 import type { PreparedSeatNotice } from "@/lib/payments/checkout/free-seat-notice";
-import type { SlotBatchEntry } from "@/utils/appointmentlock";
+import type { LearnerTimeEntry, SlotBatchEntry } from "@/utils/appointmentlock";
 
 export interface CheckoutCommitInput {
   validatedData: CheckoutInput;
@@ -15,6 +15,8 @@ export interface CheckoutCommitInput {
   renewOrAbort: (ttl: number) => Promise<void>;
   /** Every atom the checkout's slot grants hold: the host's window and an expert buyer's own time. */
   hostTimeEntries: readonly SlotBatchEntry[];
+  /** The buyer's own time in a 1:1 checkout; empty for an event seat, which may clash by design. */
+  learnerTimes: readonly LearnerTimeEntry[];
   perAttemptTtl: number;
   checkoutTxTimeoutMs: number;
   organizationId: string | null;

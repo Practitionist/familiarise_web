@@ -757,6 +757,52 @@ export function parseSlotKey(
   };
 }
 
+/** A learner's own time in a 1:1: busy for that user whoever the expert is. */
+export interface LearnerTimeEntry {
+  userId: string;
+  startsAt: Date | string;
+  endsAt: Date | string;
+}
+
+const LEARNER_KEY_PREFIX = "learner-time:";
+
+/**
+ * Every half-hour atom of every learner entry, de-duplicated and sorted. These
+ * keys exist only as Postgres advisory locks inside a 1:1 write transaction;
+ * nothing sets them in Redis, where the consultee key serialises the learner.
+ */
+export function learnerTimeKeys(
+  entries: readonly LearnerTimeEntry[],
+): string[] {
+  const keys = new Set<string>();
+  for (const entry of entries) {
+    for (const atom of slotAtomStarts(
+      new Date(entry.startsAt),
+      new Date(entry.endsAt),
+    )) {
+      keys.add(`${LEARNER_KEY_PREFIX}${entry.userId}:${atom.toISOString()}`);
+    }
+  }
+  return [...keys].sort(byCodeUnit);
+}
+
+/** The learner and half-hour a learner key names. */
+export function parseLearnerTimeKey(
+  key: string,
+): { userId: string; startsAt: Date; endsAt: Date } | null {
+  if (!key.startsWith(LEARNER_KEY_PREFIX)) return null;
+  const rest = key.slice(LEARNER_KEY_PREFIX.length);
+  const split = rest.indexOf(":");
+  if (split <= 0) return null;
+  const startsAt = new Date(rest.slice(split + 1));
+  if (Number.isNaN(startsAt.getTime())) return null;
+  return {
+    userId: rest.slice(0, split),
+    startsAt,
+    endsAt: new Date(startsAt.getTime() + SLOT_ATOM_MS),
+  };
+}
+
 /** A held batch as one entry per atom: the same keys, for the database's locks on them. */
 export function slotGrantEntries(grant: SlotBatchGrant): SlotBatchEntry[] {
   return grant.flatMap((lock) => {

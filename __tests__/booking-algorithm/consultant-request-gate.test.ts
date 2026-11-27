@@ -298,6 +298,23 @@ describe("consultant request gate", () => {
 
 // #1583 B-P1-06 / E-P1-03 — the Zod edge refuses off-grid and too-soon
 // starts with a typed code, and the in-lock check sees the consultee too.
+describe("request-for-approval learner time", () => {
+  it("takes the requester's own time with the expert's, in the write transaction", async () => {
+    const { lockHostTimeInTx } = jest.requireMock(
+      "../../lib/booking/allocation/host-time-locks",
+    ) as { lockHostTimeInTx: jest.Mock };
+    const res = await POST(request());
+    expect(res.status).toBe(201);
+    expect(lockHostTimeInTx.mock.calls[0][3]).toEqual([
+      {
+        userId: "user_consultee",
+        startsAt: "2030-01-01T10:00:00.000Z",
+        endsAt: "2030-01-01T11:00:00.000Z",
+      },
+    ]);
+  });
+});
+
 describe("request-for-approval lock tiers", () => {
   it("passes one deadline to the cap, consultee and slot tiers", async () => {
     await POST(request());

@@ -686,6 +686,16 @@ export async function handleCheckout(
           ...(Array.isArray(lock) ? slotGrantEntries(lock) : []),
           ...(buyerSeatGrant ? slotGrantEntries(buyerSeatGrant) : []),
         ],
+        learnerTimes:
+          validatedData.startsAt && validatedData.endsAt
+            ? [
+                {
+                  userId,
+                  startsAt: validatedData.startsAt,
+                  endsAt: validatedData.endsAt,
+                },
+              ]
+            : [],
         perAttemptTtl,
         checkoutTxTimeoutMs,
         organizationId,

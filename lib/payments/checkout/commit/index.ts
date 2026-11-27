@@ -9,7 +9,10 @@ import { assertPlanExpertStandsInTx } from "@/lib/booking/expert-standing";
 import { resolveCheckoutCancellationPolicyId } from "@/lib/payments/operations/cancellation-policy-store";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 import { findSelfHoldAppointmentIds } from "@/lib/payments/checkout/self-hold";
-import { assertConsulteeHasNoOverlappingSession } from "@/lib/payments/checkout/occupancy-validate";
+import {
+  assertConsulteeHasNoOverlappingSession,
+  consulteeOverlapError,
+} from "@/lib/payments/checkout/occupancy-validate";
 import { handleClassCheckout } from "@/lib/payments/checkout/handlers/class";
 import { handleWebinarCheckout } from "@/lib/payments/checkout/handlers/webinar";
 import { handleSubscriptionCheckout } from "@/lib/payments/checkout/handlers/subscription";
@@ -41,6 +44,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
     isMockPayment,
     renewOrAbort,
     hostTimeEntries,
+    learnerTimes,
     perAttemptTtl,
     checkoutTxTimeoutMs,
     organizationId,
@@ -63,7 +67,13 @@ export async function commitCheckout(input: CheckoutCommitInput) {
     return prisma.$transaction(
       async (tx) => {
         // The database arbitrates the held times before any row is read or locked.
-        await lockHostTimeInTx(tx, hostTimeEntries, () => new SlotTakenError());
+        await lockHostTimeInTx(
+          tx,
+          hostTimeEntries,
+          (held) =>
+            held.learnerUserId ? consulteeOverlapError() : new SlotTakenError(),
+          learnerTimes,
+        );
         // Every attempt re-reads the expert's standing with the write: a reject
         // after the locked re-read refuses here, and the minted order is retired.
         await assertPlanExpertStandsInTx(

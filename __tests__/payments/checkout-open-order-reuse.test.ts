@@ -95,6 +95,10 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+// The database's host-time locks are pinned in host-time-locks.test.ts.
+jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
+  lockHostTimeInTx: jest.fn(async () => undefined),
+}));
 jest.mock("../../utils/appointmentlock", () => ({
   requestLockBudget: () => ({}),
   renewConsulteeBooking: jest.fn(async () => undefined),

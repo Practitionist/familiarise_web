@@ -203,6 +203,8 @@ export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
 }
 
 interface TrialPick {
+  /** The learner: their own time is taken with the host's. */
+  consulteeUserId: string;
   consultantProfileId: string;
   buyerConsultantProfileId: string | null | undefined;
   startsAt: Date;
@@ -231,7 +233,13 @@ export async function lockTrialPickInTx(
   pick: TrialPick,
   refusal: () => Error = () => new TrialTimeRefusedError("SLOT_TAKEN"),
 ): Promise<void> {
-  await lockHostTimeInTx(tx, trialPickEntries(pick), refusal);
+  await lockHostTimeInTx(tx, trialPickEntries(pick), refusal, [
+    {
+      userId: pick.consulteeUserId,
+      startsAt: pick.startsAt,
+      endsAt: pick.endsAt,
+    },
+  ]);
 }
 
 /**
@@ -242,7 +250,6 @@ export async function lockTrialPickInTx(
  */
 export async function lockTrialPick(
   args: TrialPick & {
-    consulteeUserId: string;
     /** The request's shared lock deadline; a door that took an earlier tier passes its own. */
     lockBudget?: LockRetryConfig;
   },

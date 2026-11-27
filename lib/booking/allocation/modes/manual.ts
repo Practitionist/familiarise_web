@@ -507,7 +507,12 @@ export async function manualAllocate(
     // SHORT write-only transaction (see autoAllocate for the rationale).
     return await bookingTransaction(
       async (tx) => {
-        await lockAllocationTimesInTx(tx, slots, batchProfiles);
+        await lockAllocationTimesInTx(
+          tx,
+          slots,
+          batchProfiles,
+          consulteeUserId,
+        );
         // #1692 — per-event serialisation first (see autoAllocate).
         const lockedReplay = await guardAllocationInTx(
           tx,

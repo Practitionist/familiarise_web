@@ -145,6 +145,41 @@ describe("host-time writers take the database's locks first", () => {
     },
   );
 
+  it.each([
+    [
+      "app/api/scheduling/request-for-approval/route.ts",
+      "userId: session.user.id",
+    ],
+    ["lib/payments/checkout/orchestrate.ts", "learnerTimes:"],
+    ["lib/booking/incident-rebook.ts", "userId: ctx.userId"],
+    ["lib/booking/allocation/modes/auto.ts", "consulteeUserId,"],
+    ["lib/booking/allocation/modes/manual.ts", "consulteeUserId"],
+    ["lib/booking/allocation/modes/use-requested.ts", "consulteeUserId"],
+    ["app/api/trials/route.ts", "consulteeUserId,"],
+    ["lib/booking/trial-reschedule.ts", "consulteeUserId,"],
+  ])(
+    "a 1:1 door names the learner whose time it takes: %s",
+    (file, learner) => {
+      const source = read(file);
+      const call = file.endsWith("orchestrate.ts")
+        ? source.indexOf("hostTimeEntries:")
+        : Math.max(
+            source.indexOf("await lockHostTimeInTx("),
+            source.indexOf("await lockAllocationTimesInTx("),
+            source.indexOf("await lockTrialPickInTx("),
+          );
+      expect(call).toBeGreaterThan(-1);
+      expect(source.slice(call, call + 700)).toContain(learner);
+    },
+  );
+
+  it("a group seat checkout takes no learner atom: only a checkout with its own window does", () => {
+    const orchestrate = read("lib/payments/checkout/orchestrate.ts");
+    expect(orchestrate).toMatch(
+      /learnerTimes:\s+validatedData\.startsAt && validatedData\.endsAt\s+\?/,
+    );
+  });
+
   it("hands the checkout commit the atoms of both of its grants", () => {
     const orchestrate = read("lib/payments/checkout/orchestrate.ts");
     expect(orchestrate).toContain("slotGrantEntries(lock)");
@@ -163,6 +198,7 @@ describe("a held atom is the door's own slot-taken answer", () => {
       tx(),
       [start],
       ["cp_host"],
+      undefined,
     ).catch((error: unknown) => error);
     expect(refused).toBeInstanceOf(SlotsTakenError);
     expect((refused as SlotsTakenError).takenSlotStarts).toEqual([
@@ -173,6 +209,7 @@ describe("a held atom is the door's own slot-taken answer", () => {
         tx(),
         [start],
         ["cp_host"],
+        undefined,
         () => new AllocationRaceError(),
       ),
     ).rejects.toBeInstanceOf(AllocationRaceError);
@@ -191,6 +228,7 @@ describe("a held atom is the door's own slot-taken answer", () => {
       async (_strings: TemplateStringsArray, ..._values: unknown[]) => held,
     );
     const refused = await lockTrialPickInTx({ $queryRaw } as never, {
+      consulteeUserId: "user_buyer",
       consultantProfileId: "cp_host",
       buyerConsultantProfileId: "cp_buyer",
       startsAt: start,
@@ -199,7 +237,30 @@ describe("a held atom is the door's own slot-taken answer", () => {
     expect(refused).toBeInstanceOf(TrialTimeRefusedError);
     expect((refused as TrialTimeRefusedError).code).toBe("SLOT_TAKEN");
     expect($queryRaw.mock.calls[0][1]).toEqual([
+      `learner-time:user_buyer:${start.toISOString()}`,
       `slot-booking:cp_buyer:${start.toISOString()}`,
+      `slot-booking:cp_host:${start.toISOString()}`,
+    ]);
+  });
+
+  it("an allocation for a learner takes the learner's atoms; a group event's takes none", async () => {
+    const keysFor = async (learnerUserId: string | undefined) => {
+      const $queryRaw = jest.fn(
+        async (_strings: TemplateStringsArray, ..._values: unknown[]) => [],
+      );
+      await lockAllocationTimesInTx(
+        { $queryRaw } as never,
+        [start],
+        ["cp_host"],
+        learnerUserId,
+      );
+      return $queryRaw.mock.calls[0][1];
+    };
+    expect(await keysFor("user_learner")).toEqual([
+      `learner-time:user_learner:${start.toISOString()}`,
+      `slot-booking:cp_host:${start.toISOString()}`,
+    ]);
+    expect(await keysFor(undefined)).toEqual([
       `slot-booking:cp_host:${start.toISOString()}`,
     ]);
   });

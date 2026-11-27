@@ -528,6 +528,7 @@ export async function autoAllocate(
           tx,
           selectedSlots,
           batchProfiles,
+          consulteeUserId,
           () => new AllocationRaceError(),
         );
         // #1692 — per-event serialisation first, so every re-check below

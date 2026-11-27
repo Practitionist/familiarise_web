@@ -611,6 +611,8 @@ export async function POST(req: NextRequest) {
                   code: "SLOT_TAKEN",
                   conflicts: 1,
                 }),
+              // The requester's own time, whoever the expert is.
+              [{ userId: session.user.id, startsAt, endsAt }],
             );
             // Standing, mode, cap and availability are read on this transaction, after
             // every lock, so the insert below commits against what they saw.

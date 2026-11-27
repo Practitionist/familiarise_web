@@ -17,6 +17,10 @@ jest.mock("../../../../../lib/payments/index", () => ({
   createPaymentIntent: (...a: unknown[]) => mockCreatePaymentIntent(...a),
   cancelPaymentIntent: jest.fn(),
 }));
+// The database's host-time locks are pinned in host-time-locks.test.ts.
+jest.mock("../../../../../lib/booking/allocation/host-time-locks", () => ({
+  lockHostTimeInTx: jest.fn(async () => undefined),
+}));
 jest.mock("../../../../../utils/appointmentlock", () => ({
   __esModule: true,
   CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },

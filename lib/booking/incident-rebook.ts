@@ -520,10 +520,21 @@ export async function rebookIncidentRemedy(args: {
         try {
           return await prisma.$transaction(
             async (tx) => {
-              await lockHostTimeInTx(tx, slotEntries, () =>
-                slotUnavailable(
-                  "That time is no longer free for both of you. Pick another time.",
-                ),
+              await lockHostTimeInTx(
+                tx,
+                slotEntries,
+                () =>
+                  slotUnavailable(
+                    "That time is no longer free for both of you. Pick another time.",
+                  ),
+                // The learner's own time, whoever the expert is.
+                [
+                  {
+                    userId: ctx.userId,
+                    startsAt: ctx.startsAt,
+                    endsAt: ctx.endsAt,
+                  },
+                ],
               );
               return commitRebook(tx, ctx);
             },

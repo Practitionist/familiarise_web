@@ -182,6 +182,7 @@ export async function confirmTrialProposal(args: {
         await lockTrialPickInTx(
           tx,
           {
+            consulteeUserId,
             consultantProfileId: trial.consultantProfileId,
             buyerConsultantProfileId: buyerProfile?.id,
             startsAt: window.startsAt,

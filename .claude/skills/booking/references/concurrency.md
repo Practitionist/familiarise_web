@@ -147,7 +147,11 @@ the sorted keys and stops at the first held one, never waits, and throws the
 door's existing slot-taken 409. The locks end with the transaction. A new
 writer that makes an expert's time busy must take the Redis batch and this call
 with the same entries; `__tests__/booking/host-time-writers.test.ts` lists every
-writer and fails on one that takes the batch without the call. Order inside a
+writer and fails on one that takes the batch without the call. A 1:1 writer
+passes the learner too (`learnerTimes`, keys `learner-time:<userId>:<atom>`,
+Postgres only), so one learner cannot be booked twice at one time by two 1:1
+writers; a webinar or class seat passes none, because seats may clash by
+design. Order inside a
 transaction: host-time try-locks, then waiting advisory locks (the per-event
 allocation lock, the per-plan tranche lock), then row locks, then
 compare-and-set writes. Writer table, atom rules and limits:
