@@ -54,11 +54,11 @@ The tables below were generated from `netlify/functions/cron-tick.mts`, `lib/cro
 
 #### Hourly
 
-| Job (slug)                  | Schedule (UTC) | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                                            |
-| --------------------------- | -------------- | -------------- | ------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `settle-platform-incidents` | hourly at :30  | 10             | 20 s    | yes              | Voids the sessions of a declared platform incident and applies each learner's remedy.                                   |
-| `process-payouts`           | hourly at :00  | 5              | 24 s    | yes              | Disburses `APPROVED` consultant and organisation payouts through RazorpayX; a no-op while `ENABLE_LIVE_PAYOUTS` is off. |
-| `reconcile-disputes`        | hourly at :00  | 10             | 20 s    | yes              | Polls Razorpay for open disputes whose webhook was missed.                                                              |
+| Job (slug)                  | Schedule (UTC) | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                                                                                                                                                                    |
+| --------------------------- | -------------- | -------------- | ------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `settle-platform-incidents` | hourly at :30  | 10             | 20 s    | yes              | Voids the sessions of a declared platform incident and applies each learner's remedy.                                                                                                                                                           |
+| `process-payouts`           | hourly at :00  | 5              | 24 s    | yes              | Disburses `APPROVED` consultant and organisation payouts through RazorpayX; a no-op while `ENABLE_LIVE_PAYOUTS` is off.                                                                                                                         |
+| `reconcile-disputes`        | hourly at :00  | 10             | 20 s    | yes              | Polls Razorpay for open disputes whose webhook was missed, then pages Razorpay's dispute list and imports or updates, through the webhook's handlers, any dispute the database does not hold or holds in another status; it runs on every slot. |
 
 #### Every 2 hours
 

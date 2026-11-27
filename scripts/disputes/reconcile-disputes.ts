@@ -8,10 +8,12 @@
  * - Dispute status changed but webhook wasn't received
  *
  * This module exports the core reconciliation function, driven by the
- * `/api/cleanup/reconcile-disputes` twin on the Netlify ticker.
+ * `/api/cleanup/reconcile-disputes` twin on the Netlify ticker. Its last pass
+ * discovers gateway disputes the database holds no row for, or holds in
+ * another status.
  */
 
-import prisma, { type PrismaLike } from "../../lib/prisma";
+import prisma from "../../lib/prisma";
 import { DisputeStatus, PaymentGateway, Prisma } from "@prisma/client";
 import {
   getRazorpayDispute,
@@ -25,6 +27,11 @@ import { mapDisputeStatus } from "@/lib/payments/dispute-status";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { startDeadline } from "@/lib/cron/run-deadline";
+import {
+  discoverGatewayDisputes,
+  type DisputeDiscoveryRun,
+} from "@/lib/payments/discovery/dispute-discovery";
 
 // Prioritize disputes with approaching deadlines (7 days)
 const APPROACHING_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -47,6 +54,10 @@ export interface DisputeReconciliationResult {
   reconciledCount: number;
   urgentCount: number;
   razorpayManualReviewCount: number;
+  /** The discovery pass's counts and the bound that cut it; null when the pass itself threw. */
+  discovery: Omit<DisputeDiscoveryRun, "errors" | "checkpoint"> | null;
+  /** The discovery position, kept on the run row for the next run; absent when the pass did not run. */
+  checkpoint?: string;
   errors: string[];
   timestamp: string;
 }
@@ -163,37 +174,13 @@ function staleDisputeWhere(
   };
 }
 
-/** True when the near-deadline or the stale cohort holds a dispute. */
-export async function hasDisputeReconcileWork(
-  db: PrismaLike,
-  now: Date,
-  outOfTime: () => boolean,
-): Promise<boolean> {
-  const t = now.getTime();
-  const approachingDeadline = new Date(t + APPROACHING_DEADLINE_MS);
-  if (outOfTime()) return true;
-  const row = await db.dispute.findFirst({
-    where: {
-      OR: [
-        nearDeadlineDisputeWhere(approachingDeadline),
-        staleDisputeWhere(
-          new Date(t - STALE_THRESHOLD_MS),
-          approachingDeadline,
-        ),
-      ],
-    },
-    select: { id: true },
-  });
-  return row !== null;
-}
-
 /**
  * Find and reconcile disputes that may have stale status
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcileDisputes(
-  opts: { limit?: number } = {},
+  opts: { limit?: number; startedAt?: number } = {},
 ): Promise<DisputeReconciliationResult> {
   return withCronLock(
     "reconcile-disputes",
@@ -204,7 +191,9 @@ export async function reconcileDisputes(
 
 async function reconcileDisputesUnlocked(opts: {
   limit?: number;
+  startedAt?: number;
 }): Promise<DisputeReconciliationResult> {
+  const pastDeadline = startDeadline(opts.startedAt ?? Date.now());
   const approachingDeadline = new Date(Date.now() + APPROACHING_DEADLINE_MS);
   const staleThreshold = new Date(Date.now() - STALE_THRESHOLD_MS);
   const urgentThreshold = new Date(Date.now() + 48 * 60 * 60 * 1000);
@@ -421,12 +410,31 @@ async function reconcileDisputesUnlocked(opts: {
     }
   }
 
+  let discovery: DisputeReconciliationResult["discovery"] = null;
+  let checkpoint: string | undefined;
+  try {
+    const {
+      errors: discoveryErrors,
+      checkpoint: position,
+      ...counts
+    } = await discoverGatewayDisputes(pastDeadline);
+    discovery = counts;
+    checkpoint = position;
+    errors.push(...discoveryErrors);
+  } catch (error) {
+    errors.push(
+      `Dispute discovery: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   return {
     success: errors.length === 0,
     totalProcessed: disputesToReconcile.length,
     reconciledCount,
     urgentCount,
     razorpayManualReviewCount,
+    discovery,
+    ...(checkpoint === undefined ? {} : { checkpoint }),
     errors,
     timestamp: new Date().toISOString(),
   };

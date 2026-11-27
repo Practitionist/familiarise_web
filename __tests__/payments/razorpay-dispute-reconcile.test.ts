@@ -16,6 +16,20 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_n: string, _o: unknown, fn: () => unknown) => fn(),
 }));
 
+jest.mock("../../lib/payments/discovery/dispute-discovery", () => ({
+  discoverGatewayDisputes: async () => ({
+    listed: 0,
+    imported: 0,
+    alreadyKnown: 0,
+    updated: 0,
+    notAdopted: 0,
+    unknownPayment: 0,
+    errors: [] as string[],
+    stoppedShort: null,
+    checkpoint: '{"skip":0,"cutRuns":0}',
+  }),
+}));
+
 const mockGetDispute = jest.fn();
 jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
   ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
