@@ -284,6 +284,7 @@ const confirmNoShow = () =>
   confirmConsultantNoShow("occ-1", {
     now: new Date(),
     guard: {},
+    siblingGuard: () => null,
     errors: [],
     failures: createRunFailureReporter("bookings"),
   });

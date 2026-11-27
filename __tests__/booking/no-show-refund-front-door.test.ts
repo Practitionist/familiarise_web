@@ -240,13 +240,27 @@ function proposedClaimRow(payment: { id: string }) {
   };
 }
 
-const confirmOcc1 = (errors: string[] = []) =>
+const confirmOcc1 = (
+  errors: string[] = [],
+  siblingGuard: (id: string) => { id: string } | null = () => null,
+) =>
   confirmConsultantNoShow("occ-1", {
     now: new Date("2026-09-04T12:00:00Z"),
     guard: { id: "the-pass-guard" },
+    siblingGuard,
     errors,
     failures: createRunFailureReporter("bookings"),
   });
+
+/** The claim read's row with a second standing expert-absent proposal, `occ-2`. */
+function twoProposedSessions() {
+  const row = proposedClaimRow({ id: "pay-1" });
+  row.appointment.occurrences.push({
+    ...row.appointment.occurrences[0],
+    id: "occ-2",
+  });
+  return row;
+}
 
 describe("consultant no-show refunds", () => {
   beforeEach(() => {
@@ -530,6 +544,34 @@ describe("consultant no-show refunds", () => {
       expect(refundBookingPayment).not.toHaveBeenCalled();
     },
   );
+
+  it("declines a proposal whose other proposed session the pass has not judged strong and undisputed, writing nothing", async () => {
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(
+      twoProposedSessions(),
+    );
+
+    expect(await confirmOcc1([], () => null)).toEqual({ kind: "declined" });
+    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+    expect(prisma.systemEvent.create).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("cancels another proposed session only under that session's own guard, so its dispute since the read rolls the claim back", async () => {
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(
+      twoProposedSessions(),
+    );
+
+    const result = await confirmOcc1([], (id) => ({ id: `guard-of-${id}` }));
+
+    expect(result).toMatchObject({ kind: "claimed" });
+    const [, [siblingMove]] = (
+      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
+    ).mock.calls;
+    expect(siblingMove.where).toMatchObject({
+      id: { in: ["occ-2"] },
+      OR: [{ id: "guard-of-occ-2" }],
+    });
+  });
 
   it("does not filter the candidate query on a positive amount", async () => {
     await detectConsultantNoShows();

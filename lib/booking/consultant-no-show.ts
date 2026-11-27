@@ -487,7 +487,7 @@ export function noShowRefundOwed(paymentId: string): RefundOwedMarker {
  * then its proposed sessions (the strike's stamped confirmed), stamp the owed
  * refund and write the strike. Any CAS miss throws IllegalTransitionError, and an
  * outage now overlapping the sessions NoShowDuringOutageError, so nothing commits;
- * `guard` narrows the strike session's CAS further.
+ * `guard` narrows the strike session's CAS further, and `siblingGuards` each other session's.
  */
 export async function claimNoShowTx(
   tx: Tx,
@@ -495,6 +495,8 @@ export async function claimNoShowTx(
   opts: {
     now: Date;
     guard?: Prisma.AppointmentOccurrenceWhereInput;
+    /** One per other proposed session, each naming its own row. */
+    siblingGuards?: Prisma.AppointmentOccurrenceWhereInput[];
     actorUserId: string | null;
   },
 ): Promise<{ held: OwedRefundAlreadyHeld | null }> {
@@ -539,7 +541,11 @@ export async function claimNoShowTx(
   );
   if (rest.length > 0) {
     const moved = await transitionOccurrenceCompletion(tx, {
-      where: { id: { in: rest }, ...STANDING_PROPOSAL },
+      where: {
+        id: { in: rest },
+        ...STANDING_PROPOSAL,
+        ...(opts.siblingGuards && { OR: opts.siblingGuards }),
+      },
       to: OccurrenceCompletionStatus.CANCELLED,
       fromIn: [OccurrenceCompletionStatus.UNVERIFIED],
       data: { deletedAt: now },
@@ -714,24 +720,39 @@ export type NoShowConfirmation =
   /** An outage declared since the pass's read overlaps it; the next pass judges it weak. */
   | { kind: "outage" };
 
-/** The window-close pass's door: claim a confirmed proposal in its own transaction, then refund and notify. */
+/**
+ * The window-close pass's door: claim a confirmed proposal in its own transaction, then refund and
+ * notify. The pass judges evidence and reports per session, so it declines unless it can guard
+ * every other proposed session as it guards this one (`siblingGuard` answers null when it cannot).
+ */
 export async function confirmConsultantNoShow(
   occurrenceId: string,
   opts: {
     now: Date;
     guard: Prisma.AppointmentOccurrenceWhereInput;
+    siblingGuard: (
+      occurrenceId: string,
+    ) => Prisma.AppointmentOccurrenceWhereInput | null;
     errors: string[];
     failures: RunFailureReporter;
   },
 ): Promise<NoShowConfirmation> {
   const claim = await readNoShowClaim(prisma, occurrenceId);
   if (!claim) return { kind: "declined" };
+  const siblingGuards: Prisma.AppointmentOccurrenceWhereInput[] = [];
+  for (const id of claim.occurrenceIds) {
+    if (id === claim.strikeOccurrenceId) continue;
+    const guard = opts.siblingGuard(id);
+    if (!guard) return { kind: "declined" };
+    siblingGuards.push(guard);
+  }
   let held: OwedRefundAlreadyHeld | null;
   try {
     ({ held } = await prisma.$transaction((tx) =>
       claimNoShowTx(tx, claim, {
         now: opts.now,
         guard: opts.guard,
+        siblingGuards,
         actorUserId: null,
       }),
     ));

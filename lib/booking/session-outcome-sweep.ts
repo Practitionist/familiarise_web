@@ -1228,6 +1228,11 @@ async function confirmPage(
       const result = await confirmConsultantNoShow(row.id, {
         now,
         guard: confirmGuard(where, row),
+        // Another proposed session of the booking is cancelled with this one only when this page judged it strong, closed and undisputed too.
+        siblingGuard: (id) => {
+          const sibling = strong.find((r) => r.id === id);
+          return sibling ? confirmGuard(where, sibling) : null;
+        },
         errors: run.errors,
         failures: ctx.failures,
       });

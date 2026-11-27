@@ -260,6 +260,47 @@ it("a sibling session parked as nobody joined vetoes the claim in its compare-an
   expect(await moneyOf(room)).toMatchObject(untouched);
 });
 
+it("a second proposed session the pass cannot judge strong leaves the whole booking for ops: nothing is cancelled, refunded or struck", async () => {
+  const room = await seedNoShow(13);
+  const proposed = await propose(room);
+  // Expert-absent too, a day earlier, with no room record behind it.
+  const sibling = await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: room.appointmentId,
+      ordinal: 2,
+      startsAt: new Date(room.startsAt.getTime() - 24 * HOUR),
+      endsAt: new Date(room.endsAt.getTime() - 24 * HOUR),
+      isTentative: false,
+      consultantProfileId: proposed.consultantProfileId,
+      completionStatus: "UNVERIFIED",
+      outcome: "HOST_ABSENT",
+      outcomeAt: proposed.outcomeAt,
+    },
+  });
+  expect(await readNoShowClaim(prisma, room.occurrenceId)).toMatchObject({
+    occurrenceIds: expect.arrayContaining([room.occurrenceId, sibling.id]),
+  });
+
+  await confirmClosedOutcomes(
+    new Date(proposed.outcomeAt!.getTime() + 49 * HOUR),
+    () => false,
+  );
+
+  expect(await moneyOf(room)).toMatchObject({
+    status: "APPROVED",
+    refunds: [],
+    strikes: 0,
+    refundOwedKey: null,
+    session: { completionStatus: "UNVERIFIED", outcomeConfirmedAt: null },
+  });
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: sibling.id },
+      select: { completionStatus: true, deletedAt: true },
+    }),
+  ).toMatchObject({ completionStatus: "UNVERIFIED", deletedAt: null });
+});
+
 it("ops Set outcome expert absent on a disputed proposal cancels, refunds in full once and strikes once, and voids nothing", async () => {
   const room = await seedNoShow(12);
   const proposed = await propose(room);

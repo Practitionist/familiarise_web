@@ -692,6 +692,31 @@ describe("a proposed consultant no-show", () => {
     expect(row("a").outcomeConfirmedAt).toBeNull();
   });
 
+  it("guards another proposed session of the booking only when this page judged it strong, closed and undisputed too", async () => {
+    occurrences.rows.push(
+      proposal("a"),
+      proposal("b"),
+      proposal("disputed", {
+        supportCases: [filed("provider_attended", "hannah")],
+      }),
+      proposal("weak", {
+        meeting: {
+          ...(proposal("weak").meeting as Row),
+          attendanceCorroboratedSessionIds: ["s-2"],
+        },
+      }),
+    );
+    await confirmClosedOutcomes(NOW, () => false);
+    const [id, { siblingGuard }] = jest.mocked(confirmConsultantNoShow).mock
+      .calls[0];
+    expect(id).toBe("a");
+    expect(matchesWhere(row("b"), siblingGuard("b") ?? {})).toBe(true);
+    expect(matchesWhere(row("a"), siblingGuard("b") ?? {})).toBe(false);
+    expect(siblingGuard("disputed")).toBeNull();
+    expect(siblingGuard("weak")).toBeNull();
+    expect(siblingGuard("on-another-page")).toBeNull();
+  });
+
   it("is claimed early when the learner agrees, and not while the window is open and silent", async () => {
     occurrences.rows.push(
       proposal("agreed", {
