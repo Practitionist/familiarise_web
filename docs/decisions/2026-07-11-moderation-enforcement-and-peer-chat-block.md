@@ -22,7 +22,7 @@ Phase one is transactional (`lib/moderation/side-effects.ts`): the ban flags, se
 
 ### 3. Moderation cancellations refund 100%
 
-Booking-time cancellation-policy snapshots exist to arbitrate disputes between the two parties of a booking. A moderation cancellation is platform-initiated — the counterparty did nothing wrong — so the policy tiers do not apply and every affected payment is refunded in full. Banned consultants additionally have their unpaid earnings (`PENDING`, `PENDING_TRUST`, `READY`) moved to `HELD`, which the release cron never auto-releases, leaving payout disposition to an admin.
+Booking-time cancellation-policy snapshots exist to arbitrate disputes between the two parties of a booking. A moderation cancellation is platform-initiated — the counterparty did nothing wrong — so the policy tiers do not apply and every session not delivered is refunded in full. Amended 2026-11-25 (owner decision): a plan, and a banned learner's class or webinar seat, refund the undelivered sessions only and keep the delivered sessions' earnings, whoever was banned; a booking with nothing delivered is still refunded in full, and an operator can add a goodwill refund by hand. The mechanism is in `docs/booking/08-cancellation-flow.md`. Banned consultants additionally have their unpaid earnings (`PENDING`, `PENDING_TRUST`, `READY`) moved to `HELD`, which the release cron never auto-releases, leaving payout disposition to an admin.
 
 ### 4. Consultee↔consultee direct messages stay blocked
 

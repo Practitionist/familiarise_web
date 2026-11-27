@@ -4,7 +4,7 @@
  * consultant with an accepted trial could switch type underneath it.
  */
 
-import { checkActiveAppointments } from "../../app/api/user/consultants/utils/consultant-appointments";
+import { checkActiveAppointments } from "../../lib/booking/active-appointments";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

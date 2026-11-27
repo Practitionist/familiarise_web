@@ -22,7 +22,7 @@ jest.mock("../../../lib/auth-server", () => ({
 }));
 
 import { GET as canSwitch } from "../../../app/api/user/consultants/[id]/can-switch-schedule/route";
-import { checkActiveAppointments } from "../../../app/api/user/consultants/utils/consultant-appointments";
+import { checkActiveAppointments } from "../../../lib/booking/active-appointments";
 
 const pastWindow = () => {
   const startsAt = new Date(Date.now() - 5 * 24 * HOUR_MS);

@@ -46,6 +46,7 @@ export const REFUND_POLICY_COPY = {
     "Once a class has started, leaving refunds each session that hasn't started yet, at the notice ladder above for its own start time. A session already under way when you leave counts as attended.",
   hostCancelEvent:
     "If the host cancels the event or the whole class, every session not yet held is refunded in full.",
+  subscriptionExpertCancel: `If your expert, our team or the expert's organisation cancels a subscription, every session not yet held is refunded in full, whatever the timing. Sessions already held are not refunded.`,
   subscription:
     "You can cancel a subscription at any time. Sessions not yet scheduled are refunded in full, scheduled sessions at the notice ladder above for their own start time, and sessions already held are not refunded. A session that was already refunded on its own is not refunded twice.",
 } as const;

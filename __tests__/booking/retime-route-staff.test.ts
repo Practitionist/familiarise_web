@@ -4,7 +4,8 @@
 
 /**
  * Only the webinar's host moves it; an operator is pointed at the back-office
- * cancel instead of a bare refusal.
+ * cancel instead of a bare refusal. One seat's payment dispute does not stop
+ * the host's move.
  */
 import { NextRequest } from "next/server";
 
@@ -24,8 +25,9 @@ jest.mock("../../lib/prisma", () => ({
     appointment: { findUnique: async () => ({ webinarId: "web-1" }) },
   },
 }));
+// One seat's payment is under a live dispute.
 jest.mock("../../lib/payments/dispute-guard", () => ({
-  hasActiveDisputeForAppointment: async () => false,
+  hasActiveDisputeForAppointment: async () => true,
 }));
 jest.mock("../../lib/booking/event-retime", () => ({
   retimeWebinar: (...args: unknown[]) => mockRetime(...args),
@@ -56,4 +58,14 @@ it("hides the webinar from a stranger", async () => {
   mockActor.mockResolvedValue(null);
   const res = await call();
   expect(res.status).toBe(404);
+});
+
+it("lets the host move the webinar while one seat's payment is disputed", async () => {
+  mockActor.mockResolvedValue("consultant");
+  mockRetime.mockResolvedValue({ moved: true });
+  const res = await call();
+  expect(res.status).toBe(200);
+  expect(mockRetime).toHaveBeenCalledWith(
+    expect.objectContaining({ appointmentId: "apt-1" }),
+  );
 });

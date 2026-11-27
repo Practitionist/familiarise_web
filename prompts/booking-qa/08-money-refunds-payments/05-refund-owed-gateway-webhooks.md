@@ -121,9 +121,9 @@ VALUES (gen_random_uuid(), :amount, 'INR', 'PENDING', 'pending_qa-MO-59', 'cance
 
 **Setup:** needs a dispute on a QA payment. If none exists (`SELECT id, status, "paymentId" FROM "Dispute" WHERE "paymentId" IN (:qaPayments)`), BLOCKED: don't insert one.
 
-**Steps:** try to cancel the booking; try an admin refund; run (owner) `retry-auto-refunds` with a marker on it.
+**Steps:** if the disputed payment is a 1:1 booking's (consultation or plan), try to cancel the booking. If it is a seat on a class or webinar, have the host cancel the event. Either way, try an admin refund, and run (owner) `retry-auto-refunds` with a marker on it.
 
-**Expect:** cancel: `409` `DISPUTE_ACTIVE` "This appointment has an open payment dispute and can't be cancelled until it resolves."; admin refund: refused (`REFUND_BLOCKED_BY_DISPUTE`); the owed sweep skips it; the earning has a `DISPUTE` hold.
+**Expect:** 1:1 cancel: `409` `DISPUTE_ACTIVE` "This appointment has an open payment dispute and can't be cancelled until it resolves.". Class or webinar cancel: it goes ahead and every other seat is refunded as usual; the disputed seat's payment gets its owed-refund marker (`refundOwedAt` set) and no refund moves for it while the dispute is live. Admin refund: refused (`REFUND_BLOCKED_BY_DISPUTE`); the owed sweep skips the disputed payment; the earning has a `DISPUTE` hold.
 
 **Probe further:** what does the buyer see on the booking while it's disputed?
 

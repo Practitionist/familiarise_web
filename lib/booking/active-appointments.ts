@@ -78,14 +78,15 @@ const AWAITING_PLACEMENT = {
 /**
  * Count a consultant's bookings and co-hosted sessions under `rule`. The
  * switch pre-flight and the settings save's in-transaction re-check both call
- * it with `scheduleSwitch`, so they agree.
+ * it with `scheduleSwitch`, so they agree. A caller that adds its own
+ * time-bounded count passes its `now`, so both read one clock.
  */
 export async function checkActiveAppointments(
   consultantId: string,
   db: ActiveAppointmentsDb,
   rule: ActiveAppointmentsRule,
+  now: Date = new Date(),
 ): Promise<ActiveAppointmentsResult> {
-  const now = new Date();
   const activeStatuses = [
     "PENDING",
     "APPROVED",

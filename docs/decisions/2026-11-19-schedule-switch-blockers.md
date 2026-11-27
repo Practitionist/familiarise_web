@@ -7,7 +7,7 @@
 
 ## Context
 
-Switching between Weekly and Custom hours deletes every row of the old kind, so the settings page refuses the switch while a booking still depends on those hours. `checkActiveAppointments` (`app/api/user/consultants/utils/consultant-appointments.ts`) decides the refusal, and its counts become the sentence on the Availability page ("You have … Complete or cancel them before you switch schedule types.").
+Switching between Weekly and Custom hours deletes every row of the old kind, so the settings page refuses the switch while a booking still depends on those hours. `checkActiveAppointments` (`lib/booking/active-appointments.ts`) decides the refusal, and its counts become the sentence on the Availability page ("You have … Complete or cancel them before you switch schedule types.").
 
 The check counted consultations and subscriptions by request status alone (PENDING, APPROVED or APPROVED_PENDING_PAYMENT) and classes by `SCHEDULED` alone. A consultation whose only session was delivered last week, but whose status had not yet moved to COMPLETED, therefore blocked the switch, and so did a class whose sessions had all taken place. The sentence then called these rows "pending consultations" and "upcoming classes", which they were not. QA on a deploy preview read "16 pending consultations" for an expert with 2 sessions ahead.
 
