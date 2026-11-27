@@ -187,7 +187,7 @@ export default function RefundPolicyPage() {
                 <ul>
                   <li>{REFUND_POLICY_COPY.subscription}</li>
                   <li>{REFUND_POLICY_COPY.freezeRule}</li>
-                  <li>{REFUND_POLICY_COPY.expertCancel}</li>
+                  <li>{REFUND_POLICY_COPY.subscriptionExpertCancel}</li>
                 </ul>
               </div>
 
@@ -288,8 +288,9 @@ export default function RefundPolicyPage() {
                 <li>Duplicate or erroneous charges</li>
                 <li>
                   You are removed from a webinar or class and support overturns
-                  the removal, or does not decide it within 72 hours: whatever
-                  is still unrefunded on your seat (see Terms 6.4)
+                  the removal (whatever is still unrefunded on your seat), or
+                  does not decide it within 72 hours (the sessions that had not
+                  been delivered when you were removed); see Terms 6.4
                 </li>
               </ul>
 

@@ -55,7 +55,7 @@ flowchart TD
     K -->|No| L[404 Appointment not found]
     K -->|Yes| AUTH{"Participant, privileged,\nor org admin of the funder?"}
     AUTH -->|No| AUTH403[403 Not authorized]
-    AUTH -->|Yes| DISP{Active payment dispute?}
+    AUTH -->|Yes| DISP{"1:1 booking with an\nactive payment dispute?"}
     DISP -->|Yes| DISP409["409 DISPUTE_ACTIVE"]
     DISP -->|No| M["Extract notification data\n(user IDs, names, plan title, dateTime)"]
     M --> CTX["resolveBookingRefundContext()\nfor consultation/subscription\n(MUST precede the cancel)"]
@@ -108,7 +108,7 @@ Cancellation is authorized at the API layer, not merely hidden in the UI. Here i
 | Is the user an admin of the funding org? | Yes        | `isOrgAdminOfAppointment()` admits an admin of the organization funding the booking (#1166)                                                                   |
 | Who may cancel a group event?            | Organiser  | Only the consultant who owns the webinar or class plan; attendees cannot cancel the event                                                                     |
 | Is the booking in a cancellable state?   | Yes        | The allowed-from set rides the `UPDATE`'s `WHERE`, so a lost race answers 409                                                                                 |
-| Is a payment dispute open?               | Yes        | An open dispute answers 409, because a refund now could pay the customer twice                                                                                |
+| Is a payment dispute open?               | Yes        | An open dispute on a 1:1 booking answers 409, because a refund now could pay the customer twice; one seat's dispute never blocks a class or webinar cancel    |
 
 **Expert cancellations and strikes.** An expert who cancels a confirmed booking, free or paid, records one `EXPERT_CANCEL` strike (`recordExpertStrike`) in the cancel's own transaction. The cancel route strikes when the expert themself cancels (`isExpertSideCancel`; an operator's or an admin's cancel strikes nobody) and the 1:1 booking has a paid payment or is `APPROVED` (a free request the expert approved has no payment at all), or the webinar or class has a confirmed seat or a seat held under a SUCCEEDED payment (`hasConfirmedSeat`). A strike on a session inside a declared incident is dropped when strikes are read. The expert's cancel dialog says so before the click (`EXPERT_CANCEL_RELIABILITY_LINE`), and a trial's expert cancel strikes too (see [the trials doc](./09-trials.md)). Strikes are never shown on public pages: the expert reads their own on Settings → Booking (`ReliabilityCard`, through the owner-only `GET /api/user/consultants/[id]/strikes`), and staff read them in `ExpertStrikesCard`. See [the trial and public booking surfaces record](../decisions/2026-11-13-trial-and-public-booking-surfaces.md), decisions 5 and 6.
 
@@ -243,11 +243,11 @@ A credit-funded booking reports `REFUNDED` with an `amountRefundedPaise` of zero
 | 400    | Zod validation fails on a valid JSON body | `{ "error": "Validation failed", "details": [<ZodIssue[]>] }`      | Body is valid JSON but fails schema validation                             |
 | 403    | Caller is not entitled to cancel          | `{ "error": "You are not authorized to cancel this appointment" }` | Not a participant, not privileged, not an org admin of the funder          |
 | 404    | Appointment not found in database         | `{ "error": "Appointment not found" }`                             | ID does not match any appointment row                                      |
-| 409    | Open payment dispute                      | `{ "error": "...", "code": "DISPUTE_ACTIVE" }`                     | A dispute is live on this appointment (#1008)                              |
+| 409    | Open payment dispute                      | `{ "error": "...", "code": "DISPUTE_ACTIVE" }`                     | A dispute is live on this consultation or plan                             |
 | 409    | Booking is no longer cancellable          | `{ "error": "...", "code": "NOT_CANCELLABLE" }`                    | The CAS update matched zero rows — already cancelled, completed or expired |
 | 500    | Transaction failure or unexpected error   | `{ "error": "Failed to cancel appointment" }`                      | Database error, connection timeout, or other                               |
 
-The two 409s are told apart by their `code`, not their message, and both are terminal for that request rather than retryable. `DISPUTE_ACTIVE` is checked before the transaction opens, because refunding while a chargeback is contested would pay the customer twice. Nothing is written on either path, so a refused cancellation leaves the booking exactly as it was.
+The two 409s are told apart by their `code`, not their message, and both are terminal for that request rather than retryable. `DISPUTE_ACTIVE` is checked before the transaction opens, because refunding while a chargeback is contested would pay the customer twice. Nothing is written on either path, so a refused cancellation leaves the booking exactly as it was. The refusal covers a 1:1 booking only. A class or a webinar is one appointment carrying every seat's payment, so one seat's dispute does not stop the host or staff cancelling it (or the host re-timing a webinar): every other seat is refunded as usual and the disputed seat's owed refund is stamped and waits for its dispute ([Chargebacks](../finance/30-refunds-disputes/02-chargebacks.md), section 2).
 
 ---
 
@@ -1134,6 +1134,8 @@ Both halves live in `quoteBookingRefund`, in one predicate: `isFreeCreditFunded 
 
 A booking with no session scheduled at all is a different matter and does refund in full. There is no start time, so there are no hours of notice, and treating that as negative notice made cancelling before allocation score worse than cancelling after it — which no tier table can mean. The condition is keyed on the booking having no slot rows whatsoever, deliberately: a booking whose slots are merely all cancelled is not the same claim.
 
+**A moderation ban prices a 1:1 booking with the expert-side quote.** When a suspended or banned user's bookings are ended (`cancelFutureEngagementsForUser` in `lib/moderation/cancel-user-engagements.ts`), a consultation or a plan is quoted by `quoteBookingRefund` with `isConsultantInitiated: true`, from `resolveBookingRefundContext` read on the cancel's own transaction before the sessions are released. Every undelivered session refunds in full whatever the notice, a delivered session keeps its earnings, and a session support already refunded is not paid again. The rule is the same whether the expert or the learner was banned, because neither ban is the learner's choice of timing. The amount is stamped under `moderation:<appointmentId>:<paymentId>`, and the plan's kept tranches start their hold once the refund settles (`stampTranchesOnCancel`), or in the cancel's commit when nothing is owed. A plan is collected while its status is in `CANCELLABLE_FROM`, whether or not a session is placed ahead. One whose sessions are all held with none owed (`cancelWindowState` answers `DELIVERED`) is left to the plan-end settlement, and a session under way is released with the plan and refunds as undelivered. A consultation is a single session, so one not yet held refunds in full. Example: Meera Nair's plan of 24 sessions cost ₹36,000 (₹1,500 a session) and 8 were delivered when her expert was banned. She gets ₹24,000 back and the expert keeps the earnings for the 8 delivered. Anything more is an operator's hand refund. A class the banned expert hosts refunds each seat from its series ledger. A class or webinar seat a banned learner holds is released and refunded the same way (`removeAttendee`, through `releasedSeatOwedTx` in `lib/payments/operations/event-refunds.ts`): the seat's amount less one unit for each session that had ended by the ban, less any session refunded on its own, capped at the balance. A session under way at the ban is not delivered. A seat paid entirely in credits is restored whole when nothing was delivered and is queued for a person (`partial-credit:<paymentId>`) otherwise, because the credits rail cannot split; a seat that was free to begin with (`isPriceFreePayment`) owes nothing. A seat is collected while its event has a session that has not ended, so a webinar seat is refunded in full until the webinar ends and is left alone after it. Example: banned after 3 sessions of an 8-session, ₹8,000 class, a learner is refunded ₹5,000.
+
 **What the cascade reverses**: the refund is not just a gateway call. `applyRefundCascade` reverses the funding legs at their source, returns program engagements to the organisation's cap, increments the consultant's and the organisation's refunded share, claws back an already-completed payout, mints a GST credit note for any invoiced portion, reverses the withheld TDS, restores referral credits, and posts a balanced double-entry reversal. Org-funded bookings carry a synthetic payment intent that no gateway can resolve, so they reverse purely in-ledger through the reversal engine instead of calling out.
 
 **Cross-reference**: [Cancellation Payment Flow](../finance/30-refunds-disputes/01-refunds.md)
@@ -1337,7 +1339,7 @@ sequenceDiagram
         API->>DB: findUnique(appointmentId) with all relations
         DB-->>API: Full appointment tree
         Note over API: Extract into local variables:<br/>consultantUserId, consulteeUserId,<br/>consultantName, consulteeName,<br/>planTitle, appointmentType, dateTime
-        API->>DB: hasActiveDisputeForAppointment()
+        API->>DB: hasActiveDisputeForAppointment() (1:1 bookings only)
         DB-->>API: false (a true here answers 409 DISPUTE_ACTIVE)
         API->>DB: resolveBookingRefundContext()
         DB-->>API: payment, frozen policy, notice,<br/>sessionsRemaining, slotsTotal

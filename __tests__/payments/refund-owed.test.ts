@@ -716,6 +716,58 @@ describe("whole-event refunds", () => {
     // The sweep skips a live dispute too.
     expect((await retryAutoRefunds()).owed.scanned).toBe(0);
   });
+
+  it("refunds the disputed seat its stamped share once the dispute is won, spending no attempt while it waited", async () => {
+    seat("d1", 8_000).disputed = true;
+    const ledgers = new Map([
+      [
+        "d1",
+        { unitPaise: BigInt(1_000), deliveredHeld: 3, occRefundedPaise: 0 },
+      ],
+    ]);
+    await refundWholeEventPayments("class", "cls1", "cancelled", "u1", {
+      ledgers: ledgers as never,
+    });
+    await retryAutoRefunds();
+    expect(mockRefunds).toHaveLength(0);
+    expect(mockRows.get("d1")!.refundOwedAttempts).toBe(0);
+
+    mockRows.get("d1")!.disputed = false;
+    const won = await retryAutoRefunds();
+
+    expect(won.owed.refunded).toBe(1);
+    expect(mockRefunds).toEqual([
+      expect.objectContaining({
+        paymentId: "d1",
+        amountPaise: 5_000,
+        dedupeKey: "event-cancel:cls1:pay:d1",
+      }),
+    ]);
+    expect(mockRows.get("d1")!.refundOwedKey).toBeNull();
+  });
+
+  it("clears the disputed seat's marker with nothing refunded once the dispute is lost", async () => {
+    seat("d1", 8_000).disputed = true;
+    await refundWholeEventPayments("webinar", "web1", "cancelled", "u1");
+    expect(mockRows.get("d1")!.refundOwedKey).toBe("event-cancel:web1:pay:d1");
+
+    // The bank already returned the money, so the front door has nothing left to refund.
+    mockRows.get("d1")!.disputed = false;
+    const { RefundValidationError } = jest.requireMock<{
+      RefundValidationError: new (message: string, code: string) => Error;
+    }>("../../lib/payments/operations/refund");
+    mockRefundBookingPayment.mockRejectedValue(
+      new RefundValidationError("charged back", "ALREADY_FULLY_REFUNDED"),
+    );
+    const lost = await retryAutoRefunds();
+
+    expect(lost.owed.settled).toBe(1);
+    expect(mockRefunds).toHaveLength(0);
+    expect(mockRows.get("d1")!.refundOwedKey).toBeNull();
+    expect(mockRows.get("d1")!.refundOwedAttempts).toBe(0);
+    // Nothing is left for a later run to drive or to page about.
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+  });
 });
 
 /** One gateway attempt that leaves a refund row of `status` and throws. */
