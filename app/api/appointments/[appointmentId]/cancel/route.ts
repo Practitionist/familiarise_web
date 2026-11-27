@@ -235,6 +235,18 @@ class PlanRefundLandedError extends Error {
   }
 }
 
+/** Another door settled a voided session this cancel had priced; nothing commits and the next click re-quotes. */
+class VoidSettledElsewhereError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly code = "BOOKING_CHANGED" as const;
+  constructor() {
+    super(
+      "This booking changed while you were cancelling it. Refresh to see where it stands, then try again.",
+    );
+    this.name = "VoidSettledElsewhereError";
+  }
+}
+
 /**
  * The refund charged is the refund the dialog showed. A click made on an
  * unpaid screen (or under a capture that landed mid-cancel) never cancels a
@@ -967,6 +979,7 @@ export async function POST(
                       scheduledStarts: bookingCtx.scheduledStarts,
                       nowMs: bookingCtx.quotedAtMs,
                       alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
+                      unsettledVoid: bookingCtx.unsettledVoidIds.length > 0,
                       isSubscription: !!appointment.subscription,
                       isConsultantInitiated,
                       // Both halves are load-bearing: `free_` with a
@@ -1129,6 +1142,23 @@ export async function POST(
                 throw await heldMarkerRefusal(tx, owed.paymentId, {
                   appointmentId,
                 });
+              }
+              // The voided session this cancel priced in full is settled in the same
+              // commit, so the day-14 sweep and the ops door pay nothing more for it.
+              const voidIds = bookingCtx?.unsettledVoidIds ?? [];
+              if (voidIds.length > 0) {
+                const settled = await tx.appointmentOccurrence.updateMany({
+                  where: {
+                    id: { in: voidIds },
+                    completionStatus: "VOIDED",
+                    seatsSettledAt: null,
+                    deletedAt: null,
+                  },
+                  data: { seatsSettledAt: cancellationData.cancelledAt },
+                });
+                if (settled.count !== voidIds.length) {
+                  throw new VoidSettledElsewhereError();
+                }
               }
               // The undelivered share of a credit-funded plan is returned by
               // hand; the durable row commits with the cancel.

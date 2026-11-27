@@ -233,6 +233,13 @@ export const SETTLEABLE_VOID_VERDICT = {
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+/** The in-memory twin of SETTLEABLE_VOID_VERDICT; change both together. */
+export const isSettleableVoidVerdict = (o: {
+  outcome: OccurrenceOutcome | null;
+  outcomeConfirmedAt: Date | null;
+}): boolean =>
+  !isNegativeMoneyOutcome(o.outcome) || o.outcomeConfirmedAt !== null;
+
 /** An applied unconfirmed verdict with a dispute or agreement filed against it: ops see both statements. */
 export const REPORTED_VERDICT = {
   ...APPLIED_UNCONFIRMED,

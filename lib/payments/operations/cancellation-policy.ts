@@ -196,6 +196,11 @@ export interface BookingRefundQuoteInput {
   alreadyRefundedPaise?: number;
   /** The instant the notice is measured from; defaults to now. */
   nowMs?: number;
+  /**
+   * The booking holds a voided session its cancel settles (`unsettledVoidIds`): not delivered and
+   * not the buyer's doing, so it comes back in full whoever cancels. A plan prices its voids as unused sessions.
+   */
+  unsettledVoid?: boolean;
 }
 
 export interface BookingRefundQuote {
@@ -472,11 +477,9 @@ export function quoteBookingRefund(
     ? Number.POSITIVE_INFINITY
     : (input.hoursUntilNextSession ?? -1);
 
-  const refundPct = computeRefundPct(
-    input.policy,
-    noticeHours,
-    input.isConsultantInitiated,
-  );
+  const refundPct = input.unsettledVoid
+    ? 100
+    : computeRefundPct(input.policy, noticeHours, input.isConsultantInitiated);
 
   // #1500 — the credits rail cannot pay a fraction (refundBookingPayment refuses an
   // amountPaise on a free_ intent), so a PARTIAL tier on a fully-credit-funded

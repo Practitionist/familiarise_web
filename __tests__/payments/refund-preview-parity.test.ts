@@ -99,6 +99,8 @@ const txStub = {
     updateManyAndReturn: jest
       .fn()
       .mockResolvedValue([{ id: "slot-1" }, { id: "slot-2" }]),
+    // The settled stamp on a voided session the cancel refunds.
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   // The cancel route reads the open proposals, then CASes each by id.
   rescheduleRequest: {
@@ -312,6 +314,8 @@ type Case = {
   grossPaise: number;
   priorRefundPaise?: number;
   actor: "consultee" | "consultant" | "operator";
+  /** A session that ended this many hours ago and was voided: cut short, confirmed, not settled. */
+  voidedHoursAgo?: number;
 };
 
 /** The booking as the database answers it, before and after the cancel tx. */
@@ -343,7 +347,24 @@ function bookingRows(c: Case) {
           disputes: [],
         },
       ],
-      occurrences: [...done, ...live],
+      occurrences: [
+        ...done,
+        ...live,
+        ...(c.voidedHoursAgo
+          ? [
+              {
+                id: "occ-void",
+                startsAt: new Date(Date.now() - c.voidedHoursAgo * HOUR),
+                endsAt: new Date(Date.now() - (c.voidedHoursAgo - 1) * HOUR),
+                ordinal: 1,
+                completionStatus: "VOIDED",
+                outcome: "CUT_SHORT",
+                outcomeConfirmedAt: new Date(Date.now() - HOUR),
+                seatsSettledAt: null,
+              },
+            ]
+          : []),
+      ],
       // #1766 — the plan entitlement; every fixture's plan is exactly the
       // sessions it holds, so the unused-session quote and the old
       // allocated-slot proration agree on the base.
@@ -720,6 +741,58 @@ describe("the quote's own numbers hold up", () => {
     expect(preview.refundPct).toBe(100);
     expect(preview.estimatedRefundPaise).toBe(500_000);
     expect(cancelled.refund.amountRefundedPaise).toBe(500_000);
+  });
+});
+
+describe("a consultation whose only session was voided and is not settled", () => {
+  const voided = (actor: Case["actor"]): Case => ({
+    name: "cut short and voided",
+    kind: "consultation",
+    policy: DEFAULT_POLICY,
+    liveSlotHours: [],
+    voidedHoursAgo: 30,
+    grossPaise: 100_000,
+    actor,
+  });
+
+  it.each(["consultee", "consultant"] as const)(
+    "is quoted and refunded in full when the %s cancels, once, and the cancel settles the session",
+    async (actor) => {
+      const { preview, cancelRes, cancelled } = await quoteThenCancel(
+        voided(actor),
+      );
+
+      expect(preview).toMatchObject({
+        refundPct: 100,
+        estimatedRefundPaise: 100_000,
+      });
+      expect(cancelRes.status).toBe(200);
+      expect(cancelled.refund).toMatchObject({
+        amountRefundedPaise: 100_000,
+        status: "REFUNDED",
+      });
+      expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
+      // The stamp the day-14 sweep's cohort requires null, in the cancel's transaction.
+      expect(txStub.appointmentOccurrence.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["occ-void"] },
+          completionStatus: "VOIDED",
+          seatsSettledAt: null,
+          deletedAt: null,
+        },
+        data: { seatsSettledAt: expect.any(Date) },
+      });
+    },
+  );
+
+  it("refuses with nothing refunded when the session was settled under the cancel", async () => {
+    txStub.appointmentOccurrence.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const { cancelRes, cancelled } = await quoteThenCancel(voided("consultee"));
+
+    expect(cancelRes.status).toBe(409);
+    expect(cancelled.code).toBe("BOOKING_CHANGED");
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 });
 

@@ -130,6 +130,7 @@ jest.mock("../../../lib/booking/cancellation-scope", () => ({
   readCancelWindowState: async () => "BEFORE",
   resolveBookingRefundContext: async () => ({
     windowState: "BEFORE",
+    unsettledVoidIds: [],
     alreadyRefundedPaise: 0,
     policy: {},
     hoursUntilNextSession: 100,

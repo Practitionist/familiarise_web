@@ -155,6 +155,7 @@ async function quoteIndividualBooking(
     scheduledStarts: ctx.scheduledStarts,
     nowMs: ctx.quotedAtMs,
     alreadyRefundedPaise: ctx.alreadyRefundedPaise,
+    unsettledVoid: ctx.unsettledVoidIds.length > 0,
     isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated,
     // #1500 — a booking funded entirely by referral credit. The rail alone is not

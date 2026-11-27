@@ -20,6 +20,7 @@ import {
 
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
+import { settleCancelledSessionForOne } from "../../../scripts/appointments/settle-cancelled-sessions";
 
 // The capture's chat channels are a fire-and-forget step this suite does not judge; left real, it logs after the suite ends.
 jest.mock("../../../lib/payments/webhooks/ensure-channels", () => ({
@@ -163,6 +164,52 @@ describe("the cancel owns the refund it drives", () => {
     });
     expect(row.refundOwedKey).toBe(heldKey);
     expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("a voided session not yet settled", () => {
+  it("a learner's cancel of a ₹1,000 consultation whose session was cut short and voided owes ₹1,000 once and settles the session, so the day-14 sweep finds nothing", async () => {
+    // The hour was three weeks ago; its void was confirmed 20 days ago, past the sweep's 14 days.
+    const startsAt = new Date(Date.now() - 21 * 24 * HOUR_MS);
+    const { booking, payment } = await seedPaid({
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR_MS),
+    });
+    const confirmedAt = new Date(Date.now() - 20 * 24 * HOUR_MS);
+    await prisma.appointmentOccurrence.update({
+      where: { id: booking.occurrenceId },
+      data: {
+        completionStatus: "VOIDED",
+        voidedAt: confirmedAt,
+        outcome: "CUT_SHORT",
+        outcomeAt: confirmedAt,
+        outcomeConfirmedAt: confirmedAt,
+      },
+    });
+
+    const res = await cancelRequest(booking.appointmentId);
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).refund.refundPct).toBe(100);
+    expect(await statusOf(booking.consultationId!)).toBe("CANCELLED");
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: payment.id, amountPaise: 100_000 }),
+    );
+    expect(
+      await prisma.appointmentOccurrence.findUniqueOrThrow({
+        where: { id: booking.occurrenceId },
+        select: { completionStatus: true, seatsSettledAt: true },
+      }),
+    ).toMatchObject({
+      completionStatus: "VOIDED",
+      seatsSettledAt: expect.any(Date),
+    });
+
+    const swept = await settleCancelledSessionForOne(booking.occurrenceId);
+
+    expect(swept).toMatchObject({ scanned: 0, refunded: 0 });
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledTimes(1);
   });
 });
 
