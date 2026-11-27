@@ -11,6 +11,7 @@ import { recordMeetingEndedSynchronously } from "../../../lib/stream/session-han
 import { detectConsultantNoShows } from "../../../scripts/appointments/detect-consultant-no-shows";
 import { ATTENDANCE_SETTLE_DELAY_MS } from "../../../lib/meetings/settle-attendance";
 import { fakeStream } from "./harness-stream";
+import { withAppointmentLock } from "../../../utils/appointmentlock";
 import {
   HOUR,
   loadSlot,
@@ -137,6 +138,49 @@ it("a host's deliberate end that lands after the sweep loaded the room stamps no
   expect(await storedOutcome(room.occurrenceId)).toEqual({
     completionStatus: "VOIDED",
     outcome: "CUT_SHORT",
+  });
+});
+
+it("a void that would land while a door holds the booking's lock waits: the door's cancel commits first and the void then writes nothing", async () => {
+  const room = await seedPaidConsultation(3);
+  await stageHalfHourTimeout(room);
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { endedReason: "call_ended" },
+  });
+  const now = new Date(room.endsAt.getTime() + READ_AT);
+
+  // A door holds the booking's lock (a cancel between its pending-void check and its refund stamp).
+  await withAppointmentLock(room.appointmentId, async () => {
+    // The pass settles the record and would write the CUT_SHORT void.
+    expect(
+      await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+        now,
+        outages: [],
+        settleDeadlineAt: Date.now() + 5_000,
+      }),
+    ).toEqual({ kind: "deferred", reason: "appointment-busy" });
+    expect(await storedOutcome(room.occurrenceId)).toMatchObject({
+      completionStatus: "SCHEDULED",
+      outcome: null,
+    });
+    // The door commits: the session is cancelled and tombstoned.
+    await prisma.appointmentOccurrence.update({
+      where: { id: room.occurrenceId },
+      data: { completionStatus: "CANCELLED", deletedAt: new Date() },
+    });
+  });
+
+  // The next run takes the lock and finds nothing left to void.
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now,
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", moved: false });
+  expect(await storedOutcome(room.occurrenceId)).toMatchObject({
+    completionStatus: "CANCELLED",
+    outcome: null,
   });
 });
 

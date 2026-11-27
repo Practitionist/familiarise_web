@@ -83,6 +83,12 @@ import {
   toOutageWindows,
 } from "./outage-windows";
 import { confirmConsultantNoShow } from "./consultant-no-show";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+  SWEEP_LOCK_RETRY_CONFIG,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 
 export const OUTCOME_SLOT_SELECT = {
   id: true,
@@ -124,14 +130,19 @@ export interface OutcomeContext {
   onUnreadable?: (occurrenceId: string) => void;
   /** The run's Stream failure reporter, flushed once per run. */
   failures?: RunFailureReporter;
-  /** Epoch ms by which every Stream request of a settle must answer, so in-flight work fits the run. */
+  /** Epoch ms by which every Stream request of a settle, and every lock call of a void's write, must answer, so in-flight work fits the run. */
   settleDeadlineAt?: number;
 }
 
 export type SlotDecision =
   | {
       kind: "deferred";
-      reason: "live-overrun" | "no-show-detector" | "attendance-unsettled";
+      reason:
+        | "live-overrun"
+        | "no-show-detector"
+        | "attendance-unsettled"
+        /** A void whose booking's lock could not be had in the run's time left. */
+        | "appointment-busy";
     }
   | {
       kind: "written";
@@ -533,22 +544,60 @@ export async function decideSlotOutcome(
     to = OccurrenceCompletionStatus.UNVERIFIED;
   }
 
-  const moved = await writeSlotOutcomeTransaction(
-    slot,
-    presences,
-    to,
-    verdict,
-    ctx.now,
-    {
+  const write = () =>
+    writeSlotOutcomeTransaction(slot, presences, to, verdict, ctx.now, {
       room:
         meeting && room
           ? { end: room, settledCallId: meeting.streamCallId }
           : null,
       requireUnsettled: evidence.kind === "unreadable",
-    },
-  );
+    });
+  // A void is a miss the booking's doors price or wait on, so it takes turns with them.
+  const written =
+    to === OccurrenceCompletionStatus.VOIDED
+      ? await underAppointmentLock(
+          slot.appointmentId,
+          ctx.settleDeadlineAt,
+          write,
+        )
+      : { moved: await write() };
+  if (!written) return { kind: "deferred", reason: "appointment-busy" };
+  const { moved } = written;
   if (moved && evidence.kind === "unreadable") ctx.onUnreadable?.(slot.id);
   return { kind: "written", to, verdict, moved };
+}
+
+/**
+ * Runs the void's write under the appointment lock the cancel, leave and ops doors hold, so a
+ * door's check for a pending void and its refund never straddle the write. Each lock call gets
+ * the smaller of its own bound and the run's time left; null when the lock is busy, stalled or
+ * unreachable, and the session waits for the next run.
+ */
+async function underAppointmentLock(
+  appointmentId: string,
+  deadlineAt: number | undefined,
+  write: () => Promise<boolean>,
+): Promise<{ moved: boolean } | null> {
+  const left = (deadlineAt ?? Infinity) - Date.now();
+  const callTimeoutMs = Math.min(SWEEP_LOCK_RETRY_CONFIG.callTimeoutMs, left);
+  if (callTimeoutMs <= 0) return null;
+  try {
+    return {
+      moved: await withAppointmentLock(appointmentId, write, {
+        ...SWEEP_LOCK_RETRY_CONFIG,
+        callTimeoutMs,
+        deadlineAt,
+      }),
+    };
+  } catch (error) {
+    if (
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 const PLAN_BELL = { select: { title: true, recordingEnabled: true } } as const;
