@@ -311,27 +311,33 @@ export async function hostedBookingsForUser(
     },
   };
   const [open, sessionsUnderWay] = await Promise.all([
-    checkActiveAppointments(profile.id, db, "removal"),
-    // The removal rule counts a hosted webinar and a co-hosted session by their
-    // start; the host is still needed until the session ends.
+    checkActiveAppointments(profile.id, db, "removal", now),
+    // The removal rule counts a hosted webinar while `startsAt >= now` and a
+    // co-hosted session while `startsAt > now`. Each arm here starts where that
+    // one stops, on the same `now`, and runs until the session ends.
     db.appointmentOccurrence.count({
       where: {
         ...LIVE_SLOT_WHERE,
-        startsAt: { lte: now },
         endsAt: { gt: now },
-        appointment: {
-          deletedAt: null,
-          OR: [
-            {
-              webinar: {
-                webinarPlan: {
-                  OR: [{ consultantProfileId: profile.id }, acceptedCoHost],
-                },
-              },
+        OR: [
+          {
+            startsAt: { lt: now },
+            appointment: {
+              deletedAt: null,
+              webinar: { webinarPlan: { consultantProfileId: profile.id } },
             },
-            { class: { classPlan: acceptedCoHost } },
-          ],
-        },
+          },
+          {
+            startsAt: { lte: now },
+            appointment: {
+              deletedAt: null,
+              OR: [
+                { webinar: { webinarPlan: acceptedCoHost } },
+                { class: { classPlan: acceptedCoHost } },
+              ],
+            },
+          },
+        ],
       },
     }),
   ]);

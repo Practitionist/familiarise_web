@@ -54,8 +54,19 @@ const live = { consultations: 0, plans: 0, trials: 0, seats: 0 };
 const hosted = { profile: false, trials: 0, underWay: 0 };
 type CountArgs = { where: Record<string, unknown> };
 const mockSeatCount = jest.fn(async (_args: { where: unknown }) => live.seats);
+type Bound = Partial<Record<"lt" | "lte" | "gt" | "gte", Date>>;
+type UnderWayWhere = { startsAt?: Bound; OR?: { startsAt: Bound }[] };
+type OccurrencesSome = { occurrences: { some: { startsAt: Bound } } };
+type WebinarWhere = { appointment: OccurrencesSome };
+type CollaboratorWhere = {
+  OR: { webinarPlan?: { webinars: { some: WebinarWhere } } }[];
+};
 const mockUnderWayCount = jest.fn(
-  async (_args: { where: unknown }) => hosted.underWay,
+  async (_args: { where: UnderWayWhere }) => hosted.underWay,
+);
+const mockWebinarCount = jest.fn(async (_args: { where: WebinarWhere }) => 0);
+const mockCollaboratorCount = jest.fn(
+  async (_args: { where: CollaboratorWhere }) => 0,
 );
 jest.mock("../../lib/prisma", () => {
   const zero = { count: jest.fn(async () => 0) };
@@ -96,21 +107,28 @@ jest.mock("../../lib/prisma", () => {
           hosted.profile ? { id: "expert-profile" } : null,
         ),
       },
-      webinar: zero,
+      webinar: {
+        count: (args: { where: WebinarWhere }) => mockWebinarCount(args),
+      },
       class: zero,
       rescheduleRequest: zero,
-      collaborator: zero,
+      collaborator: {
+        count: (args: { where: CollaboratorWhere }) =>
+          mockCollaboratorCount(args),
+      },
       appointment: {
         count: (args: { where: unknown }) => mockSeatCount(args),
       },
       appointmentOccurrence: {
-        count: (args: { where: unknown }) => mockUnderWayCount(args),
+        count: (args: { where: UnderWayWhere }) => mockUnderWayCount(args),
       },
     },
   };
 });
 
 import { NextRequest } from "next/server";
+import prisma from "../../lib/prisma";
+import { hostedBookingsForUser } from "../../lib/compliance/erasure/scrub-user";
 import { POST } from "../../app/api/admin/erasure-requests/[id]/process/route";
 
 const process = () =>
@@ -168,23 +186,74 @@ it("refuses an expert whose webinar or co-hosted session is under way, until it 
     where: {
       deletedAt: null,
       completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
-      startsAt: { lte: expect.any(Date) },
       endsAt: { gt: expect.any(Date) },
-      appointment: {
-        deletedAt: null,
-        OR: [
-          {
+      OR: [
+        {
+          startsAt: { lt: expect.any(Date) },
+          appointment: {
+            deletedAt: null,
             webinar: {
-              webinarPlan: {
-                OR: [{ consultantProfileId: "expert-profile" }, acceptedCoHost],
-              },
+              webinarPlan: { consultantProfileId: "expert-profile" },
             },
           },
-          { class: { classPlan: acceptedCoHost } },
-        ],
-      },
+        },
+        {
+          startsAt: { lte: expect.any(Date) },
+          appointment: {
+            deletedAt: null,
+            OR: [
+              { webinar: { webinarPlan: acceptedCoHost } },
+              { class: { classPlan: acceptedCoHost } },
+            ],
+          },
+        },
+      ],
     },
   });
+});
+
+it("counts a session that starts at the very instant of the check once, as host and as co-host", async () => {
+  const START = new Date(Date.now() + 3_600_000);
+  /** Whether a session starting at START satisfies a start-time bound, as the database would decide. */
+  const startsWithin = (bound: Bound) =>
+    Object.entries(bound).every(([op, at]) => {
+      if (op === "lt") return START < at;
+      if (op === "lte") return START <= at;
+      return op === "gt" ? START > at : START >= at;
+    });
+  const underWayArm = (where: UnderWayWhere, arm: number) =>
+    Number(startsWithin(where.OR?.[arm].startsAt ?? where.startsAt ?? {}));
+  hosted.profile = true;
+
+  mockWebinarCount.mockImplementationOnce(async ({ where }) =>
+    Number(startsWithin(where.appointment.occurrences.some.startsAt)),
+  );
+  mockUnderWayCount.mockImplementationOnce(async ({ where }) =>
+    underWayArm(where, 0),
+  );
+  const asHost = await hostedBookingsForUser(prisma, "expert-1", START);
+
+  expect(asHost?.breakdown).toMatchObject({ webinars: 1, sessionsUnderWay: 0 });
+  expect(asHost?.total).toBe(1);
+
+  mockCollaboratorCount.mockImplementationOnce(async ({ where }) =>
+    Number(
+      startsWithin(
+        where.OR[0].webinarPlan?.webinars.some.appointment.occurrences.some
+          .startsAt ?? {},
+      ),
+    ),
+  );
+  mockUnderWayCount.mockImplementationOnce(async ({ where }) =>
+    underWayArm(where, 1),
+  );
+  const asCoHost = await hostedBookingsForUser(prisma, "expert-1", START);
+
+  expect(asCoHost?.breakdown).toMatchObject({
+    collaborations: 0,
+    sessionsUnderWay: 1,
+  });
+  expect(asCoHost?.total).toBe(1);
 });
 
 it("refuses a learner with a live plan, names it and the cancel door, and never scrubs", async () => {

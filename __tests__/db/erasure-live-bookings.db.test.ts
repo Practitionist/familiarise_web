@@ -149,6 +149,33 @@ describe("a session the expert hosts or co-hosts and erasure", () => {
     });
   });
 
+  it("counts a webinar that starts at the very instant of the check once for its host and once for its co-host", async () => {
+    const webinar = await seedWebinar({ capacity: 10 });
+    const cohost = await acceptedCoHost({ webinarPlanId: webinar.planId });
+
+    const asHost = await hostedBookingsForUser(
+      prisma,
+      webinar.host.userId,
+      webinar.startsAt,
+    );
+    const asCoHost = await hostedBookingsForUser(
+      prisma,
+      cohost.userId,
+      webinar.startsAt,
+    );
+
+    expect(asHost?.total).toBe(1);
+    expect(asHost?.breakdown).toMatchObject({
+      webinars: 1,
+      sessionsUnderWay: 0,
+    });
+    expect(asCoHost?.total).toBe(1);
+    expect(asCoHost?.breakdown).toMatchObject({
+      collaborations: 0,
+      sessionsUnderWay: 1,
+    });
+  });
+
   it("blocks a class's accepted co-host during its last session", async () => {
     const host = await seedHost();
     const cls = await seedClassUnderWay(host, {
