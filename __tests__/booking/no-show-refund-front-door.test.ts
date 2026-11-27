@@ -556,7 +556,7 @@ describe("consultant no-show refunds", () => {
     expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
-  it("cancels another proposed session only under that session's own guard, so its dispute since the read rolls the claim back", async () => {
+  it("hands each other proposed session's own guard to that session's compare-and-set", async () => {
     (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(
       twoProposedSessions(),
     );
@@ -571,6 +571,23 @@ describe("consultant no-show refunds", () => {
       id: { in: ["occ-2"] },
       OR: [{ id: "guard-of-occ-2" }],
     });
+  });
+
+  it("is lost when another proposed session's compare-and-set moves no row: no owed refund, strike or refund follows", async () => {
+    (prisma.consultation.findFirst as jest.Mock).mockResolvedValue(
+      twoProposedSessions(),
+    );
+    // The strike session moves; the other session's guard no longer matches.
+    (prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock)
+      .mockResolvedValueOnce([{ id: "occ-1", appointmentId: "appt-1" }])
+      .mockResolvedValueOnce([]);
+
+    const result = await confirmOcc1([], (id) => ({ id: `guard-of-${id}` }));
+
+    expect(result).toEqual({ kind: "lost" });
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(prisma.systemEvent.create).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("does not filter the candidate query on a positive amount", async () => {

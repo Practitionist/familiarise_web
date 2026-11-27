@@ -301,6 +301,49 @@ it("a second proposed session the pass cannot judge strong leaves the whole book
   ).toMatchObject({ completionStatus: "UNVERIFIED", deletedAt: null });
 });
 
+it("a claim whose other proposed session no longer matches its guard rolls back whole: the booking, the strike session and the money are as they were", async () => {
+  const room = await seedNoShow(14);
+  const proposed = await propose(room);
+  const sibling = await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: room.appointmentId,
+      ordinal: 2,
+      startsAt: new Date(room.startsAt.getTime() - 24 * HOUR),
+      endsAt: new Date(room.endsAt.getTime() - 24 * HOUR),
+      isTentative: false,
+      consultantProfileId: proposed.consultantProfileId,
+      completionStatus: "UNVERIFIED",
+      outcome: "HOST_ABSENT",
+      outcomeAt: proposed.outcomeAt,
+    },
+  });
+  const claim = await readNoShowClaim(prisma, room.occurrenceId);
+  expect(claim).not.toBeNull();
+
+  await expect(
+    prisma.$transaction((tx) =>
+      claimNoShowTx(tx, claim!, {
+        now: new Date(),
+        actorUserId: null,
+        // A guard the other session does not meet, as a dispute filed since the read would leave it.
+        siblingGuards: [{ id: sibling.id, outcomeConfirmedAt: { not: null } }],
+      }),
+    ),
+  ).rejects.toBeInstanceOf(IllegalTransitionError);
+
+  expect(await moneyOf(room)).toMatchObject({
+    status: "APPROVED",
+    refunds: [],
+    strikes: 0,
+    refundOwedKey: null,
+    session: {
+      completionStatus: "UNVERIFIED",
+      outcomeConfirmedAt: null,
+      deletedAt: null,
+    },
+  });
+});
+
 it("ops Set outcome expert absent on a disputed proposal cancels, refunds in full once and strikes once, and voids nothing", async () => {
   const room = await seedNoShow(12);
   const proposed = await propose(room);
