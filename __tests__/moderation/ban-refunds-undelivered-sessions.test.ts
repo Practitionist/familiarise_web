@@ -31,6 +31,11 @@ const mockDrive = jest.fn();
 const mockStampTranches = jest.fn(async (..._args: unknown[]) => 0);
 const mockTransitionSubscription = jest.fn(async (..._args: unknown[]) => {});
 const mockTransitionConsultation = jest.fn(async (..._args: unknown[]) => {});
+const mockTransitionWebinar = jest.fn(async (..._args: unknown[]) => {});
+const mockHostedWebinars = jest.fn(async (): Promise<{ id: string }[]> => []);
+const mockTransaction = jest.fn(
+  async (fn: (tx: unknown) => unknown, _options?: unknown) => fn(mockTx),
+);
 
 const mockPlanNow = jest.fn();
 const mockSessionsLeft = jest.fn(
@@ -121,6 +126,8 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
+  ALLOCATION_TX_MAX_WAIT_MS: 8_000,
+  ALLOCATION_TX_TIMEOUT_MS: 30_000,
   default: {
     user: { findUnique: (...a: unknown[]) => mockUserFindUnique(...a) },
     subscription: {
@@ -131,7 +138,7 @@ jest.mock("@/lib/prisma", () => ({
       findMany: (a: { where: Where }) => mockConsultationFindMany(a),
       findUnique: async () => ({ ...ENGAGEMENT, consultationPlan: PLAN_ROW }),
     },
-    webinar: { findMany: async () => [] },
+    webinar: { findMany: () => mockHostedWebinars() },
     class: { findMany: async () => [] },
     appointmentOccurrence: {
       findMany: async () =>
@@ -140,7 +147,8 @@ jest.mock("@/lib/prisma", () => ({
         mockSessionsLeft(args),
     },
     appointment: { findFirst: async () => ({ id: "appt-1" }) },
-    $transaction: async (fn: (tx: unknown) => unknown) => fn(mockTx),
+    $transaction: (fn: (tx: unknown) => unknown, options?: unknown) =>
+      mockTransaction(fn, options),
   },
 }));
 jest.mock("@/lib/booking/transitions", () => ({
@@ -149,6 +157,7 @@ jest.mock("@/lib/booking/transitions", () => ({
     mockTransitionSubscription(...a),
   transitionConsultationRequest: (...a: unknown[]) =>
     mockTransitionConsultation(...a),
+  transitionWebinarEvent: (...a: unknown[]) => mockTransitionWebinar(...a),
   transitionOccurrenceCompletion: jest.fn(async () => 0),
 }));
 jest.mock("@/lib/booking/cancellation-scope", () => ({
@@ -591,5 +600,53 @@ describe("a ban on a learner who holds a class or webinar seat", () => {
     expect(summary.attendeeRemovals).toBe(0);
     expect(mockStampOwedOrHeld).not.toHaveBeenCalled();
     expect(mockDrive).not.toHaveBeenCalled();
+  });
+});
+
+describe("a ban's transactions run under the allocation limits, not the 5-second default", () => {
+  const LIMITS = { maxWait: 8_000, timeout: 30_000 };
+
+  it("the plan cancel and the hosted event cancel", async () => {
+    expertIsBanned();
+    mockContext.mockResolvedValue(
+      planContext({ delivered: 8, placedAhead: 2 }),
+    );
+    mockHostedWebinars.mockResolvedValueOnce([{ id: "web-1" }]);
+    // The webinar is already terminal: its transaction opens and moves nothing.
+    mockTransitionWebinar.mockRejectedValueOnce(
+      new IllegalTransitionError("Webinar", "CANCELLED"),
+    );
+
+    const summary = await ban("expert-user");
+
+    expect(summary.failures).toEqual([]);
+    expect(mockTransaction.mock.calls.map(([, options]) => options)).toEqual([
+      LIMITS,
+      LIMITS,
+    ]);
+  });
+
+  it("the banned learner's seat release", async () => {
+    mockUserFindUnique.mockResolvedValue({
+      consulteeProfileId: "learner-profile",
+      consultantProfileId: null,
+    });
+    mockSubscriptionFindMany.mockResolvedValue([]);
+    Object.assign(mockSeat, {
+      events: [{ webinarId: "web-1", classId: null }],
+      upcoming: 1,
+      amount: 800_000,
+      listPaise: 800_000,
+      totalSessions: null,
+      sessionsPurchased: null,
+      occurrences: [],
+    });
+
+    const summary = await ban("learner-user");
+
+    expect(summary.attendeeRemovals).toBe(1);
+    expect(mockTransaction.mock.calls.map(([, options]) => options)).toEqual([
+      LIMITS,
+    ]);
   });
 });

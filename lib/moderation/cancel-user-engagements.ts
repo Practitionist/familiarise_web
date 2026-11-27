@@ -19,7 +19,11 @@
 import { STAFF_CANCEL_REFUND_REASON } from "@/lib/payments/operations/refund-cause";
 import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, {
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
+} from "@/lib/prisma";
 import {
   liveParticipant,
   releaseParticipant,
@@ -619,12 +623,17 @@ async function casCancelExclusiveEngagement(
         planPaymentId: kind === "subscription" ? paymentId : null,
         cancelledAt: now,
       };
-    });
+    }, BAN_TX_OPTIONS);
   // A request that never got a wrapper has no atom to lock; its CAS decides.
   return appointmentId ? withAppointmentLock(appointmentId, cancel) : cancel();
 }
 
 const MODERATION_REASON = "moderation";
+/** A ban's writes scale with a plan's sessions or an event's seats, so each transaction gets the allocation limits. */
+const BAN_TX_OPTIONS = {
+  maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+  timeout: ALLOCATION_TX_TIMEOUT_MS,
+};
 const GROUP_EVENT_REFUND_REASON = STAFF_CANCEL_REFUND_REASON.MODERATION;
 
 /**
@@ -813,7 +822,7 @@ async function casCancelGroupEvent(
         audit,
       );
       return plans;
-    });
+    }, BAN_TX_OPTIONS);
   // Event key first (event → appointment), so no seat checkout commits a HELD
   // seat under the cancel's participant sweep.
   return withEventCheckoutLock(
@@ -1100,7 +1109,7 @@ async function removeAttendee(
       const held = owed ? await stampOwedOrHeld(tx, owed) : null;
       // First writer wins: the owed refund already on the payment is the one driven.
       return { owed: held ? null : owed, held };
-    }),
+    }, BAN_TX_OPTIONS),
   );
   if (!removal) return;
   ctx.summary.attendeeRemovals += 1;
