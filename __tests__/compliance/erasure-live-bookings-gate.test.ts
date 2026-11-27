@@ -51,9 +51,12 @@ jest.mock("../../lib/compliance/erasure/scrub-user", () => ({
 
 const live = { consultations: 0, plans: 0, trials: 0, seats: 0 };
 /** What the user hosts as an expert; no expert profile unless `profile` is set. */
-const hosted = { profile: false, trials: 0 };
+const hosted = { profile: false, trials: 0, underWay: 0 };
 type CountArgs = { where: Record<string, unknown> };
 const mockSeatCount = jest.fn(async (_args: { where: unknown }) => live.seats);
+const mockUnderWayCount = jest.fn(
+  async (_args: { where: unknown }) => hosted.underWay,
+);
 jest.mock("../../lib/prisma", () => {
   const zero = { count: jest.fn(async () => 0) };
   return {
@@ -100,6 +103,9 @@ jest.mock("../../lib/prisma", () => {
       appointment: {
         count: (args: { where: unknown }) => mockSeatCount(args),
       },
+      appointmentOccurrence: {
+        count: (args: { where: unknown }) => mockUnderWayCount(args),
+      },
     },
   };
 });
@@ -119,7 +125,7 @@ const process = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   Object.assign(live, { consultations: 0, plans: 0, trials: 0, seats: 0 });
-  Object.assign(hosted, { profile: false, trials: 0 });
+  Object.assign(hosted, { profile: false, trials: 0, underWay: 0 });
 });
 
 it("refuses an expert who still hosts a scheduled free trial, names it, and never scrubs", async () => {
@@ -134,6 +140,51 @@ it("refuses an expert who still hosts a scheduled free trial, names it, and neve
   expect(body.error).toContain("1 active trial");
   expect(body.error).toMatch(/cancel/i);
   expect(mockScrub).not.toHaveBeenCalled();
+});
+
+it("refuses an expert whose webinar or co-hosted session is under way, until it ends", async () => {
+  Object.assign(hosted, { profile: true, underWay: 1 });
+
+  const res = await process();
+
+  expect(res.status).toBe(409);
+  const body = await res.json();
+  expect(body.code).toBe("ERASURE_BLOCKED_ACTIVE_APPOINTMENTS");
+  expect(body.breakdown).toMatchObject({
+    webinars: 0,
+    collaborations: 0,
+    sessionsUnderWay: 1,
+  });
+  expect(body.error).toContain("1 session under way");
+  expect(mockScrub).not.toHaveBeenCalled();
+  // A live session that has started and not ended, on a webinar the expert
+  // hosts or on a webinar or class they co-host by an accepted invitation.
+  const acceptedCoHost = {
+    collaborators: {
+      some: { consultantProfileId: "expert-profile", status: "ACCEPTED" },
+    },
+  };
+  expect(mockUnderWayCount).toHaveBeenCalledWith({
+    where: {
+      deletedAt: null,
+      completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+      startsAt: { lte: expect.any(Date) },
+      endsAt: { gt: expect.any(Date) },
+      appointment: {
+        deletedAt: null,
+        OR: [
+          {
+            webinar: {
+              webinarPlan: {
+                OR: [{ consultantProfileId: "expert-profile" }, acceptedCoHost],
+              },
+            },
+          },
+          { class: { classPlan: acceptedCoHost } },
+        ],
+      },
+    },
+  });
 });
 
 it("refuses a learner with a live plan, names it and the cancel door, and never scrubs", async () => {

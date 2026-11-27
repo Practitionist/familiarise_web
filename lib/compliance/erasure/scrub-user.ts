@@ -282,6 +282,14 @@ export async function liveBookingsForUser(
   };
 }
 
+/** The removal rule's open bookings, plus the sessions under way that rule stops counting at their start. */
+export type HostedBookings = ActiveAppointmentsResult & {
+  breakdown: ActiveAppointmentsResult["breakdown"] & {
+    /** Live sessions that have started and not ended, on a webinar the user hosts or a webinar or class they co-host. */
+    sessionsUnderWay: number;
+  };
+};
+
 /**
  * Bookings the user still hosts or co-hosts as an expert; null with no expert
  * profile. Both erasure doors refuse with ERASURE_BLOCKED_ACTIVE_APPOINTMENTS
@@ -290,12 +298,53 @@ export async function liveBookingsForUser(
 export async function hostedBookingsForUser(
   db: PrismaLike,
   userId: string,
-): Promise<ActiveAppointmentsResult | null> {
+  now: Date = new Date(),
+): Promise<HostedBookings | null> {
   const profile = await db.consultantProfile.findFirst({
     where: { userId },
     select: { id: true },
   });
-  return profile ? checkActiveAppointments(profile.id, db, "removal") : null;
+  if (!profile) return null;
+  const acceptedCoHost = {
+    collaborators: {
+      some: { consultantProfileId: profile.id, status: "ACCEPTED" as const },
+    },
+  };
+  const [open, sessionsUnderWay] = await Promise.all([
+    checkActiveAppointments(profile.id, db, "removal"),
+    // The removal rule counts a hosted webinar and a co-hosted session by their
+    // start; the host is still needed until the session ends.
+    db.appointmentOccurrence.count({
+      where: {
+        ...LIVE_SLOT_WHERE,
+        startsAt: { lte: now },
+        endsAt: { gt: now },
+        appointment: {
+          deletedAt: null,
+          OR: [
+            {
+              webinar: {
+                webinarPlan: {
+                  OR: [{ consultantProfileId: profile.id }, acceptedCoHost],
+                },
+              },
+            },
+            { class: { classPlan: acceptedCoHost } },
+          ],
+        },
+      },
+    }),
+  ]);
+  const underWay =
+    sessionsUnderWay > 0
+      ? `${sessionsUnderWay} ${sessionsUnderWay === 1 ? "session" : "sessions"} under way`
+      : null;
+  return {
+    hasActive: open.hasActive || sessionsUnderWay > 0,
+    total: open.total + sessionsUnderWay,
+    breakdown: { ...open.breakdown, sessionsUnderWay },
+    details: [open.details, underWay].filter(Boolean).join(", ") || undefined,
+  };
 }
 
 /** True when the user still holds any live booking. */
@@ -305,7 +354,7 @@ export function hasLiveBookings(counts: LiveBookings): boolean {
 
 /** What on the booking side still blocks an erasure: what the user hosts, else what they hold as a learner. */
 export type ErasureBookingBlock =
-  | { kind: "hosted"; hosted: ActiveAppointmentsResult }
+  | { kind: "hosted"; hosted: HostedBookings }
   | { kind: "held"; held: LiveBookings };
 
 /**
