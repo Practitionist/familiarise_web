@@ -12,6 +12,10 @@ import {
 } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { refundableBalancePaiseSql } from "@/lib/payments/refundable-balance-sql";
 import {
@@ -612,8 +616,17 @@ async function driveExpiredRefunds(markers: readonly RefundOwedMarker[]) {
  * before B1 a slot pinned by a stale request waited for the status flip and
  * then another sweeper cycle — 30+ days in the worst case.
  */
+/** What the arms of one run share: its start deadline and its failure collector. */
+interface SweepRun {
+  /** True once the run must stop starting rows; a row in flight still finishes. */
+  pastDeadline: () => boolean;
+  /** Per-row failures, reported once per failing op when the run ends. */
+  failures: RunFailureReporter;
+}
+
 async function expirePendingConsultations(
   limits: StaleRequestRunLimits,
+  run: SweepRun,
 ): Promise<{
   expired: number;
   slotsReleased: number;
@@ -690,7 +703,9 @@ async function expirePendingConsultations(
     const markers: RefundOwedMarker[] = [];
     let slotsReleased = 0;
     let skipped = 0;
+    let failed = 0;
     for (const stale of staleConsultations) {
+      if (run.pastDeadline()) break;
       try {
         const stagedForOne = await withSerializableRetry(() =>
           prisma.$transaction(
@@ -739,7 +754,6 @@ async function expirePendingConsultations(
         );
         expiredIds.push(stale.id);
         slotsReleased += stagedForOne.released;
-        markers.push(...stagedForOne.markers);
         // #1703 D2 — after the commit: the consultee learns nobody answered.
         if (stale.appointment && stale.requestedBy?.user) {
           await notifyConsulteeRequestExpired({
@@ -756,13 +770,21 @@ async function expirePendingConsultations(
             reason: UNANSWERED_REQUEST_REASON,
           });
         }
+        // Driven in this run once the consultee was told; a notice that failed
+        // leaves the committed marker to the refund retry sweep.
+        markers.push(...stagedForOne.markers);
       } catch (error) {
         if (
           !(error instanceof IllegalTransitionError) &&
           !(error instanceof ExpiredRefundMarkerRaceError) &&
           !(error instanceof ExpiredRefundPartialMarkerError)
         ) {
-          throw error;
+          // One row's failure is its own: the rows after it still run.
+          run.failures.add("expire-pending-consultation", error, {
+            consultationId: stale.id,
+          });
+          failed++;
+          continue;
         }
         if (error instanceof ExpiredRefundPartialMarkerError) {
           if (!partialMarkerHoldSeen) {
@@ -774,6 +796,11 @@ async function expirePendingConsultations(
         }
         skipped++;
       }
+    }
+    if (failed > 0) {
+      errors.push(
+        `Pending consultation expiry hit an error on ${failed} request(s)`,
+      );
     }
     console.log(
       `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} skipped)`,
@@ -796,6 +823,7 @@ async function expirePendingConsultations(
  */
 async function expirePendingSubscriptions(
   limits: StaleRequestRunLimits,
+  run: SweepRun,
 ): Promise<{
   expired: number;
   issued: number;
@@ -857,7 +885,9 @@ async function expirePendingSubscriptions(
     // and only the ids the helper actually transitioned are refunded.
     const expiredIds: string[] = [];
     let skipped = 0;
+    let failed = 0;
     for (const subscription of staleSubscriptions) {
+      if (run.pastDeadline()) break;
       try {
         await prisma.$transaction((tx) =>
           transitionSubscriptionRequest(tx, {
@@ -879,9 +909,21 @@ async function expirePendingSubscriptions(
         );
         expiredIds.push(subscription.id);
       } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        if (!(error instanceof IllegalTransitionError)) {
+          // One row's failure is its own: the rows after it still run.
+          run.failures.add("expire-pending-subscription", error, {
+            subscriptionId: subscription.id,
+          });
+          failed++;
+          continue;
+        }
         skipped++;
       }
+    }
+    if (failed > 0) {
+      errors.push(
+        `Pending subscription expiry hit an error on ${failed} request(s)`,
+      );
     }
 
     console.log(
@@ -1154,6 +1196,7 @@ function expiryNoticeFor(
 
 async function expireApprovedUnallocatedSubscriptions(
   limits: StaleRequestRunLimits,
+  run: SweepRun,
 ): Promise<{
   expired: number;
   issued: number;
@@ -1225,7 +1268,9 @@ async function expireApprovedUnallocatedSubscriptions(
     const expiredIds: string[] = [];
     const markers: RefundOwedMarker[] = [];
     let skipped = 0;
+    let failed = 0;
     for (const subscription of stale) {
+      if (run.pastDeadline()) break;
       try {
         const stagedForOne = await withSerializableRetry(() =>
           prisma.$transaction(
@@ -1249,7 +1294,6 @@ async function expireApprovedUnallocatedSubscriptions(
           ),
         );
         expiredIds.push(subscription.id);
-        markers.push(...stagedForOne);
         // #1589 N-P0-03 — after the commit: the consultee learns why, and
         // that the refund below follows.
         const notice = expiryNoticeFor(
@@ -1259,13 +1303,21 @@ async function expireApprovedUnallocatedSubscriptions(
           UNSCHEDULED_SUBSCRIPTION_REASON,
         );
         if (notice) await notifyConsulteeRequestExpired(notice);
+        // Driven in this run once the consultee was told; a notice that failed
+        // leaves the committed marker to the refund retry sweep.
+        markers.push(...stagedForOne);
       } catch (error) {
         if (
           !(error instanceof IllegalTransitionError) &&
           !(error instanceof ExpiredRefundMarkerRaceError) &&
           !(error instanceof ExpiredRefundPartialMarkerError)
         ) {
-          throw error;
+          // One row's failure is its own: the rows after it still run.
+          run.failures.add("expire-approved-unallocated", error, {
+            subscriptionId: subscription.id,
+          });
+          failed++;
+          continue;
         }
         if (error instanceof ExpiredRefundPartialMarkerError) {
           if (!partialMarkerHoldSeen) {
@@ -1277,6 +1329,11 @@ async function expireApprovedUnallocatedSubscriptions(
         }
         skipped++;
       }
+    }
+    if (failed > 0) {
+      errors.push(
+        `Approved-unallocated expiry hit an error on ${failed} subscription(s)`,
+      );
     }
 
     console.log(
@@ -1729,6 +1786,7 @@ async function stageFreshUnallocatedRefunds(
 /** Current expiry staging shares admission with sequential refund delivery. */
 async function expireUnallocatedPaidSubscriptions(
   limits: StaleRequestRunLimits,
+  pastDeadline: () => boolean,
 ) {
   const out = {
     expired: 0,
@@ -1738,9 +1796,8 @@ async function expireUnallocatedPaidSubscriptions(
     hasMore: false,
     deferred: 0,
   };
-  // Shared by current expiries and inline drives; this is an
-  // admission deadline for this family, not cancellation of work in flight.
-  const pastDeadline = startDeadline();
+  // The run's deadline, shared by current expiries and inline drives: an
+  // admission deadline, not cancellation of work in flight.
   const cohort = unallocatedCohortWhere();
   const markers: RefundOwedMarker[] = [];
   try {
@@ -2208,6 +2265,7 @@ function warnIfCapped(
  */
 async function expirePaymentPendingRequests(
   limits: StaleRequestRunLimits,
+  run: SweepRun,
 ): Promise<{
   consultationsExpired: number;
   subscriptionsExpired: number;
@@ -2232,36 +2290,46 @@ async function expirePaymentPendingRequests(
 
     let consultationsExpired = 0;
     let consultationsSkipped = 0;
+    let failed = 0;
     for (const consultation of staleConsultations) {
-      // #1775 — the per-row lapse is the shared core the consultant's
-      // Withdraw also calls; a lost CAS is `moved: 0`, never a throw.
-      const { moved, holdNotices } = await prisma.$transaction(
-        (tx) =>
-          lapseApprovedRequest(tx, {
-            kind: "consultation",
-            id: consultation.id,
-            reason: "PAYMENT_LAPSED",
-            actorUserId: null,
-            // Repeat the cohort read's age predicate inside the CAS WHERE: an
-            // updatedAt touch between read and write must match zero rows.
-            olderThan: expirationDate,
-          }),
-        SLOT_TRANSITION_TX_OPTIONS,
-      );
-      if (moved === 0) {
-        consultationsSkipped += 1;
-        continue;
+      if (run.pastDeadline()) break;
+      try {
+        // #1775 — the per-row lapse is the shared core the consultant's
+        // Withdraw also calls; a lost CAS is `moved: 0`, never a throw.
+        const { moved, holdNotices } = await prisma.$transaction(
+          (tx) =>
+            lapseApprovedRequest(tx, {
+              kind: "consultation",
+              id: consultation.id,
+              reason: "PAYMENT_LAPSED",
+              actorUserId: null,
+              // Repeat the cohort read's age predicate inside the CAS WHERE: an
+              // updatedAt touch between read and write must match zero rows.
+              olderThan: expirationDate,
+            }),
+          SLOT_TRANSITION_TX_OPTIONS,
+        );
+        if (moved === 0) {
+          consultationsSkipped += 1;
+          continue;
+        }
+        consultationsExpired += 1;
+        await flushBackupInterestNotices(holdNotices);
+        // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
+        const notice = expiryNoticeFor(
+          "consultation",
+          consultation,
+          consultation.consultationPlan,
+          PAY_LINK_LAPSED_REASON,
+        );
+        if (notice) await notifyConsulteeRequestExpired(notice);
+      } catch (error) {
+        // One row's failure is its own: the rows after it still run.
+        run.failures.add("expire-payment-pending-consultation", error, {
+          consultationId: consultation.id,
+        });
+        failed++;
       }
-      consultationsExpired += 1;
-      await flushBackupInterestNotices(holdNotices);
-      // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
-      const notice = expiryNoticeFor(
-        "consultation",
-        consultation,
-        consultation.consultationPlan,
-        PAY_LINK_LAPSED_REASON,
-      );
-      if (notice) await notifyConsulteeRequestExpired(notice);
     }
 
     console.log(
@@ -2285,32 +2353,46 @@ async function expirePaymentPendingRequests(
     let subscriptionsExpired = 0;
     let subscriptionsSkipped = 0;
     for (const subscription of staleSubscriptions) {
-      const { moved, holdNotices } = await prisma.$transaction(
-        (tx) =>
-          lapseApprovedRequest(tx, {
-            kind: "subscription",
-            id: subscription.id,
-            reason: "PAYMENT_LAPSED",
-            actorUserId: null,
-            // Repeat the cohort read's age predicate inside the CAS WHERE: an
-            // updatedAt touch between read and write must match zero rows.
-            olderThan: expirationDate,
-          }),
-        SLOT_TRANSITION_TX_OPTIONS,
-      );
-      if (moved === 0) {
-        subscriptionsSkipped += 1;
-        continue;
+      if (run.pastDeadline()) break;
+      try {
+        const { moved, holdNotices } = await prisma.$transaction(
+          (tx) =>
+            lapseApprovedRequest(tx, {
+              kind: "subscription",
+              id: subscription.id,
+              reason: "PAYMENT_LAPSED",
+              actorUserId: null,
+              // Repeat the cohort read's age predicate inside the CAS WHERE: an
+              // updatedAt touch between read and write must match zero rows.
+              olderThan: expirationDate,
+            }),
+          SLOT_TRANSITION_TX_OPTIONS,
+        );
+        if (moved === 0) {
+          subscriptionsSkipped += 1;
+          continue;
+        }
+        subscriptionsExpired += 1;
+        await flushBackupInterestNotices(holdNotices);
+        const notice = expiryNoticeFor(
+          "subscription",
+          subscription,
+          subscription.subscriptionPlan,
+          PAY_LINK_LAPSED_REASON,
+        );
+        if (notice) await notifyConsulteeRequestExpired(notice);
+      } catch (error) {
+        // One row's failure is its own: the rows after it still run.
+        run.failures.add("expire-payment-pending-subscription", error, {
+          subscriptionId: subscription.id,
+        });
+        failed++;
       }
-      subscriptionsExpired += 1;
-      await flushBackupInterestNotices(holdNotices);
-      const notice = expiryNoticeFor(
-        "subscription",
-        subscription,
-        subscription.subscriptionPlan,
-        PAY_LINK_LAPSED_REASON,
+    }
+    if (failed > 0) {
+      errors.push(
+        `Payment-pending expiry hit an error on ${failed} request(s)`,
       );
-      if (notice) await notifyConsulteeRequestExpired(notice);
     }
 
     console.log(
@@ -2367,6 +2449,14 @@ async function expireStaleRequestsUnlocked(
   pastDeadline: () => boolean,
 ): Promise<ExpireStaleRequestsResult> {
   const allErrors: string[] = [];
+  const run: SweepRun = {
+    pastDeadline,
+    failures: createRunFailureReporter("bookings"),
+  };
+  // An arm that has not started when the run's deadline passes waits for the next run.
+  const startArm = <T>(arm: () => Promise<T>, notStarted: T): Promise<T> =>
+    pastDeadline() ? Promise.resolve(notStarted) : arm();
+  const NONE_EXPIRED = { expired: 0, issued: 0, failures: 0, errors: [] };
 
   console.log("🕐 Starting stale request expiration...");
   console.log(
@@ -2381,55 +2471,86 @@ async function expireStaleRequestsUnlocked(
   );
 
   // Expire PENDING consultations
-  const consultationResult = await expirePendingConsultations(limits);
+  const consultationResult = await startArm(
+    () => expirePendingConsultations(limits, run),
+    { ...NONE_EXPIRED, slotsReleased: 0 },
+  );
   allErrors.push(...consultationResult.errors);
 
   // Tell the expert once about a request lapsing within six hours.
-  const expiryAlerts = await alertExpiringRequests(limits);
+  const expiryAlerts = await startArm(() => alertExpiringRequests(limits), {
+    alerted: 0,
+    errors: [],
+  });
   allErrors.push(...expiryAlerts.errors);
 
   // Paid consultations parked after a failed restore and never re-placed.
-  const parkedResult = await cancelAgedParkedConsultations({
-    maxRows: limits.maxRequests,
-    pastDeadline,
-  });
+  const parkedResult = await startArm(
+    () =>
+      cancelAgedParkedConsultations({
+        maxRows: limits.maxRequests,
+        pastDeadline,
+      }),
+    { cancelled: 0, issued: 0, failures: 0, errors: [] },
+  );
   allErrors.push(...parkedResult.errors);
 
   // Expire PENDING subscriptions
-  const subscriptionResult = await expirePendingSubscriptions(limits);
+  const subscriptionResult = await startArm(
+    () => expirePendingSubscriptions(limits, run),
+    NONE_EXPIRED,
+  );
   allErrors.push(...subscriptionResult.errors);
 
   // Expire APPROVED-unallocated paid subscriptions (PR 2c money fix)
-  const approvedUnallocated =
-    await expireApprovedUnallocatedSubscriptions(limits);
+  const approvedUnallocated = await startArm(
+    () => expireApprovedUnallocatedSubscriptions(limits, run),
+    NONE_EXPIRED,
+  );
   allErrors.push(...approvedUnallocated.errors);
 
   // #1775 C-3 — paid plans the consultant never allocated within 48 h.
-  const paidUnallocated = await expireUnallocatedPaidSubscriptions(limits);
+  // Admits its own rows against the same deadline and reports what it deferred.
+  const paidUnallocated = await expireUnallocatedPaidSubscriptions(
+    limits,
+    pastDeadline,
+  );
   allErrors.push(...paidUnallocated.errors);
 
   // #1703 — nudge the consultant before that 30-day refund ever fires.
-  const nudges = await nudgeUnscheduledSubscriptions(limits);
+  const nudges = await startArm(() => nudgeUnscheduledSubscriptions(limits), {
+    nudged: 0,
+    errors: [],
+  });
   allErrors.push(...nudges.errors);
 
   // Every later plan week with sessions still to place: bell + email at +0/24/72 h.
-  const weekNudges = await nudgeUnplacedPlanWeeks(limits);
+  const weekNudges = await startArm(() => nudgeUnplacedPlanWeeks(limits), {
+    nudged: 0,
+    errors: [],
+  });
   allErrors.push(...weekNudges.errors);
 
   // Stale tentative-RESCHEDULED holds on APPROVED subscriptions go back to
   // the plan; the parent stays APPROVED and both parties are told.
-  const staleRescheduledReleased = await releaseStaleRescheduledSlots(limits);
+  const staleRescheduledReleased = await startArm(
+    () => releaseStaleRescheduledSlots(limits),
+    { released: 0, errors: [] },
+  );
   allErrors.push(...staleRescheduledReleased.errors);
 
   // Expire APPROVED_PENDING_PAYMENT requests
-  const paymentPendingResult = await expirePaymentPendingRequests(limits);
+  const paymentPendingResult = await startArm(
+    () => expirePaymentPendingRequests(limits, run),
+    { consultationsExpired: 0, subscriptionsExpired: 0, errors: [] },
+  );
   allErrors.push(...paymentPendingResult.errors);
 
   // Interest rows that can no longer be booked expire; settled rows past retention go.
   const interestAt = new Date();
-  const backupInterest = await expireBackupInterest(
-    interestAt,
-    limits.maxRequests,
+  const backupInterest = await startArm(
+    () => expireBackupInterest(interestAt, limits.maxRequests),
+    { expired: 0, purged: 0 },
   ).catch((error: unknown) => {
     allErrors.push(`Failed to expire backup interest: ${error}`);
     return { expired: 0, purged: 0 };
@@ -2438,9 +2559,9 @@ async function expireStaleRequestsUnlocked(
     `   Backup interest expired/purged: ${backupInterest.expired}/${backupInterest.purged}`,
   );
 
-  const eventWaitlist = await expireEventWaitlist(
-    interestAt,
-    limits.maxRequests,
+  const eventWaitlist = await startArm(
+    () => expireEventWaitlist(interestAt, limits.maxRequests),
+    { expired: 0, purged: 0 },
   ).catch((error: unknown) => {
     allErrors.push(`Failed to expire the event waitlist: ${error}`);
     return { expired: 0, purged: 0 };
@@ -2482,6 +2603,13 @@ async function expireStaleRequestsUnlocked(
     console.log("\n⚠️ Errors encountered:");
     allErrors.forEach((e) => console.log(`   - ${e}`));
   }
+  if (pastDeadline()) {
+    console.log(
+      "   Start deadline reached: rows not started wait for the next run",
+    );
+  }
+  // One event per failing op for the whole run.
+  run.failures.flush();
 
   return {
     success: allErrors.length === 0,
