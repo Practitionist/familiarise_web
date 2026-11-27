@@ -6,7 +6,7 @@
  * Dispute events that do not fit one status and one optional amount:
  * a status change or later phase on a terminal dispute is recorded and changes
  * nothing, and a LOST verdict reporting 0 or nothing deducted is settled on the
- * disputed amount. Driven through the real dispatch and the real reconcile poll
+ * disputed amount, never above it, with every share prorated on integers. Driven through the real dispatch and the real reconcile poll
  * against strict client doubles, so a missing delegate method throws.
  */
 
@@ -750,6 +750,56 @@ describe("the amount a lost dispute settles on, through each caller", () => {
       });
     },
   );
+
+  test.each(["webhook", "poll"] as const)(
+    "%s: LOST with a deduction above the disputed amount settles on the disputed amount",
+    async (caller) => {
+      seedPaidTrial();
+      await verdict(caller, "lost", 12_000);
+
+      expect(settledOn()).toEqual(FULL_LOSS);
+      expect(infoEvents()).toHaveLength(1);
+      expect(infoEvents()[0].context).toMatchObject({
+        reportedDeductedPaise: 12_000,
+        disputedPaise: 11_300,
+        settledPaise: 11_300,
+      });
+    },
+  );
+
+  test("CLOSED with a deduction above the disputed amount settles on the disputed amount", async () => {
+    seedPaidTrial();
+    await verdict("webhook", "closed", 12_000);
+
+    expect(settledOn()).toEqual(FULL_LOSS);
+  });
+
+  test("a partial loss prorates each share on integers", async () => {
+    seedPaidTrial();
+    await verdict("webhook", "lost", 7_700);
+
+    // 9040 × 7700 / 11300 is exactly 6160; the same product in floating point floors to 6159.
+    expect(settledOn()).toMatchObject({
+      share: ["PAID", 6_160],
+      clawbacks: [6_160],
+      creditNotes: [7_700],
+    });
+  });
+
+  test("a full loss books the paid share net of TDS on integers", async () => {
+    seedPaidTrial();
+    Object.assign(ce("ce_trial")!, {
+      payout: { status: "COMPLETED", amount: 9_040, tdsDeducted: 1_000 },
+    });
+    await verdict("webhook", "lost", 11_300);
+
+    // 9040 × (9040 − 1000) / 9040 is exactly 8040; 9040 × (1 − 1000/9040) floors to 8039.
+    expect(settledOn()).toMatchObject({
+      share: ["REFUNDED", 9_040],
+      clawbacks: [8_040],
+      creditNotes: [11_300],
+    });
+  });
 
   test.each([
     [

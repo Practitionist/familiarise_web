@@ -302,6 +302,8 @@ describe("PM-13 — handleRefundCreated drops orphan refund.failed", () => {
     store.payments.set("pay_b2c_2", {
       id: "pay_b2c_2",
       paymentIntent: "order_b2c_2",
+      // A refund is booked only on a payment that was captured.
+      paymentStatus: "SUCCEEDED",
       userId: "user_3",
       amount: 10000,
       organizationId: null,

@@ -7,7 +7,7 @@ import prisma from "../../../lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { bookTopUpRefund } from "@/lib/payments/operations/wallet-refund";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
   isLegalDisputeTransition,
   isTerminalDisputeChange,
@@ -19,6 +19,8 @@ import {
   EarningsHoldReason,
   PaymentGateway,
   Prisma,
+  PaymentStatus,
+  RefundStatus,
 } from "@prisma/client";
 import {
   getRazorpayClient,
@@ -486,6 +488,104 @@ export {
 // Refund Webhook Handlers
 // ============================================================================
 
+/** A gateway refund event that was not booked, recorded once per gateway refund. */
+interface UnmatchedRefundEvent {
+  gatewayRefundId: string;
+  orderId: string;
+  /** Null when no Payment row holds the refunded payment. */
+  paymentId: string | null;
+  paymentStatus: PaymentStatus | null;
+  gatewayPaymentId: string | null;
+  capturedGatewayPaymentId: string | null;
+  amountPaise: number;
+  severity: "WARN" | "ERROR";
+  reason: string;
+}
+
+const unmatchedRefundCorrelationId = (gatewayRefundId: string) =>
+  `refund-unmatched:${gatewayRefundId}`;
+
+type RefundEventDecision =
+  | { kind: "book" }
+  | { kind: "defer" }
+  | { kind: "refuse"; severity: "WARN" | "ERROR"; reason: string };
+
+/**
+ * A refund event is booked only on a payment that reached SUCCEEDED, and only
+ * when it refunds that row's captured gateway payment. Ids are compared on a
+ * SUCCEEDED row alone: a row that never captured can hold a failed attempt's id.
+ */
+function decideRefundEvent(
+  payment: { paymentStatus: PaymentStatus; gatewayPaymentId: string | null },
+  incoming: RefundStatus,
+  eventPaymentId: string | undefined,
+  eventPaymentCaptured: boolean | undefined,
+): RefundEventDecision {
+  const awaitingCapture = payment.paymentStatus === PaymentStatus.PENDING;
+  // A failed refund moved no money; it only settles a row already held.
+  if (incoming === RefundStatus.FAILED) {
+    return awaitingCapture ? { kind: "defer" } : { kind: "book" };
+  }
+  if (eventPaymentCaptured === false) {
+    return {
+      kind: "refuse",
+      severity: "WARN",
+      reason: "the refunded gateway payment was never captured",
+    };
+  }
+  // The capture may still be on its way: the re-drive decides once it lands.
+  if (awaitingCapture) return { kind: "defer" };
+  if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
+    return {
+      kind: "refuse",
+      severity: "WARN",
+      reason: `the order's payment is ${payment.paymentStatus} and was never captured`,
+    };
+  }
+  if (
+    eventPaymentId &&
+    payment.gatewayPaymentId &&
+    eventPaymentId !== payment.gatewayPaymentId
+  ) {
+    return {
+      kind: "refuse",
+      severity: "ERROR",
+      reason: `it refunds ${eventPaymentId}, not the captured payment ${payment.gatewayPaymentId}`,
+    };
+  }
+  return { kind: "book" };
+}
+
+/** The event to record for a refused refund, or null when this gateway refund already has one. */
+async function unrecordedUnmatchedRefund(
+  tx: Tx,
+  event: UnmatchedRefundEvent,
+): Promise<UnmatchedRefundEvent | null> {
+  const recorded = await tx.systemEvent.findFirst({
+    where: {
+      category: "PAYMENT",
+      correlationId: unmatchedRefundCorrelationId(event.gatewayRefundId),
+    },
+    select: { id: true },
+  });
+  return recorded ? null : event;
+}
+
+/** Written after the transaction commits; strict, so a failed insert fails the delivery. */
+async function recordUnmatchedRefundEvent(
+  event: UnmatchedRefundEvent,
+): Promise<void> {
+  const { severity, reason, ...context } = event;
+  await recordSystemEvent({
+    strict: true,
+    category: "PAYMENT",
+    severity,
+    message: `Gateway refund ${event.gatewayRefundId} on order ${event.orderId} was not booked: ${reason}`,
+    context: { ...context, reason },
+    correlationId: unmatchedRefundCorrelationId(event.gatewayRefundId),
+  });
+}
+
 /**
  * Handle refund created/processed event.
  *
@@ -512,6 +612,8 @@ export async function handleRefundCreated(
   status: string,
   providerPaymentId?: string,
   notes?: Record<string, string>,
+  /** The event's embedded payment `captured` flag, when the event carries one. */
+  eventPaymentCaptured?: boolean,
 ) {
   // Serializable + retry — the contract `applyRefundCascade` documents for
   // every driver ("Caller must pass a transaction client; the cascade itself
@@ -529,12 +631,14 @@ export async function handleRefundCreated(
   // #1653 — the refund receipt email rides the same outbox: staged through
   // `tx`, attempted after commit. A retry re-runs the callback, so reset.
   let stagedEmails: StagedRecipientEmail[] = [];
+  let unmatched: UnmatchedRefundEvent | null = null;
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         stagedEmails = [];
         // A retried attempt must not inherit a bell staged by the aborted one.
         stagedNotification = null;
+        unmatched = null;
         // Find the payment (B2C appointment path).
         //
         // #1353 — match on EITHER id. A refund webhook carries only the gateway's
@@ -561,11 +665,54 @@ export async function handleRefundCreated(
           },
         });
 
-        if (payment?.paymentStatus === "PENDING") {
-          return new DeferSignal(`refund_before_capture:${refundId}`);
+        if (payment) {
+          const decision = decideRefundEvent(
+            payment,
+            mapGatewayRefundStatus(status),
+            providerPaymentId,
+            eventPaymentCaptured,
+          );
+          if (decision.kind === "defer") {
+            return new DeferSignal(`refund_before_capture:${refundId}`);
+          }
+          if (decision.kind === "refuse") {
+            // Books nothing; one event per gateway refund, whatever redelivers it.
+            unmatched = await unrecordedUnmatchedRefund(tx, {
+              gatewayRefundId: refundId,
+              orderId: payment.paymentIntent,
+              paymentId: payment.id,
+              paymentStatus: payment.paymentStatus,
+              gatewayPaymentId: providerPaymentId ?? null,
+              capturedGatewayPaymentId: payment.gatewayPaymentId,
+              amountPaise: amount,
+              severity: decision.severity,
+              reason: decision.reason,
+            });
+            return;
+          }
         }
 
         if (!payment) {
+          // The event's own word that the payment was never captured is
+          // decisive for a top-up, an invoice receipt and an unknown payment too.
+          if (
+            eventPaymentCaptured === false &&
+            mapGatewayRefundStatus(status) !== RefundStatus.FAILED
+          ) {
+            unmatched = await unrecordedUnmatchedRefund(tx, {
+              gatewayRefundId: refundId,
+              orderId: paymentIntentId,
+              paymentId: null,
+              paymentStatus: null,
+              gatewayPaymentId: providerPaymentId ?? null,
+              capturedGatewayPaymentId: null,
+              amountPaise: amount,
+              severity: "WARN",
+              reason: "the refunded gateway payment was never captured",
+            });
+            return;
+          }
+
           // Fall through to enterprise branches. We need the original
           // provider payment id (`pay_<…>`) to look up org-level rows.
           if (!providerPaymentId) {
@@ -886,12 +1033,11 @@ export async function handleRefundCreated(
               await restoreOwedOnFailedRefund(tx, existingRefund.id);
               await countOwedDriveFailure(tx, existingRefund.id);
             }
-            if (lateSuccess) {
-              await resettleOwedOnLateSuccess(tx, existingRefund.id);
-            }
 
             // Run side effects when transitioning TO SUCCEEDED
             if (newStatus === "SUCCEEDED") {
+              // A row that was once failed gave its owed refund back; no-op otherwise.
+              await resettleOwedOnLateSuccess(tx, existingRefund.id);
               await runRefundSideEffects(
                 payment.id,
                 status,
@@ -946,13 +1092,20 @@ export async function handleRefundCreated(
               amountPaise: amount,
               refundId: { startsWith: "pending_" },
             },
-            select: { id: true, refundId: true, reason: true },
+            select: { id: true, refundId: true, reason: true, status: true },
           });
           if (reservation) {
+            // A placeholder already marked FAILED whose refund the gateway now
+            // reports in flight or processed stays the one row for it: a pending
+            // event returns it to PENDING, a success settles it.
+            const revivesFailed =
+              reservation.status === "FAILED" &&
+              (mappedNewStatus === "PENDING" ||
+                mappedNewStatus === "SUCCEEDED");
             const claimed = await tx.refund.updateMany({
               where: {
                 id: reservation.id,
-                status: "PENDING",
+                status: revivesFailed ? "FAILED" : "PENDING",
                 refundId: reservation.refundId,
               },
               data: {
@@ -967,6 +1120,7 @@ export async function handleRefundCreated(
                 await countOwedDriveFailure(tx, reservation.id);
               }
               if (mappedNewStatus === "SUCCEEDED") {
+                await resettleOwedOnLateSuccess(tx, reservation.id);
                 await runRefundSideEffects(
                   payment.id,
                   status,
@@ -1081,6 +1235,7 @@ export async function handleRefundCreated(
       },
     ),
   );
+  if (unmatched) await recordUnmatchedRefundEvent(unmatched);
   await attemptStaged(stagedNotification);
   await attemptStagedEmails(
     stagedEmails,
@@ -1482,8 +1637,9 @@ export async function settleWonDispute(
 }
 
 /**
- * LOST / CHARGE_REFUNDED: reverse `lostAmountPaise / payment.amount` of every
- * share, then release this dispute's hold, so a partial loss leaves the rest
+ * LOST / CHARGE_REFUNDED: settle on the lost amount, never above the disputed
+ * amount, reversing that fraction of `payment.amount` from every share on
+ * integers, then release this dispute's hold, so a partial loss leaves the rest
  * payable. A share goes REFUNDED only once its whole amount is reversed.
  * Callers run it once, on the CAS that moves the dispute to its verdict.
  */
@@ -1493,8 +1649,8 @@ export async function settleLostDispute(
   lostAmountPaise: number,
 ): Promise<LostDisputeSettlement> {
   const { disputeId } = dispute;
-  const lostPaise = Math.max(0, lostAmountPaise);
-  if (lostPaise === 0) {
+  const lostPaise = Math.min(Math.max(0, lostAmountPaise), dispute.amountPaise);
+  if (lostPaise <= 0) {
     await releaseDisputeHolds(tx, dispute);
     return NO_CLAWBACK_PAGE;
   }
@@ -1509,11 +1665,15 @@ export async function settleLostDispute(
       },
     })) > 0;
 
-  // Floored per share and capped at what is left to reverse.
-  const prorationFactor =
+  // Floored per share on integers; a loss of the whole payment takes the whole share.
+  const lostShareOf = (sharePaise: number): number =>
     dispute.payment.amount > 0
-      ? Math.min(lostPaise / dispute.payment.amount, 1)
-      : 1;
+      ? prorate(
+          sharePaise,
+          Math.min(lostPaise, dispute.payment.amount),
+          dispute.payment.amount,
+        )
+      : sharePaise;
 
   const lostConsultantEarnings = await tx.consultantEarnings.findMany({
     where: {
@@ -1552,7 +1712,7 @@ export async function settleLostDispute(
     const { reversedPaise: reversalNow } = await applyCappedEarningReversal(
       tx,
       earning,
-      Math.floor(earning.consultantSharePaise * prorationFactor),
+      lostShareOf(earning.consultantSharePaise),
       LOST_REVERSIBLE,
     );
     const consultantReversalApplied = reversalNow > 0;
@@ -1574,9 +1734,14 @@ export async function settleLostDispute(
     // reversed separately by recordTdsReversal.
     const payoutGross = Number(earning.payout?.amount ?? 0);
     const payoutTds = Number(earning.payout?.tdsDeducted ?? 0);
-    const netFraction =
-      payoutGross > 0 ? Math.max(0, 1 - payoutTds / payoutGross) : 1;
-    const netClawbackPaise = Math.floor(reversalNow * netFraction);
+    const netClawbackPaise =
+      payoutGross > 0
+        ? prorate(
+            reversalNow,
+            Math.max(0, payoutGross - payoutTds),
+            payoutGross,
+          )
+        : reversalNow;
 
     if (earning.status === "PAID" && consultantReversalApplied) {
       consultantManualRecoveryPaise += netClawbackPaise;
@@ -1660,11 +1825,7 @@ export async function settleLostDispute(
     // The shared CAS writer pins the prior amount and writes an absolute
     // value, so two LOST disputes compose to min(share, a + b).
     const orgApplied = (
-      await applyCappedOrgEarningReversal(
-        tx,
-        oe,
-        Math.floor(oe.orgSharePaise * prorationFactor),
-      )
+      await applyCappedOrgEarningReversal(tx, oe, lostShareOf(oe.orgSharePaise))
     ).reversedPaise;
 
     if (
@@ -1779,8 +1940,9 @@ export interface DisputeVerdictSettlement extends LostDisputeSettlement {
 }
 
 /**
- * A lost verdict settles on the reported deduction when it is above 0; a 0 or
- * missing figure is unknown, so the disputed amount is used.
+ * A lost verdict settles on the reported deduction when it is above 0, capped
+ * at the disputed amount; a 0 or missing figure is unknown, so the disputed
+ * amount is used.
  */
 function lostDisputeAmount(
   dispute: DisputeSettlementInput,
@@ -1789,7 +1951,7 @@ function lostDisputeAmount(
 ): { settledPaise: number; mismatch: DeductionMismatch | null } {
   const settledPaise =
     reportedPaise !== null && reportedPaise > 0
-      ? reportedPaise
+      ? Math.min(reportedPaise, dispute.amountPaise)
       : dispute.amountPaise;
   const mismatch =
     reportedPaise !== null && reportedPaise !== dispute.amountPaise

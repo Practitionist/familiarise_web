@@ -9,6 +9,7 @@ import {
   statusFor,
   type CleanupRouteHandlers,
 } from "@/lib/cron/cleanup-route";
+import { parseDateParam } from "@/lib/cron/date-param";
 import { adminActorId } from "@/lib/cron/run-context";
 import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import type { JobCategory } from "@/lib/cron/job-categories";
@@ -1655,16 +1656,28 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     build: () =>
       cleanupRoute({
         job: "reconcile-gateway-settlements",
-        run: async (_req, { startedAt }) => {
+        run: async (req, { startedAt }) => {
           const { runReconcileGatewaySettlements } =
             await import("@/jobs/reconcile/reconcile-gateway-settlements");
-          return runReconcileGatewaySettlements(startedAt);
+          // A manual caller may name one IST day (?date=YYYY-MM-DD) to read again.
+          const date = parseDateParam(req);
+          return runReconcileGatewaySettlements(
+            startedAt,
+            undefined,
+            date === undefined ? {} : { date },
+          );
         },
         needsAttention: (r) =>
           r.byStatus.AMOUNT_MISMATCH +
             r.byStatus.FEE_MISMATCH +
-            r.byStatus.UNMATCHED >
-          0,
+            r.byStatus.UNMATCHED +
+            r.rejectedRows +
+            r.settlementsHeld +
+            r.postedMismatches >
+            0 ||
+          r.daysBehind > 2 ||
+          r.failedDays.length > 0 ||
+          r.stoppedShort.some((s) => s.bound !== "deadline"),
         items: (r) => ({ processed: r.fetched }),
         failureMessage: "Failed to reconcile gateway settlements",
       }),
@@ -2034,7 +2047,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           reconciledCount: r.reconciledCount,
           failedCount: r.failedCount,
           skippedCount: r.skippedCount,
-          failedUnknownId: r.failedUnknownId,
+          unknownAtGateway: r.unknownAtGateway,
           redrivenCount: r.redrivenCount,
           redriveFailedCount: r.redriveFailedCount,
           redriveDeadLettered: r.redriveDeadLettered,

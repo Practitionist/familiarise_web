@@ -1636,11 +1636,12 @@ export async function applyRefundCascade(
       });
     }
 
+    // Decided from the earning and its payout alone: whoever funded the
+    // payment, a share already paid out is owed back by the consultant.
     accumulatePaidConsultantClawback(
       consultantClawbacks,
       earnings,
       reversal.reversedPaise,
-      { isOrgPayment: Boolean(payment.organizationId) },
     );
   }
 
@@ -1673,6 +1674,9 @@ export async function applyRefundCascade(
   // Step 7: OrganizationEarnings reversal + clawback.
   // -----------------------------------------------------------------------
   let organizationEarningsReversed = 0;
+  // Only an organisation payout clawback writes the organisation's own audit
+  // row; a consultant clawback does not stand in for it.
+  let orgClawbackAudited = false;
   // What each ORG row ACTUALLY absorbed, keyed by earning id — the org twin of
   // `appliedByEarning` above, for the identical reason.
   const appliedByOrgEarning = new Map<string, number>();
@@ -1742,6 +1746,7 @@ export async function applyRefundCascade(
       });
 
       clawbackInitiated = true;
+      orgClawbackAudited = true;
     }
   }
 
@@ -1849,7 +1854,7 @@ export async function applyRefundCascade(
   // For payments tagged with an `organizationId` we still want a
   // category: INVOICE row so the org-side audit feed shows the refund.
   // -----------------------------------------------------------------------
-  if (payment.organizationId && !clawbackInitiated) {
+  if (payment.organizationId && !orgClawbackAudited) {
     await tx.orgAuditLog.create({
       data: {
         organizationId: payment.organizationId,
