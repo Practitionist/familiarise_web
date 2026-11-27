@@ -3,6 +3,7 @@
  * in razorpay.ts: basic auth, a bounded timeout, typed errors.
  *
  *   GET   /v1/disputes/{id}            poll one dispute (reconcile-disputes)
+ *   GET   /v1/disputes                 one page of every dispute, through the SDK
  *   POST  /v1/documents              multipart `file` + `purpose=dispute_evidence`
  *   PATCH /v1/disputes/{id}/contest  action draft|submit, amount, summary, lists
  *
@@ -12,6 +13,12 @@
  */
 
 import type { DisputeStatus } from "@prisma/client";
+import { z } from "zod";
+import {
+  razorpayListedDisputePageSchema,
+  type RazorpayListedDispute,
+} from "@/schemas/webhooks/razorpay";
+import { getRazorpayClient, withRazorpaySdkTimeout } from "./razorpay";
 import type { DisputeResult } from "./types";
 
 const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
@@ -278,4 +285,53 @@ export async function getRazorpayDispute(
     paymentId: entity.payment_id ?? null,
     amountDeductedPaise: entity.amount_deducted ?? null,
   };
+}
+
+/** The plain object the SDK rejects with. */
+const sdkErrorSchema = z.object({
+  statusCode: z.coerce.number().int(),
+  error: z
+    .object({
+      code: z.string().optional(),
+      description: z.string().optional(),
+      reason: z.string().optional(),
+    })
+    .optional(),
+});
+
+/**
+ * One page of every dispute on the account. The SDK sends only `count` and
+ * `skip`, the entity carries no update time, and no ordering is assumed, so a
+ * caller finds a change by comparing each listed dispute with its own row.
+ * A page shorter than `count` is the last one.
+ */
+export async function listRazorpayDisputes(
+  count: number,
+  skip: number,
+): Promise<RazorpayListedDispute[]> {
+  const client = getRazorpayClient();
+  if (!client) {
+    throw new RazorpayDisputeError(
+      "Razorpay credentials are not configured.",
+      "RAZORPAY_NOT_CONFIGURED",
+      503,
+    );
+  }
+  try {
+    const page = await withRazorpaySdkTimeout("disputes.all", () =>
+      client.disputes.all({ count, skip }),
+    );
+    return razorpayListedDisputePageSchema.parse(page).items;
+  } catch (error) {
+    // A timeout or a parse failure is already an Error; the SDK rejects with a plain object.
+    if (error instanceof Error) throw error;
+    const answer = sdkErrorSchema.safeParse(error);
+    throw answer.success
+      ? gatewayError(answer.data.statusCode, answer.data.error)
+      : new RazorpayDisputeError(
+          "Razorpay did not answer the dispute list.",
+          "GATEWAY_ERROR",
+          502,
+        );
+  }
 }

@@ -18,7 +18,9 @@ import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
 import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
+  razorpayListedRefundPageSchema,
   razorpayOrderEntitySchema,
+  type RazorpayListedRefund,
   type RazorpayOrderEntity,
 } from "@/schemas/webhooks/razorpay";
 
@@ -1129,6 +1131,39 @@ export async function listRazorpayRefunds(
       });
     }
     throw refundError;
+  }
+}
+
+/**
+ * One page of the account's refunds created inside `[from, to]` (Unix
+ * seconds). A page shorter than `count` is the last one; no ordering is assumed.
+ */
+export async function listRazorpayRefundsCreatedBetween(
+  window: { from: number; to: number },
+  count: number,
+  skip: number,
+): Promise<RazorpayListedRefund[]> {
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    throw new RefundError(
+      "Razorpay client not initialized",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+  try {
+    const page = await withRazorpaySdkTimeout("refunds.all", () =>
+      razorpayClient.refunds.all({
+        from: window.from,
+        to: window.to,
+        count,
+        skip,
+      }),
+    );
+    return razorpayListedRefundPageSchema.parse(page).items;
+  } catch (error) {
+    // The SDK rejects with a plain object; a timeout or a parse failure is already an Error.
+    throw error instanceof Error ? error : handleRazorpayRefundError(error);
   }
 }
 
