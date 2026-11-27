@@ -27,6 +27,7 @@ import type {
 } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import { classEnrolmentFrom } from "./class-enrolment";
 import { HOST_ATTRIBUTED_OUTCOMES } from "./session-outcome";
 import { INCIDENT_REFUND_KEY_PREFIX } from "./incident-keys";
 import { missedAt } from "./misses";
@@ -141,6 +142,55 @@ export function seriesCancelRefundPaise(
   const left =
     BigInt(amountPaise) - ledger.unitPaise * BigInt(ledger.deliveredHeld);
   return left > BigInt(0) ? left : BigInt(0);
+}
+
+/**
+ * The sessions a seat was sold, fixed at purchase: its stored count, or for a
+ * seat without one what checkout would have sold at `joinedAt` (the plan's
+ * sessions less those already begun). It never moves with rows placed later.
+ */
+function sessionsSoldAt(args: {
+  N: number;
+  joinedAt: Date;
+  occurrences: LedgerOccurrence[];
+  sessionsPurchased?: number | null;
+}): number {
+  if (args.sessionsPurchased) return args.sessionsPurchased;
+  const enrolment = classEnrolmentFrom({
+    pricePaise: 0,
+    N: args.N,
+    lateJoinUntilSession: null,
+    sessions: args.occurrences,
+    now: args.joinedAt,
+  });
+  const sold = enrolment.state === "unscheduled" ? 0 : enrolment.remaining;
+  return sold || args.N || 1;
+}
+
+/**
+ * What a seat released at `releasedAt` is owed for what it was not delivered:
+ * its amount less one unit per held session that had ended by then. A session
+ * under way at the release, and any the class held afterwards, is not
+ * delivered. The unit and the delivered count share one sold-session count.
+ */
+export function releasedSeatRefundPaise(args: {
+  N: number;
+  amountPaise: bigint | number;
+  joinedAt: Date;
+  occurrences: LedgerOccurrence[];
+  sessionsPurchased?: number | null;
+  releasedAt: Date;
+}): { refundPaise: bigint; deliveredHeld: number } {
+  const { unitPaise, deliveredHeld } = seatLedgerFrom({
+    ...args,
+    sessionsPurchased: sessionsSoldAt(args),
+    now: args.releasedAt,
+  });
+  const left = BigInt(args.amountPaise) - unitPaise * BigInt(deliveredHeld);
+  return {
+    refundPaise: left > BigInt(0) ? left : BigInt(0),
+    deliveredHeld,
+  };
 }
 
 /** The key prefix of the refund a completed class owes a seat for sessions it sold but never placed. */

@@ -805,9 +805,14 @@ export async function POST(
       planTitle = plan?.title;
     }
 
-    // #1008 — refuse to cancel while a dispute is live on this appointment: the
-    // cancel would fire refunds that double-pay against a gateway chargeback.
-    if (await hasActiveDisputeForAppointment(appointmentId)) {
+    // A live dispute freezes a 1:1 booking: its refund could pay twice against
+    // the chargeback. A class or webinar carries every seat's payment, so one
+    // seat's dispute never blocks the event; that seat's owed refund waits.
+    if (
+      !appointment.class &&
+      !appointment.webinar &&
+      (await hasActiveDisputeForAppointment(appointmentId))
+    ) {
       return NextResponse.json(
         {
           error:

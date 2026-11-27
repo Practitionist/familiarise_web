@@ -216,9 +216,10 @@ export function RemoveParticipantDialog({
                 {attendeeName ?? "The attendee"} will see this reason and note,
                 and is blocked from this event&apos;s calls. Your earnings from
                 this seat are held while support reviews it; support decides
-                within 72 hours. If support overturns the removal or
-                doesn&apos;t decide in time, whatever is still unrefunded on
-                their seat goes back to them.
+                within 72 hours. If support overturns the removal, whatever is
+                still unrefunded on their seat goes back to them. If support
+                doesn&apos;t decide in time, they are refunded the sessions that
+                had not been delivered when you removed them.
               </p>
             </div>
           )}

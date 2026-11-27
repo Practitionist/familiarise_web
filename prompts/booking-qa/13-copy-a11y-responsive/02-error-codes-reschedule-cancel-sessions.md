@@ -163,11 +163,11 @@ Where the UI never reaches a door (API-only), say so and judge the sentence for 
 
 ## UX-33 — `DISPUTE_ACTIVE` (409)
 
-**Trigger:** needs a payment with an open dispute (08 may seed one with owner approval). Then cancel, reschedule, respond, re-time.
+**Trigger:** needs a payment with an open dispute on a 1:1 booking (a consultation or a plan; 08 may seed one with owner approval). Then cancel it, ask to reschedule it, accept a reschedule request on it, and return one of a plan's sessions. Separately, with a disputed seat on a class or webinar: the host cancels the event, the host re-times the webinar, and the disputing learner leaves their own seat.
 
-**Expect:** "This appointment has an open payment dispute and can't be cancelled until it resolves." (and "rescheduled", "re-timed" variants).
+**Expect:** on the 1:1 booking, `409` `DISPUTE_ACTIVE`: "This appointment has an open payment dispute and can't be cancelled until it resolves." on the cancel, the "rescheduled" variant on the reschedule request and on accepting one, and "This plan has an open payment dispute, so its sessions can't be returned until it resolves." on the session return. On the class or webinar, no `DISPUTE_ACTIVE` at all: one seat's dispute never freezes the event for the other seats, so the cancel and the re-time go ahead, and the learner's own seat leave is not refused either. There is no "re-timed" variant of the sentence.
 
-**Probe further:** does the user learn what a dispute is, who opened it, or how long it lasts? BLOCKED if no dispute fixture.
+**Probe further:** does the user learn what a dispute is, who opened it, or how long it lasts? After the event cancel, does the disputing learner see that their refund waits for the dispute (MO-62)? BLOCKED if no dispute fixture.
 
 ## UX-34 — `SESSION_IN_PROGRESS` and `SESSION_ALREADY_DELIVERED` (409)
 

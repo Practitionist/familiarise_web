@@ -54,7 +54,8 @@ export function rejectionRefundReason(kind: string, refundPct: number): string {
 
 /** The refund reasons of the staff doors that end bookings: moderation and a maintenance freeze. */
 export const STAFF_CANCEL_REFUND_REASON = {
-  MODERATION: "moderation (100% — platform-initiated cancellation)",
+  MODERATION:
+    "moderation (undelivered sessions in full — platform-initiated cancellation)",
   MAINTENANCE: "Scheduled platform maintenance",
 } as const;
 

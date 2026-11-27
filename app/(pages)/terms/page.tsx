@@ -368,10 +368,15 @@ export default function TermsPage() {
                   is refunded at the moment of removal.
                 </li>
                 <li>
-                  If support overturns the removal, or does not decide within 72
-                  hours, whatever is still unrefunded on the seat is refunded to
-                  where it was paid from. An overturned removal also lifts the
-                  call block.
+                  If support overturns the removal, whatever is still unrefunded
+                  on the seat is refunded to where it was paid from, and the
+                  call block is lifted.
+                </li>
+                <li>
+                  If support does not decide within 72 hours, the sessions that
+                  had not been delivered when the attendee was removed are
+                  refunded to where they were paid from. A session that was
+                  under way at the removal counts as not delivered.
                 </li>
                 <li>
                   If support upholds the removal, nothing is refunded
@@ -702,8 +707,10 @@ export default function TermsPage() {
                 <strong>payment dispute</strong> (also called a chargeback) is a
                 request to your bank or card issuer to reverse a payment. Please
                 report a problem to us first: it is usually faster, and a
-                chargeback freezes the amount and pauses actions on the booking
-                while the bank decides.
+                chargeback freezes the amount and pauses changes to a one-to-one
+                booking while the bank decides. A class or webinar can still be
+                cancelled or moved by its host; a refund owed on the disputed
+                payment then waits for the bank&apos;s decision.
               </p>
 
               <Separator className="my-6" />

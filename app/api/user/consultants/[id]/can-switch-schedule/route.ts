@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { checkActiveAppointments } from "../../utils/consultant-appointments";
+import { checkActiveAppointments } from "@/lib/booking/active-appointments";
 
 import { getSession } from "@/lib/auth-server";
 /**

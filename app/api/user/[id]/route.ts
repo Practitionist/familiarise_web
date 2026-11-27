@@ -17,12 +17,14 @@ import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   derivePseudonym,
   eraseStreamPrincipalFootprint,
+  erasureBookingBlock,
+  ErasureBlockedByBookingsError,
   hasMoneyInFlight,
   moneyInFlightForUser,
   scrubUser,
   soleOwnerOrganizationsForUser,
+  type ErasureBookingBlock,
 } from "@/lib/compliance/erasure/scrub-user";
-import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 import {
   afterCollaborationEnded,
@@ -292,49 +294,25 @@ export async function PATCH(
   }
 }
 
-async function checkConsulteeActiveBookingsBlock(
-  consulteeProfileId: string,
-): Promise<NextResponse | null> {
-  const activeBookingStatuses = [
-    "PENDING",
-    "APPROVED",
-    "APPROVED_PENDING_PAYMENT",
-  ] as const;
-  const [activeConsultations, activeSubscriptions, activeTrials] =
-    await Promise.all([
-      prisma.consultation.count({
-        where: {
-          requestedById: consulteeProfileId,
-          status: { in: [...activeBookingStatuses] },
-        },
-      }),
-      prisma.subscription.count({
-        where: {
-          requestedById: consulteeProfileId,
-          status: { in: [...activeBookingStatuses] },
-        },
-      }),
-      prisma.trial.count({
-        where: {
-          consulteeProfileId,
-          status: { in: ["SCHEDULED", "AWAITING_PAYMENT"] },
-        },
-      }),
-    ]);
-  const totalActiveBookings =
-    activeConsultations + activeSubscriptions + activeTrials;
-  if (totalActiveBookings === 0) return null;
-
+/** The 409 a user who still hosts or holds a live booking gets. */
+function bookingBlockResponse(block: ErasureBookingBlock): NextResponse {
+  if (block.kind === "hosted") {
+    const { hosted } = block;
+    return NextResponse.json(
+      {
+        error: `Cannot delete account while you have active or upcoming appointments (${hosted.details ?? `${hosted.total} active`}). Please complete or cancel them first.`,
+        code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
+        breakdown: hosted.breakdown,
+      },
+      { status: 409 },
+    );
+  }
   return NextResponse.json(
     {
       error:
-        "Cannot delete account while you have active or upcoming consultations, subscriptions, or trials. Please complete or cancel your active bookings first.",
+        "Cannot delete account while you have active or upcoming consultations, subscriptions, trials, or class and webinar seats. Please complete, cancel or leave them first.",
       code: "ERASURE_BLOCKED_ACTIVE_BOOKINGS",
-      counts: {
-        activeConsultations,
-        activeSubscriptions,
-        activeTrials,
-      },
+      counts: block.held,
     },
     { status: 409 },
   );
@@ -354,7 +332,6 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     programAssignmentCount,
     erasureRequestCount,
     profile,
-    consulteeProfile,
     supportHistoryCount,
   ] = await Promise.all([
     soleOwnerOrganizationsForUser(prisma, id),
@@ -385,10 +362,6 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
           },
         },
       },
-    }),
-    prisma.consulteeProfile.findFirst({
-      where: { userId: id },
-      select: { id: true },
     }),
     supportRetainedHistoryCount(prisma, id),
   ]);
@@ -423,34 +396,12 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     };
   }
 
-  if (profile?.id) {
-    const activeAppointments = await checkActiveAppointments(
-      profile.id,
-      prisma,
-      "removal",
-    );
-    if (activeAppointments.hasActive) {
-      return {
-        blockerResponse: NextResponse.json(
-          {
-            error: `Cannot delete account while you have active or upcoming appointments (${activeAppointments.details ?? `${activeAppointments.total} active`}). Please complete or cancel them first.`,
-            code: "ERASURE_BLOCKED_ACTIVE_APPOINTMENTS",
-            breakdown: activeAppointments.breakdown,
-          },
-          { status: 409 },
-        ),
-        hasRetainedHistory: false,
-      };
-    }
-  }
-
-  if (consulteeProfile?.id) {
-    const bookingBlocker = await checkConsulteeActiveBookingsBlock(
-      consulteeProfile.id,
-    );
-    if (bookingBlocker) {
-      return { blockerResponse: bookingBlocker, hasRetainedHistory: false };
-    }
+  const block = await erasureBookingBlock(prisma, id);
+  if (block) {
+    return {
+      blockerResponse: bookingBlockResponse(block),
+      hasRetainedHistory: false,
+    };
   }
 
   const consultantMoneyCount = profile
@@ -533,6 +484,10 @@ async function executeUserHardDeleteOrFallbackScrub(
   let endedSessions: EndedSessions[] = [];
   const removedCollaborations = await prisma
     .$transaction(async (tx) => {
+      // Read first, before any write: a booking or hosted session that
+      // appeared since the door's check stops the delete with nothing changed.
+      const block = await erasureBookingBlock(tx, id);
+      if (block) throw new ErasureBlockedByBookingsError(block);
       const removed = await endCollaborationsForUser(tx, id, {
         endedByUserId: null,
       });
@@ -617,6 +572,10 @@ export async function DELETE(
 
     return await executeUserHardDeleteOrFallbackScrub(id);
   } catch (error) {
+    // A booking landed after the checks above: the scrub or the delete rolled back whole.
+    if (error instanceof ErasureBlockedByBookingsError) {
+      return bookingBlockResponse(error.block);
+    }
     console.error("Error deleting user:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
