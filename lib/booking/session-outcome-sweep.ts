@@ -1145,7 +1145,14 @@ async function confirmClassVoid(
   return true;
 }
 
-type PageResult = "judged" | "out-of-time";
+/** A page judged to its end, or cut by the deadline: `resumeAfter` is the last row before the first one not tried (null when that is the page's first row). */
+type PageResult = "judged" | { resumeAfter: Keyset | null };
+
+/** The keyset of the row just before `id` on the page. */
+function keysetBefore(rows: ConfirmRow[], id: string): Keyset | null {
+  const prior = rows[rows.findIndex((r) => r.id === id) - 1];
+  return prior?.outcomeAt ? { outcomeAt: prior.outcomeAt, id: prior.id } : null;
+}
 
 /** Judges one page and confirms its strong verdicts that are closed or agreed and not disputed. */
 async function confirmPage(
@@ -1153,7 +1160,12 @@ async function confirmPage(
   where: Prisma.AppointmentOccurrenceWhereInput,
   now: Date,
   run: OutcomeConfirmRun,
-  ctx: { pastDeadline: () => boolean; failures: RunFailureReporter },
+  ctx: {
+    pastDeadline: () => boolean;
+    failures: RunFailureReporter;
+    /** Rows whose confirmation threw this run, reported once when the run ends. */
+    failed: string[];
+  },
 ): Promise<PageResult> {
   // Every window overlapping a row's booked time, however many the history holds.
   const outages = await readOverlappingOutages(prisma, rows);
@@ -1204,21 +1216,15 @@ async function confirmPage(
       ),
   );
   run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
-  for (const row of strong.filter((r) => r.classVoid)) {
-    // Each class void is its own transaction with notices, so it runs inside the pass's share too.
-    if (ctx.pastDeadline()) return "out-of-time";
+  // A class void (its own transaction, with notices) and a no-show claim (it drives a refund) run one
+  // at a time inside the pass's share, in page order, so a cut names how far the page got.
+  for (const row of strong.filter((r) => r.classVoid || r.claim)) {
+    if (ctx.pastDeadline()) return { resumeAfter: keysetBefore(rows, row.id) };
     try {
-      if (await confirmClassVoid(where, row, now)) run.confirmed++;
-    } catch (error) {
-      run.errors.push(
-        `Failed to confirm the class void on ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  // A no-show's claim drives a refund, so it runs one at a time inside the pass's share.
-  for (const row of strong.filter((r) => r.claim)) {
-    if (ctx.pastDeadline()) return "out-of-time";
-    try {
+      if (row.classVoid) {
+        if (await confirmClassVoid(where, row, now)) run.confirmed++;
+        continue;
+      }
       const result = await confirmConsultantNoShow(row.id, {
         now,
         guard: confirmGuard(where, row),
@@ -1235,8 +1241,9 @@ async function confirmPage(
         run.weak++;
       }
     } catch (error) {
+      ctx.failed.push(row.id);
       run.errors.push(
-        `Failed to claim the consultant no-show on ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to ${row.classVoid ? "confirm the class void" : "claim the consultant no-show"} on ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -1275,6 +1282,7 @@ export async function confirmClosedOutcomes(
     return run;
   }
   const failures = createRunFailureReporter("bookings");
+  const failed: string[] = [];
   try {
     while (!pastDeadline()) {
       // "query", not a join: a join reads nested timestamps in the session zone.
@@ -1293,9 +1301,13 @@ export async function confirmClosedOutcomes(
       const page = await confirmPage(rows, where, now, run, {
         pastDeadline,
         failures,
+        failed,
       });
-      // Claims the deadline cut keep the cursor before this page, so the next run starts with them.
-      if (page === "out-of-time") break;
+      // A page the deadline cut resumes at its first row not tried, so a row that fails slowly on every run is passed, not retried first.
+      if (page !== "judged") {
+        after = page.resumeAfter ?? after;
+        break;
+      }
       after =
         rows.length < OUTCOME_CONFIRM_PAGE
           ? null
@@ -1309,6 +1321,16 @@ export async function confirmClosedOutcomes(
   } finally {
     failures.flush();
   }
+  // One console finding per run for the rows whose confirmation threw; the pass tries them again when the scan wraps.
+  await reportStandingFinding({
+    key: "session-outcome-sweep:confirm-failed",
+    ids: failed,
+    message: `${failed.length} negative verdict(s) could not be confirmed this run and were passed over until the scan wraps`,
+  }).catch((error: unknown) => {
+    run.errors.push(
+      `Failed to report unconfirmed verdicts: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
   run.checkpoint = after ? encodeCursor(after) : null;
   return run;
 }

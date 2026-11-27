@@ -38,6 +38,10 @@ jest.mock("../../lib/booking/class-sessions", () => ({
     exitEmailArgs: null,
   })),
 }));
+const mockStandingFinding = jest.fn(async (_finding: unknown) => true);
+jest.mock("../../lib/observability/standing-finding", () => ({
+  reportStandingFinding: (finding: unknown) => mockStandingFinding(finding),
+}));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
 }));
@@ -808,6 +812,43 @@ describe("a host-attributed class void", () => {
     expect(onClassVoidConfirmed).not.toHaveBeenCalled();
     expect(row("closed").outcomeConfirmedAt).toBeNull();
     expect(run.checkpoint).toBeNull();
+  });
+
+  it("a void whose confirmation fails and spends the pass's time on every run does not stop a later void on its page: the next run starts past it, and it is reported once per run", async () => {
+    occurrences.rows.push(
+      classVoid("stuck", { outcomeAt: hoursAgo(50) }),
+      classVoid("later", { outcomeAt: hoursAgo(60) }),
+    );
+    // The stuck void's confirmation rolls back, and takes what was left of the pass's share.
+    let spent = false;
+    jest.mocked(onClassVoidConfirmed).mockImplementation(async (_tx, args) => {
+      if (args.occurrenceId === "stuck") {
+        row("stuck").outcomeConfirmedAt = null;
+        spent = true;
+        throw new Error("the series lock timed out");
+      }
+      return { bells: [], cancelEmailArgs: null, exitEmailArgs: null };
+    });
+
+    const first = await confirmClosedOutcomes(NOW, () => spent);
+    expect(first.confirmed).toBe(0);
+    expect(row("later").outcomeConfirmedAt).toBeNull();
+    // The cursor stands after the void that was tried, not before the page.
+    expect(first.checkpoint).not.toBeNull();
+    expect(mockStandingFinding).toHaveBeenCalledTimes(1);
+    expect(mockStandingFinding).toHaveBeenCalledWith(
+      expect.objectContaining({ ids: ["stuck"] }),
+    );
+
+    spent = false;
+    jest
+      .mocked(readJobCheckpoint)
+      .mockImplementation(async () => first.checkpoint ?? null);
+    const second = await confirmClosedOutcomes(NOW, () => spent);
+
+    expect(second.confirmed).toBe(1);
+    expect(row("later").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("stuck").outcomeConfirmedAt).toBeNull();
   });
 });
 
