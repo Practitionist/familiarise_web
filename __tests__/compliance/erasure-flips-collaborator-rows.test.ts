@@ -68,14 +68,24 @@ const tx = {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
   },
+  // The scrub re-reads the user's bookings on its own transaction: none hosted, none held.
   consultantProfile: {
     updateMany: jest.fn(async () => ({ count: 1 })),
     findUnique: jest.fn(async () => ({ userId: "u1" })),
+    findFirst: jest.fn(async () => null),
   },
   // The consultee free-text scrub runs in the same tx.
   consulteeProfile: { updateMany: jest.fn(async () => ({ count: 0 })) },
-  trial: { updateMany: jest.fn(async () => ({ count: 0 })) },
-  consultation: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  trial: {
+    updateMany: jest.fn(async () => ({ count: 0 })),
+    count: jest.fn(async () => 0),
+  },
+  consultation: {
+    updateMany: jest.fn(async () => ({ count: 0 })),
+    count: jest.fn(async () => 0),
+  },
+  subscription: { count: jest.fn(async () => 0) },
+  appointment: { count: jest.fn(async () => 0) },
   collaborator: {
     findMany: jest.fn(async () => [{ id: "c-1" }]),
     updateManyAndReturn: jest.fn(async () => [

@@ -3,7 +3,7 @@ import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
 import { CONDUCT_REMOVAL_CATEGORY } from "./case-topic";
 import { DEADLINE_HOURS } from "./deadline-policy";
 
-/** How long support has to decide a conduct removal before the seat's unrefunded balance is owed. */
+/** How long support has to decide a conduct removal before the seat's undelivered sessions are owed. */
 export const CONDUCT_REMOVAL_REVIEW_HOURS = DEADLINE_HOURS.CONDUCT_REMOVAL;
 
 /** The key every refund a conduct removal owes carries, on overturn and on the deadline alike. */

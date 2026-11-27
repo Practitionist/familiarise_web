@@ -14,6 +14,11 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "./dispute-status";
  * inside its own Serializable reservation — but the guard is what produces the
  * readable 409 instead of a swallowed refund failure.
  *
+ * The freeze covers a 1:1 booking only (consultation, plan). A class or a
+ * webinar is one appointment carrying every seat's payment, so its cancel and
+ * re-time never ask this: the disputed seat's own owed refund waits for the
+ * dispute in the refund door and the retry sweep.
+ *
  * Served by Dispute(paymentId,status) + Payment(appointmentId) indexes. No
  * admin bypass in v1 — TODO(#1319): allow an explicit privileged override.
  */

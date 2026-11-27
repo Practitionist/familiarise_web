@@ -176,7 +176,7 @@ function ErasureTab() {
               <ConfirmDialog
                 trigger={<Button size="sm">Process</Button>}
                 title={`Erase ${e.user.email}?`}
-                description="Their personal data is scrubbed for good. Refused while money is still moving for them."
+                description="Their personal data is scrubbed for good. Refused while money is still moving for them or they still hold a live booking."
                 confirmLabel="Erase"
                 tone="destructive"
                 requireTyped="ERASE"

@@ -1529,6 +1529,56 @@ describe("Cancel Route Handler - POST", () => {
     });
   });
 
+  // ─── A live payment dispute ─────────────────────────────────────────────
+
+  describe("an open payment dispute", () => {
+    beforeEach(() => {
+      (prisma.dispute.findFirst as jest.Mock).mockResolvedValue({ id: "dp-1" });
+    });
+    afterEach(() => {
+      (prisma.dispute.findFirst as jest.Mock).mockResolvedValue(null);
+    });
+
+    it("refuses to cancel a 1:1 booking", async () => {
+      const res = await cancelHandler(
+        makeCancelRequest("apt-1"),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("DISPUTE_ACTIVE");
+      expect(mockTx.consultation.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("on one seat does not block cancelling the class for every seat", async () => {
+      (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+        makeClassAppointment(),
+      );
+
+      const res = await cancelHandler(
+        makeCancelRequest("apt-1"),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockTx.class.updateMany).toHaveBeenCalled();
+    });
+
+    it("on one seat does not block cancelling the webinar", async () => {
+      (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+        makeWebinarAppointment(),
+      );
+
+      const res = await cancelHandler(
+        makeCancelRequest("apt-1"),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockTx.webinar.updateMany).toHaveBeenCalled();
+    });
+  });
+
   // ─── No Body ───────────────────────────────────────────────────────────
 
   it("should cancel without reason when no body provided", async () => {

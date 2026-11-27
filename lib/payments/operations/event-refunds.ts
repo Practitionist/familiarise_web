@@ -44,6 +44,8 @@ import {
   seatLedgerFrom,
   seatSessionsByAppointment,
   occurrenceRefundsByPayment,
+  occurrenceRefundsPaise,
+  releasedSeatRefundPaise,
   seriesCancelRefundPaise,
   classEndRefundPaise,
   CLASS_END_REFUND_KEY_PREFIX,
@@ -597,6 +599,81 @@ export async function classSeriesLedgers(
     });
   }
   return ledgers;
+}
+
+/**
+ * What a seat released at `releasedAt` with nothing refunded is owed for what
+ * it was not delivered: every session it holds that had not ended by then,
+ * less any refunded on its own, capped at the balance. A null amount is a
+ * whole credit restoration. A credit seat delivered part of its sessions is
+ * queued for a person in the caller's commit, because the credits rail cannot
+ * split, and owes no marker; so does a seat with nothing left to return.
+ */
+export async function releasedSeatOwedTx(
+  tx: Tx,
+  args: {
+    appointmentId: string;
+    userId: string;
+    payment: {
+      id: string;
+      amount: bigint | number;
+      paymentIntent: string;
+      createdAt: Date;
+      refunds: { amountPaise: number; status: string }[];
+      disputes: { amountPaise: number; status: string }[];
+    };
+    releasedAt: Date;
+    /** Why the seat was released, for the operator's queue row. */
+    cause: string;
+  },
+): Promise<{ amountPaise: number | null } | null> {
+  const { payment } = args;
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: {
+      appointmentId_userId: {
+        appointmentId: args.appointmentId,
+        userId: args.userId,
+      },
+    },
+    select: { createdAt: true, sessionsPurchased: true },
+  });
+  const sessions = (
+    await seatSessionsByAppointment(tx, [args.appointmentId])
+  ).get(args.appointmentId) ?? { N: 0, occurrences: [] };
+  const { refundPaise, deliveredHeld } = releasedSeatRefundPaise({
+    ...sessions,
+    amountPaise: payment.amount,
+    // A re-bought seat reuses its row, so the later of the two is the purchase.
+    joinedAt:
+      seat && seat.createdAt > payment.createdAt
+        ? seat.createdAt
+        : payment.createdAt,
+    sessionsPurchased: seat?.sessionsPurchased,
+    releasedAt: args.releasedAt,
+  });
+  if (isFreeCreditIntent(payment.paymentIntent)) {
+    if (deliveredHeld === 0) return { amountPaise: null };
+    await recordSystemEvent({
+      db: tx,
+      strict: true,
+      category: "BOOKING",
+      severity: "WARN",
+      message: `Credit seat ${payment.id} needs a partial credit return`,
+      context: {
+        paymentId: payment.id,
+        appointmentId: args.appointmentId,
+        delivered: deliveredHeld,
+        cause: args.cause,
+      },
+      correlationId: `partial-credit:${payment.id}`,
+    });
+    return null;
+  }
+  const amountPaise = Math.min(
+    Number(refundPaise) - (await occurrenceRefundsPaise(tx, payment.id)),
+    refundableBalancePaise(Number(payment.amount), payment),
+  );
+  return amountPaise > 0 ? { amountPaise } : null;
 }
 
 /** The dedupe prefix of class-end settlement; each seat's key is `class-end:<classId>:pay:<paymentId>`. */

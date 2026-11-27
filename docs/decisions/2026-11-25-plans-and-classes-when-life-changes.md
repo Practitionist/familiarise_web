@@ -1,6 +1,6 @@
 # ADR: What happens to a plan or a class when life changes part-way through
 
-- **Status**: Accepted (owner decisions, 2026-11-25). The owner approved every rule in the section "Decided rules" as recommended. Nothing in that section is built yet: each rule is **(planned)** and names the work that builds it. The column "Today" describes `dev` as it was read on 2026-11-25.
+- **Status**: Accepted (owner decisions, 2026-11-25). The owner approved every rule in the section "Decided rules" as recommended. Rules 3, 4 and 5 and the erasure check in rule 12 are **(built)**; every other rule is **(planned)** and names the work that builds it. The column "Today" describes `dev` as it was read on 2026-11-25; a built rule's column reads "Before".
 - **Date**: 2026-11-25
 - **Author**: Platform engineering
 - **Related**: [Class series money rules](2026-09-25-class-series-money-rules.md), [Session outcome report window](2026-11-23-session-outcome-report-window.md), [Product lifecycles](2026-11-13-product-lifecycles.md), [Subscription demand bounds](2026-11-13-subscription-demand-bounds.md), [Cancellation flow](../booking/08-cancellation-flow.md), [Recurring events journey](../booking/16-recurring-events-journey.md), [Earnings lifecycle](../finance/40-payouts/02-earnings-lifecycle.md); issue #3053 (paying an expert per delivered class session)
@@ -25,7 +25,7 @@ Each rule lists what happens today, the rule, a worked example, and the abuse th
 
 ### 1. A chargeback freezes the booking for the learner who raised it **(planned)**
 
-- **Today**: when a learner's bank opens a dispute, the expert's earnings on that payment are held. Cancel, reschedule and re-time are refused for both sides (`hasActiveDisputeForAppointment` in `lib/payments/dispute-guard.ts`), and a session return is refused by its own check (`lib/booking/session-return.ts`). Sessions already placed still run, and nothing stops new ones being placed. If the dispute is lost, the plan stays live.
+- **Today**: when a learner's bank opens a dispute, the expert's earnings on that payment are held. On a 1:1 booking, cancel and reschedule are refused for both sides (`hasActiveDisputeForAppointment` in `lib/payments/dispute-guard.ts`), and a session return is refused by its own check (`lib/booking/session-return.ts`); a class or webinar can be cancelled or re-timed (rule 5), and a learner's own seat leave is not refused. Sessions already placed still run, and nothing stops new ones being placed. If the dispute is lost, the plan stays live.
 - **Rule**: while the dispute is open, no new session can be placed, and sessions already placed in the future are released back to the plan with no strike. Both sides are told. If the platform wins, the plan resumes and its end date moves out by the days it was frozen. If the platform loses, the plan ends with no further refund and no strike. For a class, only the disputing seat is suspended; the class runs on for everyone else.
 - **Example**: on the plan, 5 sessions are delivered and the learner disputes the payment in week 6. Under the old behaviour, a lost dispute left the learner with 19 sessions to use for nothing while the expert had to teach them unpaid or cancel and take a strike. Under the rule, sessions stop on the day the dispute opens.
 - **Abuse resisted**: taking the service and the money back at once. A dispute cannot be used as a free pause either, because only a dispute the learner _loses_ resumes the plan, and every dispute is visible to operations.
@@ -37,23 +37,23 @@ Each rule lists what happens today, the rule, a worked example, and the abuse th
 - **Abuse resisted**: collusion. If the platform absorbed the loss for delivered sessions, a learner and an expert acting together could charge back and keep the payout, and the platform would pay twice.
 - **Alternative rejected**: the platform absorbs the loss for sessions with confirmed attendance. Kinder to experts, and one freelancing marketplace does this when its time-tracking rules were followed, but it opens the collusion route and needs a new ledger path.
 
-### 3. A moderation ban refunds what was not delivered, whoever was banned **(planned)**
+### 3. A moderation ban refunds what was not delivered, whoever was banned **(built)**
 
-- **Today**: a ban cancels the banned person's live bookings. A plan or a consultation is refunded its full remaining balance (`lib/moderation/cancel-user-engagements.ts`), delivered sessions included, and a plan with no session placed ahead is not collected at all. When the banned person is an expert, their class is cancelled and each seat is already refunded from its series ledger, keeping delivered sessions. When the banned person is a learner, their own class or webinar seat is refunded in full.
+- **Before**: a ban cancels the banned person's live bookings. A plan or a consultation is refunded its full remaining balance (`lib/moderation/cancel-user-engagements.ts`), delivered sessions included, and a plan with no session placed ahead is not collected at all. When the banned person is an expert, their class is cancelled and each seat is already refunded from its series ledger, keeping delivered sessions. When the banned person is a learner, their own class or webinar seat is refunded in full.
 - **Rule**: a plan refunds its undelivered sessions in full and nothing for delivered ones, whoever was banned. A banned learner's class seat follows the same rule, and a webinar seat is refunded only if the webinar has not ended. Every live plan is collected, placed ahead or not. A consultation is a single session and keeps its full refund while that session has not been held. An operator can add a goodwill refund by hand in a serious case.
 - **Example**: 8 of 24 sessions delivered, then a ban. The refund is ₹24,000, not ₹36,000, and the expert keeps ₹9,600 for the eight sessions taught. This holds whether the expert or the learner was banned. A learner banned after 3 of 8 class sessions is refunded ₹5,000, not ₹8,000.
 - **Abuse resisted**: a learner who behaves badly enough to be banned no longer gets eight delivered sessions for free.
 
-### 4. A conduct-removal case that support does not decide in time refunds what was not delivered **(planned)**
+### 4. A conduct-removal case that support does not decide in time refunds what was not delivered **(built)**
 
-- **Today**: a host removes a learner from a class for conduct. The seat is released with no refund and support has 72 hours to decide. If the deadline passes, the learner is refunded the full remaining balance of the seat (`lib/support/conduct-removal-case.ts`).
+- **Before**: a host removes a learner from a class for conduct. The seat is released with no refund and support has 72 hours to decide. If the deadline passes, the learner is refunded the full remaining balance of the seat (`lib/support/conduct-removal-case.ts`).
 - **Rule**: on lapse, refund the undelivered sessions only, measured at the moment of removal. A session that was under way when the learner was removed counts as not delivered: the learner was put out of the room and support did not rule against them in time, so the doubt goes to the learner.
 - **Example**: removed after session 3 of 8, or ten minutes into session 4. The refund is ₹5,000, not ₹8,000, and the host keeps ₹2,400 for three sessions taught. The host no longer pays for the platform's missed deadline. A webinar seat removed while the webinar is running is refunded in full; one removed after it ended is refunded nothing.
 - **Abuse resisted**: a host cannot remove a learner five minutes into a session and keep that session's pay by default.
 
-### 5. One seat's dispute does not stop a class being cancelled **(planned)**
+### 5. One seat's dispute does not stop a class being cancelled **(built)**
 
-- **Today**: the cancel route (`app/api/appointments/[appointmentId]/cancel/route.ts`) refuses while any payment on the booking is disputed. A class is one booking carrying every seat's payment, so one seat's dispute blocks the host and staff from cancelling the class for all twenty.
+- **Before**: the cancel route (`app/api/appointments/[appointmentId]/cancel/route.ts`) refuses while any payment on the booking is disputed. A class is one booking carrying every seat's payment, so one seat's dispute blocks the host and staff from cancelling the class for all twenty.
 - **Rule**: the booking-wide refusal applies to 1:1 bookings only. A class or a webinar can be cancelled or re-timed; every other seat is refunded as usual, and the disputed seat's refund waits for its dispute.
 
 ### 6. An expert who does not turn up to a plan session is held to account **(planned)**
@@ -95,7 +95,7 @@ These three extend the [session outcome report window](2026-11-23-session-outcom
 
 ### 12. Smaller rules decided without alternatives **(planned)**
 
-- An erasure request processed by an admin runs the same live-booking check as a self-serve account deletion, so a learner with a live plan is not scrubbed while the plan runs on.
+- **(built)** An erasure request processed by an admin runs the same live-booking check as a self-serve account deletion (`liveBookingsForUser` in `lib/compliance/erasure/scrub-user.ts`), so a learner with a live plan is not scrubbed while the plan runs on. The check also counts a paid seat on a class or webinar until its last session ends, on both doors.
 - A learner is told when a week of their plan closes with sessions unplaced, with the way to cancel for a refund; operations are told after two such weeks in a row.
 - A learner is told after two absences in a row what is left on the plan and how to cancel it.
 - A learner whose plan-end refund is waiting on a session under review is told the plan is in review.
@@ -130,7 +130,7 @@ The walk found these existing rules to be sound but nowhere stated to the people
 
 - Every "Today" statement is from reading code, not from running it. Amounts follow from the stated unit prices.
 - The peer practice comes from search summaries, not from the platforms' own pages.
-- These situations were not traced and are not decided here: an organisation-sponsored learner who leaves the organisation or whose organisation is suspended mid-plan; a missing or changed payout account and a reversed payout mid-plan; mid-series edits to a class (capacity, price, added sessions); a co-presenter removed mid-series; what happens to a class seat when its learner deletes their account.
+- These situations were not traced and are not decided here: an organisation-sponsored learner who leaves the organisation or whose organisation is suspended mid-plan; a missing or changed payout account and a reversed payout mid-plan; mid-series edits to a class (capacity, price, added sessions); a co-presenter removed mid-series.
 - Whether holding a class expert's share until the series ends fits the platform's arrangement with its payment aggregator is a question for the accountant and counsel.
 
 ## Build plan

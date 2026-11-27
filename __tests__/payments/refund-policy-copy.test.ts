@@ -54,6 +54,15 @@ describe("refund policy copy", () => {
     );
   });
 
+  it("says a subscription cancelled by the expert or our team refunds the sessions not yet held, never the held ones", () => {
+    expect(REFUND_POLICY_COPY.subscriptionExpertCancel).toContain(
+      "every session not yet held is refunded in full",
+    );
+    expect(REFUND_POLICY_COPY.subscriptionExpertCancel).toContain(
+      "Sessions already held are not refunded",
+    );
+  });
+
   it("words refund timing by rail, never promising card timing for credits or org funds", () => {
     expect(REFUND_TIMING_BY_RAIL.GATEWAY).toMatch(/5–7 working days/);
     expect(REFUND_TIMING_BY_RAIL.CREDITS).not.toMatch(/working days/);

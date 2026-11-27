@@ -68,7 +68,7 @@
 
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
-import type { Db } from "@/lib/prisma";
+import type { Db, PrismaLike } from "@/lib/prisma";
 import {
   purgeDigitalProductSurfaces,
   purgeRecordingSurfaces,
@@ -96,7 +96,12 @@ import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import { liveParticipant } from "@/lib/booking/participants";
+import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
+import {
+  checkActiveAppointments,
+  type ActiveAppointmentsResult,
+} from "@/lib/booking/active-appointments";
 import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
 import {
   purgeErasedCreatorFiles,
@@ -203,6 +208,197 @@ export async function moneyInFlightForUser(
     orgInvoicesAsSoleOwner,
     liveDisputes,
   };
+}
+
+export interface LiveBookings {
+  /** Consultations still pending, approved or awaiting payment. */
+  activeConsultations: number;
+  /** Plans still pending, approved or awaiting payment. */
+  activeSubscriptions: number;
+  /** Trials scheduled or awaiting payment. */
+  activeTrials: number;
+  /** Class or webinar seats on an event with a session ahead or under way. */
+  activeEventSeats: number;
+}
+
+const ACTIVE_BOOKING_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "APPROVED_PENDING_PAYMENT",
+] as const;
+
+/**
+ * Bookings the user still holds as a learner. Erasure never cancels a booking:
+ * the self-serve delete and the admin process route both refuse with
+ * ERASURE_BLOCKED_ACTIVE_BOOKINGS until each is cancelled or left through its
+ * own door, because a scrubbed learner cannot sign in to attend or cancel.
+ */
+export async function liveBookingsForUser(
+  db: PrismaLike,
+  userId: string,
+  now: Date = new Date(),
+): Promise<LiveBookings> {
+  const [
+    activeConsultations,
+    activeSubscriptions,
+    activeTrials,
+    activeEventSeats,
+  ] = await Promise.all([
+    db.consultation.count({
+      where: {
+        requestedBy: { userId },
+        status: { in: [...ACTIVE_BOOKING_STATUSES] },
+      },
+    }),
+    db.subscription.count({
+      where: {
+        requestedBy: { userId },
+        status: { in: [...ACTIVE_BOOKING_STATUSES] },
+      },
+    }),
+    db.trial.count({
+      where: {
+        consulteeProfile: { userId },
+        status: { in: ["SCHEDULED", "AWAITING_PAYMENT"] },
+      },
+    }),
+    db.appointment.count({
+      where: {
+        deletedAt: null,
+        OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
+        participants: {
+          some: { ...paidParticipant(userId), role: "CONSULTEE" },
+        },
+        // Until the session ends: a learner in a session under way is still seated.
+        occurrences: { some: { ...LIVE_SLOT_WHERE, endsAt: { gt: now } } },
+      },
+    }),
+  ]);
+  return {
+    activeConsultations,
+    activeSubscriptions,
+    activeTrials,
+    activeEventSeats,
+  };
+}
+
+/** The removal rule's open bookings, plus the sessions under way that rule stops counting at their start. */
+export type HostedBookings = ActiveAppointmentsResult & {
+  breakdown: ActiveAppointmentsResult["breakdown"] & {
+    /** Live sessions that have started and not ended, on a webinar the user hosts or a webinar or class they co-host. */
+    sessionsUnderWay: number;
+  };
+};
+
+/**
+ * Bookings the user still hosts or co-hosts as an expert; null with no expert
+ * profile. Both erasure doors refuse with ERASURE_BLOCKED_ACTIVE_APPOINTMENTS
+ * while any is open: a scrubbed expert cannot sign in to deliver or cancel.
+ */
+export async function hostedBookingsForUser(
+  db: PrismaLike,
+  userId: string,
+  now: Date = new Date(),
+): Promise<HostedBookings | null> {
+  const profile = await db.consultantProfile.findFirst({
+    where: { userId },
+    select: { id: true },
+  });
+  if (!profile) return null;
+  const acceptedCoHost = {
+    collaborators: {
+      some: { consultantProfileId: profile.id, status: "ACCEPTED" as const },
+    },
+  };
+  const [open, sessionsUnderWay] = await Promise.all([
+    checkActiveAppointments(profile.id, db, "removal", now),
+    // The removal rule counts a hosted webinar while `startsAt >= now` and a
+    // co-hosted session while `startsAt > now`. Each arm here starts where that
+    // one stops, on the same `now`, and runs until the session ends.
+    db.appointmentOccurrence.count({
+      where: {
+        ...LIVE_SLOT_WHERE,
+        endsAt: { gt: now },
+        OR: [
+          {
+            startsAt: { lt: now },
+            appointment: {
+              deletedAt: null,
+              webinar: { webinarPlan: { consultantProfileId: profile.id } },
+            },
+          },
+          {
+            startsAt: { lte: now },
+            appointment: {
+              deletedAt: null,
+              OR: [
+                { webinar: { webinarPlan: acceptedCoHost } },
+                { class: { classPlan: acceptedCoHost } },
+              ],
+            },
+          },
+        ],
+      },
+    }),
+  ]);
+  const underWay =
+    sessionsUnderWay > 0
+      ? `${sessionsUnderWay} ${sessionsUnderWay === 1 ? "session" : "sessions"} under way`
+      : null;
+  return {
+    hasActive: open.hasActive || sessionsUnderWay > 0,
+    total: open.total + sessionsUnderWay,
+    breakdown: { ...open.breakdown, sessionsUnderWay },
+    details: [open.details, underWay].filter(Boolean).join(", ") || undefined,
+  };
+}
+
+/** True when the user still holds any live booking. */
+export function hasLiveBookings(counts: LiveBookings): boolean {
+  return Object.values(counts).some((n) => n > 0);
+}
+
+/** What on the booking side still blocks an erasure: what the user hosts, else what they hold as a learner. */
+export type ErasureBookingBlock =
+  | { kind: "hosted"; hosted: HostedBookings }
+  | { kind: "held"; held: LiveBookings };
+
+/**
+ * The one booking-side question of an erasure, asked by both doors before the
+ * scrub and again by the scrub on its own transaction; null when nothing blocks.
+ */
+export async function erasureBookingBlock(
+  db: PrismaLike,
+  userId: string,
+): Promise<ErasureBookingBlock | null> {
+  const hosted = await hostedBookingsForUser(db, userId);
+  if (hosted?.hasActive) return { kind: "hosted", hosted };
+  const held = await liveBookingsForUser(db, userId);
+  return hasLiveBookings(held) ? { kind: "held", held } : null;
+}
+
+/** The scrub found a booking the door's check did not see; its transaction rolled back, so nothing was scrubbed. */
+export class ErasureBlockedByBookingsError extends Error {
+  constructor(readonly block: ErasureBookingBlock) {
+    super("Erasure is blocked by a live booking");
+    this.name = "ErasureBlockedByBookingsError";
+  }
+}
+
+/** The live bookings in words, for a refusal: "1 plan, 2 class or webinar seats". */
+export function describeLiveBookings(counts: LiveBookings): string {
+  const part = (n: number, one: string, many: string) =>
+    n > 0 ? [`${n} ${n === 1 ? one : many}`] : [];
+  return [
+    ...part(counts.activeConsultations, "consultation", "consultations"),
+    ...part(counts.activeSubscriptions, "plan", "plans"),
+    ...part(counts.activeTrials, "trial", "trials"),
+    ...part(
+      counts.activeEventSeats,
+      "class or webinar seat",
+      "class or webinar seats",
+    ),
+  ].join(", ");
 }
 
 /**
@@ -906,6 +1102,11 @@ export async function scrubUser(
         pseudonymousId,
       },
     });
+
+    // Read after the update above holds the user's row, so a booking that
+    // committed since the door's check is refused here and the scrub rolls back.
+    const block = await erasureBookingBlock(tx, userId);
+    if (block) throw new ErasureBlockedByBookingsError(block);
 
     if (memberships.length > 0) {
       await tx.membership.updateMany({
