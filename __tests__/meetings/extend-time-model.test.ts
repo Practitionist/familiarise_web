@@ -322,4 +322,58 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
     expect(mockStore.stream.updates).toBe(0);
     expect((await tryLockSlotBatch(extraMinutes())).ok).toBe(true);
   });
+  it.each([
+    ["the next time is booked", "booked"],
+    ["another write holds the extra minutes in the database", "held"],
+  ] as const)(
+    "refused because %s: nothing is saved and the retained atoms are released",
+    async (_label, why) => {
+      const prisma = jest.requireMock("../../lib/prisma").default as {
+        appointmentOccurrence: { findFirst: () => Promise<unknown> };
+      };
+      const { lockHostTimeInTx } = jest.requireMock(
+        "../../lib/booking/allocation/host-time-locks",
+      ) as { lockHostTimeInTx: jest.Mock };
+      const realFindFirst = prisma.appointmentOccurrence.findFirst;
+      if (why === "booked") {
+        prisma.appointmentOccurrence.findFirst = async () => ({
+          id: "occ-next",
+          startsAt: BOOKED_END,
+        });
+      } else {
+        lockHostTimeInTx.mockImplementationOnce(
+          async (
+            _tx: unknown,
+            _entries: unknown,
+            refusal: (h: object) => Error,
+          ) => {
+            throw refusal({
+              consultantProfileId: "cp-host",
+              learnerUserId: null,
+              startsAt: BOOKED_END,
+              endsAt: BOOKED_END,
+            });
+          },
+        );
+      }
+      try {
+        const res = await extend();
+        expect(res.status).toBe(409);
+        expect(await res.json()).toMatchObject({
+          extended: false,
+          hasConflictingNextBooking: true,
+        });
+      } finally {
+        prisma.appointmentOccurrence.findFirst = realFindFirst;
+      }
+
+      expect(mockStore.meeting).toMatchObject({
+        extendedSeconds: 0,
+        extensionsUsed: 0,
+      });
+      expect(mockStore.stream.updates).toBe(0);
+      expect(mockUnlockSlotInterval).toHaveBeenCalledTimes(1);
+      expect((await tryLockSlotBatch(extraMinutes())).ok).toBe(true);
+    },
+  );
 });
