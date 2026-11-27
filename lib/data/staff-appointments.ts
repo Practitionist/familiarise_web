@@ -11,6 +11,7 @@ import {
 } from "@/lib/appointments/lapsed-move-where";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import prisma from "@/lib/prisma";
+import { runBounded } from "@/lib/db/bounded";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -305,90 +306,93 @@ export async function getStaffAppointments(
     ? { AND: [isScheduled ? scheduledBaseWhere : baseWhere, statusCond] }
     : baseWhere;
 
-  // One paginated list query + per-tab count queries. `total` drives
-  // pagination for the CURRENT view; the tab badges are global counts within
-  // the base filter (not page-scoped), which is the #897 fix.
-  const [
-    appointments,
-    total,
-    allCount,
-    scheduledCount,
-    completedCount,
-    issuesCount,
-  ] = await Promise.all([
-    prisma.appointment.findMany({
-      relationLoadStrategy: "join",
-      where: listWhere,
-      select: {
-        id: true,
-        createdAt: true,
-        ...APPOINTMENT_HEADLINE_SELECT,
-        // A session parked for ops: the row reads "Waiting on a decision".
-        _count: {
-          select: {
-            ...APPOINTMENT_HEADLINE_SELECT._count.select,
-            ...PARKED_SESSIONS_COUNT,
-          },
-        },
-        // #1486 / #1527 — read-only: a reschedule still waiting on a party.
-        rescheduleRequests: {
-          where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: {
-            status: true,
-            initiatorRole: true,
-            expiresAt: true,
-            originStatus: true,
-          },
-        },
-        occurrences: {
-          where: isScheduled ? scheduledOccurrence : occurrenceInRange,
-          orderBy: { startsAt: "asc" },
-          take: 1,
+  // One paginated list query + the tab counts within the base filter; the
+  // current view's `total` is the count of its own tab.
+  const [appointments, allCount, scheduledCount, completedCount, issuesCount] =
+    await runBounded([
+      () =>
+        prisma.appointment.findMany({
+          relationLoadStrategy: "join",
+          where: listWhere,
           select: {
             id: true,
-            startsAt: true,
-            endsAt: true,
-            isTentative: true,
-            // Read by the lapsed-move restore below.
-            completionStatus: true,
-            deletedAt: true,
-          },
-        },
-        payment: {
-          select: {
-            id: true,
-            amount: true,
-            currency: true,
-            paymentStatus: true,
-            paymentGateway: true,
-            // The pay window, so a pending order past it reads as lapsed.
-            expiresAt: true,
             createdAt: true,
+            ...APPOINTMENT_HEADLINE_SELECT,
+            // A session parked for ops: the row reads "Waiting on a decision".
+            _count: {
+              select: {
+                ...APPOINTMENT_HEADLINE_SELECT._count.select,
+                ...PARKED_SESSIONS_COUNT,
+              },
+            },
+            // Read-only: a reschedule still waiting on a party.
+            rescheduleRequests: {
+              where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                status: true,
+                initiatorRole: true,
+                expiresAt: true,
+                originStatus: true,
+              },
+            },
+            occurrences: {
+              where: isScheduled ? scheduledOccurrence : occurrenceInRange,
+              orderBy: { startsAt: "asc" },
+              take: 1,
+              select: {
+                id: true,
+                startsAt: true,
+                endsAt: true,
+                isTentative: true,
+                // Read by the lapsed-move restore below.
+                completionStatus: true,
+                deletedAt: true,
+              },
+            },
+            payment: {
+              select: {
+                id: true,
+                amount: true,
+                currency: true,
+                paymentStatus: true,
+                paymentGateway: true,
+                // The pay window, so a pending order past it reads as lapsed.
+                expiresAt: true,
+                createdAt: true,
+              },
+              take: 1,
+              orderBy: { createdAt: "desc" },
+            },
           },
-          take: 1,
           orderBy: { createdAt: "desc" },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-      skip: offset,
-    }),
-    prisma.appointment.count({ where: listWhere }),
-    prisma.appointment.count({ where: baseWhere }),
-    prisma.appointment.count({
-      where: {
-        AND: [scheduledBaseWhere, buildStatusWhere("scheduled", now) ?? {}],
-      },
-    }),
-    prisma.appointment.count({
-      where: { AND: [baseWhere, buildStatusWhere("completed") ?? {}] },
-    }),
-    prisma.appointment.count({
-      where: { AND: [baseWhere, buildStatusWhere("issue") ?? {}] },
-    }),
-  ]);
+          take: limit,
+          skip: offset,
+        }),
+      () => prisma.appointment.count({ where: baseWhere }),
+      () =>
+        prisma.appointment.count({
+          where: {
+            AND: [scheduledBaseWhere, buildStatusWhere("scheduled", now) ?? {}],
+          },
+        }),
+      () =>
+        prisma.appointment.count({
+          where: { AND: [baseWhere, buildStatusWhere("completed") ?? {}] },
+        }),
+      () =>
+        prisma.appointment.count({
+          where: { AND: [baseWhere, buildStatusWhere("issue") ?? {}] },
+        }),
+    ] as const);
+  // listWhere is exactly one tab's filter: buildStatusWhere is null for any other status.
+  const total =
+    new Map([
+      ["scheduled", scheduledCount],
+      ["completed", completedCount],
+      ["issue", issuesCount],
+    ]).get(status ?? "") ?? allCount;
 
   // One batched user read for the page's people, not one per relation path.
   const userIds = headlineUserIds(appointments);

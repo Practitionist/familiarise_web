@@ -3,7 +3,7 @@
  */
 
 // Invariant: the consultant Home read fetches only what Home renders, keeps at
-// most poolLimit() reads in flight (2 on a one-connection pool), and draws
+// most poolLimit() reads in flight (1 on a one-connection pool), and draws
 // "this month" on the consultant's own clock.
 
 jest.mock("../../lib/prisma", () => ({
@@ -169,10 +169,9 @@ describe("consultant Home loader", () => {
     expect(m.appointment.findMany).not.toHaveBeenCalled();
   });
 
-  it("keeps at most two reads in flight on a one-connection pool", async () => {
+  it("keeps one read in flight on a one-connection pool", async () => {
     await getConsultantDashboard("cp-1", NOW);
-    expect(peak).toBeGreaterThan(0);
-    expect(peak).toBeLessThanOrEqual(2);
+    expect(peak).toBe(1);
   });
 
   it("counts this month's sessions from the 1st in the consultant's zone", async () => {

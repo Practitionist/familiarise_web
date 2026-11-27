@@ -2,11 +2,12 @@
  * Bounded concurrency for reads on the serverless pool. With PG_POOL_MAX=1
  * every extra query queues behind the one connection, and PG_CONNECT_TIMEOUT_MS
  * (3 s) applies to that queue wait, so a wide Promise.all can time out before
- * it starts. Callers cap reads in flight: 2 when the pool is 1, else 6.
+ * it starts. Callers cap reads in flight: 1 when the pool is 1 (a second read
+ * cannot start sooner on one connection, it only spends its own wait), else 6.
  */
 export function poolLimit(): number {
   const max = Number(process.env.PG_POOL_MAX);
-  return Number.isFinite(max) && max <= 1 ? 2 : 6;
+  return Number.isFinite(max) && max <= 1 ? 1 : 6;
 }
 
 /** `items.map(fn)` with at most `limit` calls in flight; results keep input order. */

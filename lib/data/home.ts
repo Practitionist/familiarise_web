@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
+import { runBounded } from "@/lib/db/bounded";
 import {
   publicReviewSelect,
   sanitisePublicReviews,
@@ -169,40 +170,47 @@ export const getFeaturedReviews = unstable_cache(
 export const getHomeStats = unstable_cache(
   async () => {
     const [totalConsultants, ratedProfiles, completedSessions, byDomain] =
-      await Promise.all([
+      await runBounded([
         // #781 §B — soft-deleted profiles leave public surfaces.
-        prisma.consultantProfile.count({
-          where: { verificationStatus: "VERIFIED", deletedAt: null },
-        }),
+        () =>
+          prisma.consultantProfile.count({
+            where: { verificationStatus: "VERIFIED", deletedAt: null },
+          }),
         // The PUBLISHED 1:1 score, never the raw `rating` mean (0 on every
         // unreviewed profile). Weighted by rated clients in the shared
         // `deriveDirectoryRating`, which /explore/experts calls too (#1485).
-        prisma.consultantProfile.findMany({
-          where: {
-            verificationStatus: "VERIFIED",
-            deletedAt: null,
-            publishedRatingOneToOne: { not: null },
-          },
-          select: { publishedRatingOneToOne: true, ratedClientsOneToOne: true },
-        }),
+        () =>
+          prisma.consultantProfile.findMany({
+            where: {
+              verificationStatus: "VERIFIED",
+              deletedAt: null,
+              publishedRatingOneToOne: { not: null },
+            },
+            select: {
+              publishedRatingOneToOne: true,
+              ratedClientsOneToOne: true,
+            },
+          }),
         // Meetings actually held. The unit is the SLOT: an Appointment carries
         // no status of its own and a subscription spans many meetings.
-        prisma.appointmentOccurrence.count({
-          where: { completionStatus: "COMPLETED", deletedAt: null },
-        }),
-        prisma.domain.findMany({
-          select: {
-            name: true,
-            _count: {
-              select: {
-                consultantProfiles: {
-                  where: { verificationStatus: "VERIFIED", deletedAt: null },
+        () =>
+          prisma.appointmentOccurrence.count({
+            where: { completionStatus: "COMPLETED", deletedAt: null },
+          }),
+        () =>
+          prisma.domain.findMany({
+            select: {
+              name: true,
+              _count: {
+                select: {
+                  consultantProfiles: {
+                    where: { verificationStatus: "VERIFIED", deletedAt: null },
+                  },
                 },
               },
             },
-          },
-        }),
-      ]);
+          }),
+      ] as const);
 
     return {
       totalConsultants,

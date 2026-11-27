@@ -231,7 +231,7 @@ describe("inbox pool bound", () => {
     process.env.PG_POOL_MAX = ORIGINAL_POOL;
   });
 
-  it("keeps at most two reads in flight on a one-connection pool", async () => {
+  it("keeps one read in flight on a one-connection pool", async () => {
     process.env.PG_POOL_MAX = "1";
     let inFlight = 0;
     let peak = 0;
@@ -254,7 +254,6 @@ describe("inbox pool bound", () => {
       m[model].count.mockImplementation(slow(async () => 0));
     }
     await read("priority");
-    expect(peak).toBeGreaterThan(1);
-    expect(peak).toBeLessThanOrEqual(2);
+    expect(peak).toBe(1);
   });
 });

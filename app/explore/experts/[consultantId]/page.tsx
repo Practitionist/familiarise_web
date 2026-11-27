@@ -7,6 +7,7 @@ import {
   getConsultantReviewTracks,
 } from "@/lib/data/consultant-detail";
 import { getConsultantDigitalProducts } from "@/lib/data/digital-products-public";
+import { runBounded } from "@/lib/db/bounded";
 import { TUserWithProfessionalBackground } from "@/types/user";
 import { JsonLd } from "@/components/seo/JsonLd";
 import {
@@ -69,13 +70,14 @@ export default async function ExpertProfile({
   // [], so a parameter being rendered for the first time has NO cached copy to
   // fall back on and its visitor gets the error boundary. Only a *revalidation*
   // of an already-cached profile keeps serving the last good copy.
-  const [consultant, reviews, reviewTracks, digitalProducts] =
-    await Promise.all([
-      getConsultantDetail(consultantId),
-      getConsultantReviews(consultantId),
-      getConsultantReviewTracks(consultantId),
-      getConsultantDigitalProducts(consultantId),
-    ]);
+  const [consultant, reviews, reviewTracks, digitalProducts] = await runBounded(
+    [
+      () => getConsultantDetail(consultantId),
+      () => getConsultantReviews(consultantId),
+      () => getConsultantReviewTracks(consultantId),
+      () => getConsultantDigitalProducts(consultantId),
+    ] as const,
+  );
 
   if (!consultant || !consultant.user) {
     notFound();

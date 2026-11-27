@@ -133,7 +133,7 @@ it("gives every tab a trial arm", () => {
 
 it("searches a trial's plan, expert and learner", async () => {
   await getStaffAppointments({ scope: { kind: "all" }, search: "ravi" });
-  const where = (mockCount.mock.calls[1][0] as { where: { OR: unknown[] } })
+  const where = (mockCount.mock.calls[0][0] as { where: { OR: unknown[] } })
     .where;
   const people = {
     OR: [
@@ -166,7 +166,7 @@ it("filters by the Trial type the picker sends", async () => {
   const sent = trial!.value.toUpperCase();
   expect(Object.values(AppointmentsType)).toContain(sent);
   await getStaffAppointments({ scope: { kind: "all" }, type: sent });
-  expect(mockCount.mock.calls[1][0]).toEqual({
+  expect(mockCount.mock.calls[0][0]).toEqual({
     where: { appointmentType: "TRIAL" },
   });
 });

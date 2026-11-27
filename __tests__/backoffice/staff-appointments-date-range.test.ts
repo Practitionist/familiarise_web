@@ -142,10 +142,10 @@ describe("the Scheduled tab reads only standing sessions", () => {
     };
     expect(args.where.AND?.[0].occurrences?.some).toEqual(standingNov18);
     expect(args.select.occurrences.where).toEqual(standingNov18);
-    // Calls: list total, All, Scheduled, Completed, Issue.
-    expect(countOccurrences(2)).toEqual(standingNov18);
+    // Calls: All, Scheduled, Completed, Issue.
+    expect(countOccurrences(1)).toEqual(standingNov18);
+    expect(countOccurrences(2)).toEqual({ startsAt: nov18 });
     expect(countOccurrences(3)).toEqual({ startsAt: nov18 });
-    expect(countOccurrences(4)).toEqual({ startsAt: nov18 });
   });
 
   it("without a date range, lists, shows and counts only bookings with a standing session", async () => {
@@ -156,8 +156,8 @@ describe("the Scheduled tab reads only standing sessions", () => {
     };
     expect(args.where.AND?.[0].occurrences?.some).toEqual(standing);
     expect(args.select.occurrences.where).toEqual(standing);
-    expect(countOccurrences(2)).toEqual(standing);
-    expect(countOccurrences(3)).toBeUndefined();
+    expect(countOccurrences(1)).toEqual(standing);
+    expect(countOccurrences(2)).toBeUndefined();
   });
 
   it("lists and counts a consultation or plan a lapsed move left PENDING", async () => {
@@ -176,7 +176,7 @@ describe("the Scheduled tab reads only standing sessions", () => {
     type StatusArgs = { where: { AND: [unknown, { OR: unknown[] }] } };
     const listStatus = (mockFindMany.mock.calls[0][0] as StatusArgs).where
       .AND[1].OR;
-    const countStatus = (mockCount.mock.calls[2][0] as StatusArgs).where.AND[1]
+    const countStatus = (mockCount.mock.calls[1][0] as StatusArgs).where.AND[1]
       .OR;
     expect(listStatus).toContainEqual(restoredToApproved);
     expect(countStatus).toContainEqual(restoredToApproved);
