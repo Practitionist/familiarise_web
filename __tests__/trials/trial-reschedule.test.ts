@@ -282,6 +282,76 @@ describe("confirmTrialProposal", () => {
   });
 });
 
+describe("a trial acceptance that reaches its commit after the deadline", () => {
+  it.each(["ACCEPTED", "AUTO_ACCEPTED"] as const)(
+    "%s: the closing write carries the deadline, and a miss on a still-open proposal answers PROPOSAL_EXPIRED",
+    async (to) => {
+      const { AllocationConflictError } = jest.requireActual(
+        "../../utils/scheduling-engine/errors",
+      );
+      const reads = (
+        jest.requireMock("../../lib/prisma") as {
+          default: { rescheduleRequest: { findUnique: jest.Mock } };
+        }
+      ).default.rescheduleRequest.findUnique;
+      // Open at the preflight; past its deadline, still unanswered, at the write.
+      reads.mockResolvedValueOnce(openRequest()).mockResolvedValueOnce({
+        status: "PENDING_REVIEW",
+        expiresAt: new Date(Date.now() - 1_000),
+      });
+      closeConfirmedProposal.mockRejectedValueOnce(
+        new AllocationConflictError("closed", "RESCHEDULE_NO_LONGER_OPEN"),
+      );
+      const before = Date.now();
+
+      const out = await confirmTrialProposal({
+        rescheduleRequestId: "rr-1",
+        to,
+        now: NOW,
+      });
+
+      const [, write] = closeConfirmedProposal.mock.calls[0] as unknown as [
+        unknown,
+        { whereAnd?: { expiresAt: { gt: Date } } },
+      ];
+      expect(write.whereAnd?.expiresAt.gt.getTime()).toBeGreaterThanOrEqual(
+        before,
+      );
+      expect(out).toEqual({ confirmed: false, reason: "PROPOSAL_EXPIRED" });
+      expect(transitionOccurrenceCompletion).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a proposal someone else closed keeps its no-longer-open answer", async () => {
+    const { AllocationConflictError } = jest.requireActual(
+      "../../utils/scheduling-engine/errors",
+    );
+    const reads = (
+      jest.requireMock("../../lib/prisma") as {
+        default: { rescheduleRequest: { findUnique: jest.Mock } };
+      }
+    ).default.rescheduleRequest.findUnique;
+    reads.mockResolvedValueOnce(openRequest()).mockResolvedValueOnce({
+      status: "WITHDRAWN",
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    closeConfirmedProposal.mockRejectedValueOnce(
+      new AllocationConflictError("closed", "RESCHEDULE_NO_LONGER_OPEN"),
+    );
+
+    const out = await confirmTrialProposal({
+      rescheduleRequestId: "rr-1",
+      to: "ACCEPTED",
+      now: NOW,
+    });
+
+    expect(out).toEqual({
+      confirmed: false,
+      reason: "RESCHEDULE_NO_LONGER_OPEN",
+    });
+  });
+});
+
 describe("trial reschedule caps", () => {
   it("each side moves a trial once", () => {
     expect(MAX_TRIAL_RESCHEDULES_PER_SIDE).toBe(1);

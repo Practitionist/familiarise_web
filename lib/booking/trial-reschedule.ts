@@ -196,6 +196,9 @@ export async function confirmTrialProposal(args: {
           ...(args.resolvedById
             ? { data: { resolvedById: args.resolvedById } }
             : {}),
+          // The deadline is part of the write: a confirmation that reaches
+          // its commit after the proposal lapsed moves nothing.
+          whereAnd: { expiresAt: { gt: new Date() } },
         });
         const refusal = await trialWindowRefusal(tx, {
           consultantProfileId: trial.consultantProfileId,
@@ -268,6 +271,19 @@ export async function confirmTrialProposal(args: {
       };
     }
     if (error instanceof AllocationConflictError) {
+      if (error.errorCode === "RESCHEDULE_NO_LONGER_OPEN") {
+        const after = await prisma.rescheduleRequest.findUnique({
+          where: { id: request.id },
+          select: { status: true, expiresAt: true },
+        });
+        // Still unanswered, so the write missed on its deadline.
+        if (
+          after?.status === "PENDING_REVIEW" &&
+          after.expiresAt.getTime() <= Date.now()
+        ) {
+          return { confirmed: false, reason: "PROPOSAL_EXPIRED" };
+        }
+      }
       return { confirmed: false, reason: error.errorCode };
     }
     if (
