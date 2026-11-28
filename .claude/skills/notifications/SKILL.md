@@ -72,6 +72,7 @@ All three are registered once in `lib/cron/cleanup-registry.ts` and run under `w
 
 - **Expected, never page, excluded from the ops digest and Needs attention:** `policy:` (a recipient opted out after staging, e.g. `policy:audience_revoked`), `suppressed:` (email address on `EmailSuppression`), `held:pre-launch` (the `EMAIL_DELIVERY_MODE` guard, `lib/email/held.ts`).
 - **Actionable:** every `review:` reason — `review:erased_recipient` (a queued newsletter batch the provider may have seen held an erased address), `review:provider_acceptance_unknown`, `review:render_failed` (a required email whose template threw; fix the template, never replay), `review:batch_recipient_suppressed`. A terminal Novu refusal (`trigger_not_active`, workflow not found, `invalid_recipients`) splits into its own `DEAD_LETTER` row.
+- An auth failure (401/403, a missing or revoked key) is not terminal: the row retries until the attempt cap, then dead-letters once as exhausted.
 - Expected prefixes: `EXPECTED_REFUSAL_PREFIXES` (`lib/email/replay-policy.ts`), `EXPECTED_BELL_DEAD_LETTER_PREFIXES` (`lib/backoffice/queue-predicates.ts`).
 
 ## Quota math
