@@ -8,6 +8,17 @@ import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedConsultee, seedHost } from "./harness";
 import { seedCardPayment } from "./harness-plans";
 
+// @react-email/render needs --experimental-vm-modules under Jest; the static markup is the same tree.
+jest.mock("../../../lib/email/render", () => {
+  const { renderToStaticMarkup } =
+    jest.requireActual<typeof import("react-dom/server")>("react-dom/server");
+  return {
+    renderEmail: async (element: import("react").ReactElement) => {
+      const html = renderToStaticMarkup(element);
+      return { html, text: html };
+    },
+  };
+});
 jest.mock("../../../lib/novu", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
 );

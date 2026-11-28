@@ -16,7 +16,8 @@ export const NOVU_WORKFLOWS = {
   CLASS_MAKEUP_SCHEDULED: "class-makeup-scheduled",
   CLASS_SESSION_REFUNDED: "class-session-refunded",
   CLASS_EXIT_AVAILABLE: "class-exit-available",
-  SESSION_NO_SHOW: "session-no-show",
+  SESSION_OUTCOME_PROPOSED: "session-outcome-proposed",
+  SESSION_OUTCOME_REVIEWED: "session-outcome-reviewed",
   SESSION_MISSED_RECORDING: "session-missed-recording",
   WINDOW_OPENED: "window-opened",
   EVENT_SEAT_OPENED: "event-seat-opened",
@@ -209,6 +210,29 @@ export type SessionHostLivePayload = NotificationScope & {
   appointmentType: string;
   planTitle: string;
   consultantName: string;
+  dashboardUrl: string;
+};
+
+/** One side of a session-outcome notice; `subject` and `message` are rendered in the recipient's zone. */
+export type SessionOutcomeNoticePayload = NotificationScope & {
+  appointmentId: string;
+  occurrenceId: string;
+  outcome: string;
+  side: "host" | "learner";
+  planTitle: string;
+  dateTime: string;
+  subject: string;
+  message: string;
+};
+
+/** Proposed: the link opens the recipient's own no-show report on this session. */
+export type SessionOutcomeProposedPayload = SessionOutcomeNoticePayload & {
+  windowClosesAt: string;
+  windowClosesAtIso: string;
+  reportUrl: string;
+};
+
+export type SessionOutcomeReviewedPayload = SessionOutcomeNoticePayload & {
   dashboardUrl: string;
 };
 

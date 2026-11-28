@@ -53,6 +53,11 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { seatLedger } from "@/lib/booking/class-series";
 import {
+  seatJoinedAt,
+  seatSessionClaim,
+  sessionRefundSpent,
+} from "@/lib/booking/seat-session";
+import {
   MAKEUP_WINDOW_DAYS,
   occurrenceRefundKey,
 } from "@/lib/booking/class-sessions";
@@ -403,12 +408,10 @@ async function settleSeat(
     },
   });
   if (!seat) return false;
-  const joinedAt = new Date(
-    Math.max(seat.createdAt.getTime(), payment.createdAt.getTime()),
-  );
-  // Only a seat that held this session is owed for it.
-  if (session.startsAt <= joinedAt) return false;
-  if (seat.status === "HELD") {
+  const claim = seatSessionClaim(session, seat, payment);
+  if (claim === "none") return false;
+  const joinedAt = seatJoinedAt(seat, payment);
+  if (claim === "human") {
     // #1834 owner decision — a paid seat still HELD is a human's call, never
     // skipped silently nor auto-refunded; the session settles for the rest.
     await escalateHeldPaidSeat(session, payment, seat.id, {
@@ -435,7 +438,10 @@ async function alreadySpent(dedupeKey: string): Promise<boolean> {
     where: { dedupeKey },
     select: { status: true },
   });
-  return !!spent && spent.status !== "FAILED" && spent.status !== "CANCELLED";
+  return sessionRefundSpent(
+    spent ? [{ dedupeKey, status: spent.status }] : [],
+    dedupeKey,
+  );
 }
 
 /** Never ask for more than the seat still has: an over-ask retries forever. */

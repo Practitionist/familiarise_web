@@ -33,8 +33,21 @@ jest.mock("../../lib/observability/standing-finding", () => ({
     reportStandingFinding(a, r),
 }));
 const reportSentryError = jest.fn();
+const reportSentryMessage = jest.fn();
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...a: unknown[]) => reportSentryError(...a),
+  reportSentryMessage: (...a: unknown[]) => reportSentryMessage(...a),
+}));
+// The proposed-verdict notices: prepared before the write, staged only inside a write that moved the row.
+const proposal = { entityRef: "appointment:apt-1", bells: [], emails: null };
+const prepareProposed = jest.fn(async (..._a: unknown[]) => proposal);
+const stageNotices = jest.fn(async (..._a: unknown[]) => ({
+  bells: [],
+  emails: [],
+}));
+jest.mock("../../lib/booking/outcome-notices", () => ({
+  prepareProposedOutcomeNotices: (...a: unknown[]) => prepareProposed(...a),
+  stageOutcomeNotices: (...a: unknown[]) => stageNotices(...a),
 }));
 /** The appointment lock as the pass takes it: what was asked, and what the lock answers. */
 const lockAsks: { appointmentId: string; config: unknown }[] = [];
@@ -110,6 +123,8 @@ jest.mock("../../lib/prisma", () => {
 import {
   alertStaleNeedsHuman,
   decideSlotOutcome,
+  NOTICES_UNPREPARED_ESCALATE_HOURS,
+  reportNoticesUnprepared,
   type OutcomeSlot,
 } from "../../lib/booking/session-outcome-sweep";
 
@@ -316,7 +331,7 @@ it.each([
       now: at(120),
       outages: [],
     });
-    // Only the absent seat, keyed like the 1:1 no-show bell.
+    // Only the absent seat, keyed per seat.
     expect(stageBell.mock.calls.map((c) => c[1])).toEqual(
       Array.from({ length: bells }, () =>
         expect.objectContaining({
@@ -326,6 +341,98 @@ it.each([
         }),
       ),
     );
+  },
+);
+
+it("a proposed negative verdict stages both sides' notices once, inside the write that moved the row", async () => {
+  const db = jest.requireMock("../../lib/prisma").default;
+  await decideSlotOutcome(slot(30), { now: at(120), outages: [] });
+  expect(prepareProposed).toHaveBeenCalledWith({
+    occurrenceId: "occ-1",
+    appointmentId: "apt-1",
+    startsAt: at(0),
+    endsAt: at(60),
+    outcome: "CUT_SHORT",
+    outcomeAt: at(120),
+  });
+  expect(stageNotices).toHaveBeenCalledTimes(1);
+  expect(stageNotices).toHaveBeenCalledWith(db, proposal);
+});
+
+it("a proposal whose notices cannot be prepared is deferred, so the next pass writes the verdict and its notices together", async () => {
+  const failures = { add: jest.fn(), flush: jest.fn() };
+  prepareProposed.mockRejectedValueOnce(new Error("recipient read timed out"));
+
+  const first = await decideSlotOutcome(slot(30), {
+    now: at(120),
+    outages: [],
+    failures,
+  });
+  expect(first).toEqual({ kind: "deferred", reason: "notices-unprepared" });
+  // Nothing written: no outcomeAt, so the report window has not started.
+  expect(transition).not.toHaveBeenCalled();
+  expect(stageNotices).not.toHaveBeenCalled();
+  expect(failures.add).toHaveBeenCalledTimes(1);
+
+  const next = await decideSlotOutcome(slot(30), {
+    now: at(130),
+    outages: [],
+    failures,
+  });
+  expect(next).toMatchObject({ kind: "written", to: "VOIDED", moved: true });
+  expect(transition).toHaveBeenCalledTimes(1);
+  expect(transition.mock.calls[0][1].data.outcomeAt).toEqual(at(130));
+  expect(prepareProposed).toHaveBeenLastCalledWith(
+    expect.objectContaining({ outcomeAt: at(130) }),
+  );
+  expect(stageNotices).toHaveBeenCalledTimes(1);
+});
+
+it("a session whose notices keep failing escalates once it is past the bound, in one finding per run, and is still never written", async () => {
+  const broken = new Error("renderer bundle broken");
+  prepareProposed
+    .mockRejectedValueOnce(broken)
+    .mockRejectedValueOnce(broken)
+    .mockRejectedValueOnce(broken);
+  const stuck: string[] = [];
+  const hours = (h: number) => new Date(at(60).getTime() + h * 3_600_000);
+  const pass = (now: Date) =>
+    decideSlotOutcome(slot(30), {
+      now,
+      outages: [],
+      onNoticesStuck: (id) => stuck.push(id),
+    });
+
+  // Decidable since the room ended at 60 (no settle stamp here): under the bound, a plain deferral.
+  await pass(hours(NOTICES_UNPREPARED_ESCALATE_HOURS - 1));
+  expect(stuck).toEqual([]);
+  await pass(hours(NOTICES_UNPREPARED_ESCALATE_HOURS));
+  await pass(hours(NOTICES_UNPREPARED_ESCALATE_HOURS + 1));
+  expect(stuck).toEqual(["occ-1", "occ-1"]);
+  expect(transition).not.toHaveBeenCalled();
+  expect(stageNotices).not.toHaveBeenCalled();
+
+  await reportNoticesUnprepared(stuck);
+  expect(reportStandingFinding).toHaveBeenCalledTimes(1);
+  expect(reportStandingFinding).toHaveBeenCalledWith(
+    expect.objectContaining({
+      key: "session-outcome-sweep:notices-unprepared",
+      ids: ["occ-1", "count:1"],
+    }),
+    expect.any(Function),
+  );
+  expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ["a held session", 60, 1],
+  ["a lost CAS", 30, 0],
+])(
+  "%s stages no proposed-verdict notice",
+  async (_label, hostLeaves, moved) => {
+    transition.mockResolvedValueOnce(moved);
+    await decideSlotOutcome(slot(hostLeaves), { now: at(120), outages: [] });
+    expect(stageNotices).not.toHaveBeenCalled();
   },
 );
 

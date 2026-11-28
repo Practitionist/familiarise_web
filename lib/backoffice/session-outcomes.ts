@@ -90,6 +90,13 @@ import {
   type HeadlineUser,
 } from "@/lib/data/appointment-headline";
 import { meetingEndReasonSchema } from "@/lib/meetings/end-reasons";
+import {
+  prepareReviewedOutcomeNotices,
+  stageOutcomeNotices,
+  type PreparedOutcomeNotices,
+  type StagedOutcomeNotices,
+} from "@/lib/booking/outcome-notices";
+import { reportSentryError } from "@/lib/observability/report";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import {
   NEEDS_HUMAN_DEFAULT_SORT,
@@ -165,7 +172,15 @@ type OverturnArgs = {
   outcome: OccurrenceOutcome;
   actorUserId: string;
   now?: Date;
+  /** Rendered before the transaction for the negative verdict read then; staged only if it still stands. */
+  review?: { from: OccurrenceOutcome; notices: PreparedOutcomeNotices };
 };
+
+/** Ops changing a negative verdict to anything else: both sides were told of it, so both hear the result. */
+const isNegativeOverturn = (
+  from: OccurrenceOutcome | null,
+  to: OccurrenceOutcome,
+) => isNegativeMoneyOutcome(from) && from !== to;
 
 /** Only a live, past session the sweep has decided may be overturned. */
 function assertDecided(
@@ -604,6 +619,34 @@ async function oweSessionRefund(
   };
 }
 
+/** Stages the reviewed notice in the overturn's transaction, only while the negative verdict it was rendered for still stands. */
+async function stageReviewedNotices(
+  tx: Tx,
+  occ: Pick<OverturnRow, "outcome">,
+  args: OverturnArgs,
+): Promise<StagedOutcomeNotices | null> {
+  const { review } = args;
+  return review &&
+    review.from === occ.outcome &&
+    isNegativeOverturn(occ.outcome, args.outcome)
+    ? stageOutcomeNotices(tx, review.notices)
+    : null;
+}
+
+/** Attempts the staged reviewed notice once the overturn has committed. */
+async function flushReviewedNotices(
+  notices: StagedOutcomeNotices | null,
+): Promise<void> {
+  if (!notices) return;
+  await flushNotificationsAfter(
+    {
+      bells: notices.bells,
+      emails: [{ rows: notices.emails, emailType: "SESSION_OUTCOME_REVIEWED" }],
+    },
+    "session.set-outcome",
+  );
+}
+
 /** Overturn one past session's outcome; the status follows the outcome. */
 export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   const now = args.now ?? new Date();
@@ -616,7 +659,17 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   let refund: SessionNoShowRefund | null = null;
   if (args.outcome === "HOST_ABSENT" && occ.appointment.consultation) {
     const decided = await decideConsultationNoShow(tx, occ, args, now);
-    if (decided.kind === "claimed") return decided.result;
+    if (decided.kind === "claimed") {
+      const reviewed = await stageReviewedNotices(tx, occ, args);
+      const { afterCommit: settleClaim, ...claimed } = decided.result;
+      return {
+        ...claimed,
+        afterCommit: async () => {
+          await settleClaim();
+          await flushReviewedNotices(reviewed);
+        },
+      };
+    }
     ({ strike, refund } = decided);
   }
   const to = COMPLETION_FOR_OUTCOME[args.outcome];
@@ -669,12 +722,13 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   const driveRefund = refund
     ? await oweSessionRefund(tx, occ, refund, now)
     : null;
+  const reviewed = await stageReviewedNotices(tx, occ, args);
   return {
     before: { completionStatus: occ.completionStatus, outcome: occ.outcome },
     after: { completionStatus: to, outcome: args.outcome },
-    // The class void's and the cancelled make-up's notices and the owed refund's drive, once the caller's transaction commits.
+    // The class void's, the cancelled make-up's and the review's notices and the owed refund's drive, once the caller's transaction commits.
     afterCommit:
-      voided || makeUp?.bells.length || driveRefund
+      voided || makeUp?.bells.length || driveRefund || reviewed
         ? async () => {
             if (voided) await flushClassVoidNotices(voided);
             if (makeUp?.bells.length) {
@@ -684,6 +738,7 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
               );
             }
             await driveRefund?.();
+            await flushReviewedNotices(reviewed);
           }
         : undefined,
   };
@@ -700,14 +755,47 @@ export async function overturnSessionOutcome(args: {
 }) {
   const occ = await prisma.appointmentOccurrence.findUnique({
     where: { id: args.occurrenceId },
-    select: { appointmentId: true },
+    select: {
+      appointmentId: true,
+      startsAt: true,
+      endsAt: true,
+      outcome: true,
+    },
   });
   if (!occ) {
     throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
   }
+  const now = new Date();
+  const from = occ.outcome;
+  const notices =
+    from && isNegativeOverturn(from, args.outcome)
+      ? await prepareReviewedOutcomeNotices({
+          occurrenceId: args.occurrenceId,
+          appointmentId: occ.appointmentId,
+          startsAt: occ.startsAt,
+          endsAt: occ.endsAt,
+          outcome: args.outcome,
+          reviewedAt: now,
+        }).catch((err: unknown) => {
+          // The overturn stands without its notice; one request, one report.
+          reportSentryError(err, {
+            subsystem: "booking",
+            op: "session.set-outcome.reviewed-notice",
+            extra: { occurrenceId: args.occurrenceId },
+          });
+          return null;
+        })
+      : null;
   const { afterCommit, ...result } = await withAppointmentLock(
     occ.appointmentId,
-    () => prisma.$transaction((tx) => setSessionOutcome(tx, args)),
+    () =>
+      prisma.$transaction((tx) =>
+        setSessionOutcome(tx, {
+          ...args,
+          now,
+          ...(from && notices && { review: { from, notices } }),
+        }),
+      ),
   );
   await afterCommit?.();
   return result;
@@ -887,7 +975,7 @@ export async function rereadSessionAttendance(args: {
   const verdict = classifySessionOutcome({
     startsAt: occ.startsAt,
     endsAt: occ.endsAt,
-    hostUserIds: sessionHostUserIds(occ.appointment),
+    hostUserIds: sessionHostUserIds(occ.appointment, occ),
     intervals: settled.intervals,
     meeting: room && { endedAt: room.endedAt, endedReason: room.endedReason },
     maintenanceWindows: await readOutageWindows(prisma, occ.startsAt),
@@ -942,6 +1030,7 @@ const personOf = (u: HeadlineUser | null) =>
 async function readPageReports(
   rows: {
     id: string;
+    startsAt: Date;
     endsAt: Date;
     outcome: OccurrenceOutcome | null;
     outcomeAt: Date | null;
@@ -984,7 +1073,7 @@ async function readPageReports(
       outcome: row.outcome,
       endsAt: row.endsAt,
       windowClosesAt: reportWindowClosesAt(row.outcomeAt),
-      ...reportParties(c.occurrence.appointment),
+      ...reportParties(c.occurrence.appointment, row),
     });
     const side = reasonSide(c.flowReason);
     const reason = SupportFlowReasonEnum.safeParse(c.flowReason);

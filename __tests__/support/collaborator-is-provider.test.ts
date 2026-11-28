@@ -55,7 +55,28 @@ beforeEach(() => {
       webinarPlan: {
         title: "W",
         consultantProfile: { userId: "u-owner" },
-        collaborators: [{ consultantProfile: { userId: "u-cohost" } }],
+        collaborators: [
+          {
+            status: "ACCEPTED",
+            acceptedAt: new Date(PAST_START.getTime() - 86_400_000),
+            endedAt: null,
+            consultantProfile: { userId: "u-cohost", deletedAt: null },
+          },
+          // On the team for the ended session, removed an hour after it.
+          {
+            status: "REMOVED",
+            acceptedAt: new Date(PAST_START.getTime() - 86_400_000),
+            endedAt: new Date(PAST_END.getTime() + 3_600_000),
+            consultantProfile: { userId: "u-cohost-then", deletedAt: null },
+          },
+          // Joined the team an hour after the ended session.
+          {
+            status: "ACCEPTED",
+            acceptedAt: new Date(PAST_END.getTime() + 3_600_000),
+            endedAt: null,
+            consultantProfile: { userId: "u-cohost-later", deletedAt: null },
+          },
+        ],
       },
     },
     class: null,
@@ -70,19 +91,16 @@ it("treats an ACCEPTED collaborator as a provider and withholds the attendee NO_
   expect(noShow.map((f) => f.title)).toEqual(["The participant didn't join"]);
 });
 
-it("reads only ACCEPTED collaborators whose profile is not soft-deleted", async () => {
-  await buildSupportContext("t1", "appt1", "u-cohost", "NO_SHOW");
-  const select = mockPrisma.appointment.findUnique.mock.calls[0][0].select;
-  const expected = {
-    status: "ACCEPTED",
-    consultantProfile: { deletedAt: null },
-  };
-  expect(select.webinar.select.webinarPlan.select.collaborators.where).toEqual(
-    expected,
-  );
-  expect(select.class.select.classPlan.select.collaborators.where).toEqual(
-    expected,
-  );
+it("a report on an ended session is the host's from whoever hosted it then, and today's team decides everything else", async () => {
+  const isProvider = async (userId: string, category: string) =>
+    (await buildSupportContext("t1", "appt1", userId, category))?.isProvider;
+
+  // The report follows the session's own hosts, as the verdict's judgement does.
+  expect(await isProvider("u-cohost-then", "NO_SHOW")).toBe(true);
+  expect(await isProvider("u-cohost-later", "NO_SHOW")).toBe(false);
+  // A forward-looking intent is about today's team.
+  expect(await isProvider("u-cohost-then", "RESCHEDULE")).toBe(false);
+  expect(await isProvider("u-cohost-later", "RESCHEDULE")).toBe(true);
 });
 
 const reasonsOffered = (

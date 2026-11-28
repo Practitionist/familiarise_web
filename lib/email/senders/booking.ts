@@ -35,6 +35,8 @@ import TrialAndSubscriptionEmail, {
 } from "@/emails/booking/TrialAndSubscriptionEmail";
 import TrialScheduledEmail from "@/emails/booking/TrialScheduledEmail";
 import WindowOpenedEmail from "@/emails/booking/WindowOpenedEmail";
+import SessionOutcomeNoticeEmail from "@/emails/booking/SessionOutcomeNoticeEmail";
+import type { NoticeCopy } from "@/lib/booking/outcome-notice-copy";
 import { EmailLayout } from "@/emails/components/EmailLayout";
 import {
   button,
@@ -43,9 +45,13 @@ import {
   paragraph,
 } from "@/emails/components/styles";
 import { shownMoves, type SessionMove } from "@/lib/booking/session-moves";
-import type { EmailRecipient } from "../preferences";
+import { SENDERS } from "../config";
+import { loadEmailRecipients, type EmailRecipient } from "../preferences";
 import {
   attemptStaged,
+  prepareRecipientEmails,
+  screenPreparedEmails,
+  type ScreenedRecipientEmails,
   type SendToRecipientsResult,
   type StagedRecipientEmail,
 } from "../send-to-recipients";
@@ -857,7 +863,6 @@ export interface ClassSessionLifecycleEmailArgs {
   missedCount?: number;
   voided?: boolean;
   recordingUrl?: string | null;
-  supportUrl?: string | null;
   dashboardUrl: string;
 }
 
@@ -901,7 +906,6 @@ function buildClassSessionEmail(args: ClassSessionLifecycleEmailArgs): {
           recordingUrl: args.recordingUrl
             ? absolute(args.recordingUrl)
             : undefined,
-          supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
@@ -932,11 +936,10 @@ export const stageClassExitAvailableEmails =
 export interface SessionOutcomeEmailArgs {
   appointmentId: string;
   userIds: string[];
-  outcome: "NO_SHOW" | "MISSED_RECORDING";
+  outcome: "MISSED_RECORDING";
   planTitle: string;
   startsAt?: EmailTimestampInput;
   recordingUrl?: string | null;
-  supportUrl?: string | null;
   dashboardUrl: string;
 }
 
@@ -948,7 +951,6 @@ function buildSessionOutcomeEmail(args: SessionOutcomeEmailArgs) {
     planTitle: args.planTitle,
     startsAt: args.startsAt,
     recordingUrl: args.recordingUrl ? absolute(args.recordingUrl) : undefined,
-    supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
     dashboardUrl: absolute(args.dashboardUrl),
   });
 }
@@ -959,7 +961,6 @@ export function prepareSessionOutcomeEmails(
   const { userIds, spec } = buildSessionOutcomeEmail({
     ...args,
     recordingUrl: args.recordingUrl ? absolute(args.recordingUrl) : undefined,
-    supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
     dashboardUrl: absolute(args.dashboardUrl),
   });
   return prepareSpecEmails(spec, userIds);
@@ -967,6 +968,62 @@ export function prepareSessionOutcomeEmails(
 
 export const stageSessionOutcomeEmails =
   defineLifecycleStager<SessionOutcomeEmailArgs>(buildSessionOutcomeEmail);
+
+export interface SessionOutcomeNoticeEmailArgs {
+  emailType: "SESSION_OUTCOME_PROPOSED" | "SESSION_OUTCOME_REVIEWED";
+  appointmentId: string;
+  userIds: string[];
+  /** One recipient's words and link, built in their own zone. */
+  noticeFor: (
+    userId: string,
+    zone: string,
+  ) => { copy: NoticeCopy; href: string };
+}
+
+/**
+ * Renders and screens a session-outcome notice before the verdict's transaction
+ * stages it. A render failure for any recipient the email may reach throws, with
+ * no per-row Sentry event, so the caller defers the write and reports once.
+ */
+export async function prepareSessionOutcomeNoticeEmails(
+  args: SessionOutcomeNoticeEmailArgs,
+): Promise<ScreenedRecipientEmails> {
+  const spec: RecipientEmailSpec = {
+    emailType: args.emailType,
+    category: "appointments",
+    entityRef: `appointment:${args.appointmentId}`,
+    subject: (r) => args.noticeFor(r.userId, r.zone).copy.subject,
+    render: (r) => {
+      const { copy, href } = args.noticeFor(r.userId, r.zone);
+      return React.createElement(SessionOutcomeNoticeEmail, {
+        recipientName: greet(r),
+        subject: copy.subject,
+        lines: copy.lines,
+        actionLabel: copy.actionLabel,
+        actionHref: absolute(href),
+        unsubscribeUrl: r.unsubscribeUrl,
+      });
+    },
+  };
+  const recipients = await loadEmailRecipients(args.userIds, spec.category);
+  const prepared = await prepareRecipientEmails(
+    {
+      recipients,
+      emailType: spec.emailType,
+      from: SENDERS.notifications,
+      subject: spec.subject,
+      render: spec.render,
+      entityRef: spec.entityRef,
+    },
+    { reportToSentry: false },
+  );
+  if (prepared.failed > 0) {
+    throw new Error(
+      `${spec.emailType}: ${prepared.failed} of ${recipients.length} email(s) failed to render`,
+    );
+  }
+  return screenPreparedEmails(prepared);
+}
 
 export interface AppointmentCompletedEmailArgs {
   appointmentId: string;

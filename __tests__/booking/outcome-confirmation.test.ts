@@ -74,7 +74,10 @@ import {
   unconfirmedClosedVerdictWhere,
   voidWindowStartedBefore,
 } from "@/lib/booking/misses";
-import { confirmClosedOutcomes } from "@/lib/booking/session-outcome-sweep";
+import {
+  confirmClosedOutcomes,
+  reportParties,
+} from "@/lib/booking/session-outcome-sweep";
 import {
   confirmSessionOutcome,
   setSessionOutcome,
@@ -192,6 +195,44 @@ describe("the predicates", () => {
   });
 });
 
+describe("who may report on each side", () => {
+  it("is the hosts the session had: a co-host removed since reports as a host, and a learner who joined the team afterwards as a learner", () => {
+    const period = (
+      userId: string,
+      acceptedAt: Date,
+      endedAt: Date | null,
+    ) => ({
+      status: endedAt ? ("REMOVED" as const) : ("ACCEPTED" as const),
+      acceptedAt,
+      endedAt,
+      consultantProfile: { userId, deletedAt: null },
+    });
+    const parties = reportParties(
+      {
+        consultation: null,
+        subscription: null,
+        trial: null,
+        webinar: null,
+        class: {
+          classPlan: {
+            consultantProfile: { userId: "hannah" },
+            collaborators: [
+              period("cohost-then", at(-600), at(600)),
+              period("priya", at(600), null),
+            ],
+          },
+        },
+        participants: [{ userId: "priya" }, { userId: "omar" }],
+      },
+      { startsAt: at(0), endsAt: at(60) },
+    );
+    expect(parties).toEqual({
+      hostUserIds: ["hannah", "cohost-then"],
+      learnerUserIds: ["priya", "omar"],
+    });
+  });
+});
+
 describe("the window-close pass", () => {
   it("confirms a strong closed verdict, leaves a weak or open one, and reports the weak count", async () => {
     occurrences.rows.push(
@@ -215,6 +256,43 @@ describe("the window-close pass", () => {
     for (const id of ["weak", "unsettled", "open"]) {
       expect(row(id).outcomeConfirmedAt).toBeNull();
     }
+  });
+
+  it("judges the evidence on the hosts the session had: a learner who joined the team afterwards still counts as the one who waited", async () => {
+    const collaborators = [
+      {
+        status: "ACCEPTED",
+        acceptedAt: at(600),
+        endedAt: null,
+        consultantProfile: { userId: "priya", deletedAt: null },
+      },
+    ];
+    occurrences.rows.push(
+      verdict(
+        "class",
+        {
+          completionStatus: "VOIDED",
+          outcome: "HOST_ABSENT",
+          appointment: {
+            subscriptionId: null,
+            participants: [{ userId: "priya" }],
+            consultation: null,
+            subscription: null,
+            trial: null,
+            webinar: null,
+            class: {
+              classPlan: {
+                consultantProfile: { userId: "hannah" },
+                collaborators,
+              },
+            },
+          },
+        },
+        { presences: [{ userId: "priya", joinedAt: at(0), leftAt: at(60) }] },
+      ),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 1, weak: 0 });
   });
 
   it("loses the CAS to a relabel that lands between its read and its write", async () => {

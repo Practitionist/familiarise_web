@@ -331,13 +331,12 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
       }
     });
 
-    it("renders all 7 ClassSessionEmail kinds cleanly", () => {
+    it("renders all 6 ClassSessionEmail kinds cleanly", () => {
       const kinds: ClassSessionEmailKind[] = [
         "CANCELLED",
         "MAKEUP_SCHEDULED",
         "SESSION_REFUNDED",
         "EXIT_AVAILABLE",
-        "NO_SHOW",
         "MISSED_RECORDING",
         "COMPLETED",
       ];
@@ -357,7 +356,6 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
             startsAtText: "Mon, 12 Oct, 7:00 PM IST",
             amountText: "INR 2,500",
             recordingUrl: "https://familiarisenow.com/recording",
-            supportUrl: "https://familiarisenow.com/support",
             dashboardUrl: "https://familiarisenow.com/dashboard",
           }),
         );

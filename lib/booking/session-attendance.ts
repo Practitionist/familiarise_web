@@ -8,7 +8,10 @@
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "./participants";
 import { presentMinutes } from "./session-outcome";
-import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
+import {
+  currentSessionHostUserIds,
+  SESSION_HOSTS_SELECT,
+} from "./session-hosts";
 
 export interface SeatAttendance {
   userId: string;
@@ -46,7 +49,8 @@ export async function readSessionAttendance(args: {
     },
   });
   if (!occ) return null;
-  const hosts = sessionHostUserIds(occ.appointment);
+  // A permission check, so today's roster: a past collaborator no longer sees attendance.
+  const hosts = currentSessionHostUserIds(occ.appointment);
   if (!args.privileged && !hosts.includes(args.viewerUserId)) return null;
   const settled = Boolean(occ.meeting?.attendanceSettledAt);
   return {

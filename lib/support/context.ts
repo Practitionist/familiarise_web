@@ -13,7 +13,11 @@ import {
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { liveOccurrencesOf } from "@/lib/appointments/occurrences";
 import { seatOrganizationId } from "@/lib/booking/participants";
-import { sessionHostUserIds } from "@/lib/booking/session-hosts";
+import {
+  currentSessionHostUserIds,
+  SESSION_HOSTS_SELECT,
+  sessionHostUserIds,
+} from "@/lib/booking/session-hosts";
 import type { SupportContext, SupportStage } from "./types";
 
 /**
@@ -32,11 +36,9 @@ import type { SupportContext, SupportStage } from "./types";
  */
 const USER_ID = { select: { userId: true } } as const;
 
-/** A soft-deleted profile keeps its ACCEPTED row, so the profile is filtered too. */
-const ACCEPTED_HOSTS = {
-  where: { status: "ACCEPTED", consultantProfile: { deletedAt: null } },
-  select: { consultantProfile: USER_ID },
-} as const;
+/** Every period a collaborator held on the team, as the host-side functions read it. */
+const HOST_PERIODS =
+  SESSION_HOSTS_SELECT.class.select.classPlan.select.collaborators;
 
 const RETROSPECTIVE_CATEGORIES = new Set([
   "NO_SHOW",
@@ -127,7 +129,7 @@ export async function buildSupportContext(
             select: {
               title: true,
               consultantProfile: USER_ID,
-              collaborators: ACCEPTED_HOSTS,
+              collaborators: HOST_PERIODS,
             },
           },
         },
@@ -138,7 +140,7 @@ export async function buildSupportContext(
             select: {
               title: true,
               consultantProfile: USER_ID,
-              collaborators: ACCEPTED_HOSTS,
+              collaborators: HOST_PERIODS,
             },
           },
         },
@@ -146,9 +148,6 @@ export async function buildSupportContext(
     },
   });
   if (!appt) return null;
-
-  // The host side is the one `sessionHostUserIds` judges reports by, so the flow and the verdict agree.
-  const isProvider = sessionHostUserIds(appt).includes(userId);
 
   const nowMs = Date.now();
   const runs = liveOccurrencesOf(appt.occurrences).map((row) => ({
@@ -182,6 +181,20 @@ export async function buildSupportContext(
 
   const startsAt = subjectRun?.startsAt ?? null;
   const endsAt: Date | null = subjectRun?.endsAt ?? null;
+
+  // A report on an ended session is judged by the hosts that session had (`sessionHostUserIds`),
+  // so its flow reads the same side; anything else is about today's team.
+  const reportedRun =
+    RETROSPECTIVE_CATEGORIES.has(category ?? "") &&
+    subjectRun &&
+    subjectRun.endsAt.getTime() <= nowMs
+      ? subjectRun
+      : null;
+  const isProvider = (
+    reportedRun
+      ? sessionHostUserIds(appt, reportedRun)
+      : currentSessionHostUserIds(appt)
+  ).includes(userId);
 
   // Session stage from the slot window. A past slot (or no live slot at all —
   // e.g. a booking whose every row was cancelled away) reads as COMPLETED; a

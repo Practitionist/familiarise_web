@@ -60,6 +60,14 @@ jest.mock("../../lib/meetings/settle-attendance", () => ({
 }));
 
 const reportStandingFinding = jest.fn(async (..._args: unknown[]) => true);
+// The proposed-verdict notices are rendered and staged with the proposal; this suite judges only who writes it.
+jest.mock("../../lib/booking/outcome-notices", () => ({
+  prepareProposedOutcomeNotices: jest.fn(async () => null),
+  stageOutcomeNotices: jest.fn(async () => ({ bells: [], emails: [] })),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/observability/standing-finding", () => ({
   __esModule: true,
   reportStandingFinding: (...a: unknown[]) => reportStandingFinding(...a),

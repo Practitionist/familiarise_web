@@ -43,12 +43,8 @@ const noShowFlowAttendee: FlowDefinition = {
     expert: {
       id: "expert",
       kind: "TERMINAL",
-      // #1569 B1: a host no-show is handled automatically, not by a manual
-      // reschedule promise — see the owner-decided void/remedy rules (D1, D4).
-      // The absence has to clear the threshold with no collaborator or
-      // co-presenter covering the session; a brief drop doesn't void it, and
-      // CodeRabbit caught an earlier draft implying any absence did.
-      body: "If the host is absent for enough of the session, with no collaborator or co-presenter covering for them, it's voided automatically. For a one-to-one consultation that means an automatic full refund. For classes and webinars, we first offer a free make-up session within 14 days and automatically refund the session if the make-up goes unused. For a subscription, the session is returned to your plan's allowance and refunded automatically if it's still unused when your plan or billing cycle ends. You don't need to request anything, but if this doesn't match what happened, let us know and our team will take another look.",
+      // A confirming report applies a strong verdict before the 48-hour window closes; a weak one goes to ops.
+      body: "Thanks for confirming. If the host was absent for enough of the session, with no collaborator or co-presenter covering for them, the session is voided after a 48-hour window from our record, or sooner now that you've confirmed it. If our call record is incomplete, our team checks it first. For a one-to-one consultation that means a full refund. For classes and webinars, we first offer a free make-up session within 14 days and refund the session automatically if the make-up goes unused. For a subscription, the session is returned to your plan's allowance and refunded automatically if it's still unused when your plan or billing cycle ends. If this doesn't match what happened, tell us here and our team will take another look.",
       escalate: true,
       reason: "provider_no_show",
     },
@@ -95,11 +91,8 @@ const noShowFlowProvider: FlowDefinition = {
     client: {
       id: "client",
       kind: "TERMINAL",
-      // #1569 B1: the participant's absence is recorded automatically
-      // (LEARNER_ABSENT) and your fee stays with you; the report is
-      // ops-overturnable through the existing support/ticket path, not a new
-      // write from this flow.
-      body: "Noted — the participant's absence is recorded automatically and your fee for this session stays with you. If you think this was recorded incorrectly, contact support and our team can review and correct it.",
+      // The fee waits for the report window; ops can overturn the record through a support case.
+      body: "Noted. The participant's absence is recorded from the call, and your fee for this session stays with you once the 48-hour window from our record closes without the participant telling us they were there. If our call record is incomplete, our team checks it first. If you think it was recorded incorrectly, contact support and our team can review and correct it.",
       resolved: true,
       reason: "attendee_no_show",
     },
