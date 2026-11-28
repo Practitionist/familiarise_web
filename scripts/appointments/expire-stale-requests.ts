@@ -593,9 +593,14 @@ async function stageExpiredRefunds(
   return markers;
 }
 
-async function driveExpiredRefunds(markers: readonly RefundOwedMarker[]) {
+async function driveExpiredRefunds(
+  markers: readonly RefundOwedMarker[],
+  pastDeadline: () => boolean,
+) {
   const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
   for (const marker of markers) {
+    // A marker not driven here is committed; the refund retry job drives it.
+    if (pastDeadline()) break;
     const outcome = await driveRefundOwed(marker);
     if (outcome.kind === "refunded") out.issued += 1;
     else if (outcome.kind === "failed") {
@@ -806,7 +811,7 @@ async function expirePendingConsultations(
       `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} skipped)`,
     );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
-    const refunds = await driveExpiredRefunds(markers);
+    const refunds = await driveExpiredRefunds(markers, run.pastDeadline);
     errors.push(...refunds.failureMsgs);
 
     return { expired: expiredIds.length, slotsReleased, ...refunds, errors };
@@ -981,6 +986,7 @@ const STALE_RELEASE_PARTIES_SELECT = {
 
 async function releaseStaleRescheduledSlots(
   limits: StaleRequestRunLimits,
+  run: SweepRun,
 ): Promise<{
   released: number;
   errors: string[];
@@ -1014,6 +1020,8 @@ async function releaseStaleRescheduledSlots(
       ]);
     }
     for (const [appointmentId, rows] of byAppointment) {
+      // A booking not reached keeps its RESCHEDULED rows for the next run.
+      if (run.pastDeadline()) break;
       try {
         const committed = await prisma.$transaction(async (tx) => {
           const moved = await transitionOccurrenceCompletion(tx, {
@@ -1341,7 +1349,7 @@ async function expireApprovedUnallocatedSubscriptions(
         (skipped > 0 ? ` (${skipped} skipped)` : ""),
     );
 
-    const refunds = await driveExpiredRefunds(markers);
+    const refunds = await driveExpiredRefunds(markers, run.pastDeadline);
     errors.push(...refunds.failureMsgs);
 
     return {
@@ -2534,7 +2542,7 @@ async function expireStaleRequestsUnlocked(
   // Stale tentative-RESCHEDULED holds on APPROVED subscriptions go back to
   // the plan; the parent stays APPROVED and both parties are told.
   const staleRescheduledReleased = await startArm(
-    () => releaseStaleRescheduledSlots(limits),
+    () => releaseStaleRescheduledSlots(limits, run),
     { released: 0, errors: [] },
   );
   allErrors.push(...staleRescheduledReleased.errors);

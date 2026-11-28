@@ -25,6 +25,15 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
+const driveRefundOwed = jest.fn(async (..._a: unknown[]) => ({
+  kind: "refunded",
+}));
+jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  ...jest.requireActual("../fixtures/booking-expiry-test-doubles")
+    .refundOwedTestModule,
+  driveRefundOwed: (...a: unknown[]) => driveRefundOwed(...a),
+}));
+
 const lapseApprovedRequest = jest.fn();
 jest.mock("../../lib/booking/lapse-approved-request", () => ({
   lapseApprovedRequest: (...a: unknown[]) => lapseApprovedRequest(...a),
@@ -167,5 +176,63 @@ it("stops starting rows when the deadline passes inside an arm", async () => {
     expect(result.consultationsExpired).toBe(1);
   } finally {
     now.mockRestore();
+  }
+});
+
+it("a refund owed by a row admitted before the deadline is not driven after it", async () => {
+  stalePendingConsultations(["cons-1", "cons-2"]);
+  const paymentsOf = prisma.$queryRaw as jest.Mock;
+  paymentsOf.mockResolvedValue([
+    { id: "pay-1", refundOwedKey: null, refundOwedPaise: null },
+  ]);
+  const startedAt = Date.now();
+  const now = jest.spyOn(Date, "now");
+  consultations.updateMany.mockImplementation(async () => {
+    now.mockReturnValue(startedAt + SWEEP_START_DEADLINE_MS + 1);
+    return { count: 1 };
+  });
+
+  try {
+    const result = await expireStaleRequests({ startedAt });
+    // The marker is committed with the expiry; the refund retry job drives it.
+    expect(expiredWrites()).toEqual(["cons-1"]);
+    expect(driveRefundOwed).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ refundsIssued: 0, refundFailures: 0 });
+  } finally {
+    now.mockRestore();
+    paymentsOf.mockResolvedValue([]);
+  }
+});
+
+it("the stale-slot release checks the deadline before each booking's transaction", async () => {
+  const occurrences = prisma.appointmentOccurrence.findMany as jest.Mock;
+  const at = new Date();
+  occurrences.mockImplementation(
+    async (args: { orderBy?: { updatedAt?: string } }) =>
+      args.orderBy?.updatedAt === "asc"
+        ? ["apt-1", "apt-2"].map((appointmentId) => ({
+            id: `occ-${appointmentId}`,
+            appointmentId,
+            startsAt: at,
+            endsAt: at,
+            consultantProfileId: "cp-1",
+          }))
+        : [],
+  );
+  const startedAt = Date.now();
+  const now = jest.spyOn(Date, "now");
+  const transactions = prisma.$transaction as jest.Mock;
+  transactions.mockImplementationOnce(async () => {
+    // The first booking's release runs the clock past the run's deadline.
+    now.mockReturnValue(startedAt + SWEEP_START_DEADLINE_MS + 1);
+    throw new Error("slow release");
+  });
+
+  try {
+    await expireStaleRequests({ startedAt });
+    expect(transactions).toHaveBeenCalledTimes(1);
+  } finally {
+    now.mockRestore();
+    occurrences.mockResolvedValue([]);
   }
 });
