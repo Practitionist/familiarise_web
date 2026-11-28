@@ -46,6 +46,9 @@ jest.mock("../../utils/appointmentlock", () => ({
   extendLock: jest.fn(async () => true),
 }));
 jest.mock("../../lib/payments/checkout/order-reuse", () => ({
+  CHECKOUT_PRE_COMMIT_TX_OPTIONS: jest.requireActual(
+    "../../lib/payments/checkout/order-reuse",
+  ).CHECKOUT_PRE_COMMIT_TX_OPTIONS,
   openOrderTargetOf: () => null,
   findReusablePendingOrderPayment: jest.fn(),
   releaseSupersededHolds: jest.fn(),
@@ -155,6 +158,8 @@ beforeEach(() => {
 
 afterEach(() => jest.restoreAllMocks());
 
+const PRE_COMMIT_TX_OPTIONS = { maxWait: 2_000, timeout: 8_000 };
+
 const DATABASE_BUSY_BODY = {
   errorType: "DATABASE_BUSY",
   retryAfter: 5,
@@ -162,13 +167,12 @@ const DATABASE_BUSY_BODY = {
 };
 
 describe("a database timeout before the booking commits answers a typed 503", () => {
-  it("the pricing transaction past its 5 s timeout", async () => {
-    $transaction.mockRejectedValueOnce(expiredTransaction(5000, 5610));
+  it("the pricing transaction past its 8 s timeout", async () => {
+    $transaction.mockRejectedValueOnce(expiredTransaction(8000, 8610));
 
     const res = await POST(webinarCheckout());
 
-    // The pricing transaction passes no options, so Prisma's 5 s default applies.
-    expect($transaction.mock.calls[0]).toHaveLength(1);
+    expect($transaction.mock.calls[0][1]).toEqual(PRE_COMMIT_TX_OPTIONS);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject(DATABASE_BUSY_BODY);
     const context = soleCapture();
@@ -176,12 +180,13 @@ describe("a database timeout before the booking commits answers a typed 503", ()
     expect(context.tags?.expected).toBe("true");
   });
 
-  it("the in-lock revalidation past its 5 s timeout", async () => {
+  it("the in-lock revalidation past its 8 s timeout", async () => {
     calculateAmountAndValidate.mockResolvedValueOnce(PRICED);
-    $transaction.mockRejectedValueOnce(expiredTransaction(5000, 5085));
+    $transaction.mockRejectedValueOnce(expiredTransaction(8000, 8085));
 
     const res = await POST(webinarCheckout());
 
+    expect($transaction.mock.calls[0][1]).toEqual(PRE_COMMIT_TX_OPTIONS);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject(DATABASE_BUSY_BODY);
     expect(soleCapture().level).toBe("warning");

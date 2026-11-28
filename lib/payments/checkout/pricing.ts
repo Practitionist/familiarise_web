@@ -47,6 +47,7 @@ import {
 import { resolveSubscriptionCheckoutPeriod } from "@/lib/payments/checkout/renewal";
 import { validateSlotAvailability } from "@/lib/payments/checkout/occupancy-validate";
 import {
+  CHECKOUT_PRE_COMMIT_TX_OPTIONS,
   openOrderTargetOf,
   ownOpenOrderHolds,
 } from "@/lib/payments/checkout/order-reuse";
@@ -554,5 +555,5 @@ export async function calculateAmountAndValidate(
       welcomeDiscountPaise: derived.welcomeDiscountPaise,
       gstRegime,
     };
-  });
+  }, CHECKOUT_PRE_COMMIT_TX_OPTIONS);
 }

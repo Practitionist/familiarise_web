@@ -32,10 +32,14 @@ jest.mock("@/lib/booking/reschedule-decline", () => ({
   declineOpenReschedules: jest.fn(),
 }));
 const mockTxRef: { tx: unknown } = { tx: null };
+const mockTransaction = jest.fn(
+  (fn: (tx: unknown) => unknown, _options?: unknown) => fn(mockTxRef.tx),
+);
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
-    $transaction: (fn: (tx: unknown) => unknown) => fn(mockTxRef.tx),
+    $transaction: (fn: (tx: unknown) => unknown, options?: unknown) =>
+      mockTransaction(fn, options),
   },
 }));
 
@@ -129,6 +133,10 @@ describe("discount use on an unpaid end", () => {
     const { tx } = fakeTx({ casWins: true, discountCodeId: null });
     mockTxRef.tx = tx;
     await releaseSupersededHolds({ paymentIds: ["pay-1"], userId: "u-1" });
+    expect(mockTransaction.mock.calls[0][1]).toEqual({
+      maxWait: 2_000,
+      timeout: 8_000,
+    });
     expect(reverseBookingUtilization).toHaveBeenCalledWith(tx, {
       paymentId: "pay-1",
       reason: SUPERSEDED_HOLD_NOTE,

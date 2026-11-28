@@ -25,6 +25,13 @@ import type { CheckoutInput } from "@/schemas/checkout";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 
+// Limits for checkout's transactions before the commit (pricing, in-lock checks, hold release);
+// pricing plus the in-lock checks at 8 s each leave room under the ~26 s edge timeout.
+export const CHECKOUT_PRE_COMMIT_TX_OPTIONS = {
+  maxWait: 2_000,
+  timeout: 8_000,
+} as const;
+
 /** Why a superseded open order's booking was cancelled (#1463). */
 export const SUPERSEDED_HOLD_NOTE =
   "Superseded by a newer checkout attempt for the same booking";
@@ -564,6 +571,6 @@ export async function releaseSupersededHolds(params: {
       }
     }
     return notices;
-  });
+  }, CHECKOUT_PRE_COMMIT_TX_OPTIONS);
   await flushBackupInterestNotices(holdNotices);
 }
