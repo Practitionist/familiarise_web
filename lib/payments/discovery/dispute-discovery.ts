@@ -147,6 +147,35 @@ async function updateDispute(
 }
 
 /**
+ * The stored status of the page's disputes, and the listed capture ids a
+ * payment row holds: the handler reads the gateway only for the others.
+ */
+async function readPageRows(page: RazorpayListedDispute[]) {
+  const stored = new Map(
+    (
+      await prisma.dispute.findMany({
+        where: { disputeId: { in: page.map((dispute) => dispute.id) } },
+        select: { disputeId: true, status: true },
+      })
+    ).map((row) => [row.disputeId, row.status]),
+  );
+  const unseen = page.filter((dispute) => !stored.has(dispute.id));
+  const heldCaptures = new Set(
+    unseen.length === 0
+      ? []
+      : (
+          await prisma.payment.findMany({
+            where: {
+              gatewayPaymentId: { in: unseen.map((d) => d.payment_id) },
+            },
+            select: { gatewayPaymentId: true },
+          })
+        ).map((row) => row.gatewayPaymentId),
+  );
+  return { stored, heldCaptures };
+}
+
+/**
  * One bounded pass. The position moves past a page when every dispute on it
  * was handed over or passed over as a remembered deferral; a failed hand-over
  * or a deadline cut keeps the page.
@@ -209,28 +238,14 @@ export async function discoverGatewayDisputes(
     }
     run.listed += page.length;
 
-    const stored = new Map(
-      (
-        await prisma.dispute.findMany({
-          where: { disputeId: { in: page.map((dispute) => dispute.id) } },
-          select: { disputeId: true, status: true },
-        })
-      ).map((row) => [row.disputeId, row.status]),
-    );
-    // The handler reads the gateway only for a payment no row holds by its capture id.
-    const unseen = page.filter((dispute) => !stored.has(dispute.id));
-    const heldCaptures = new Set(
-      unseen.length === 0
-        ? []
-        : (
-            await prisma.payment.findMany({
-              where: {
-                gatewayPaymentId: { in: unseen.map((d) => d.payment_id) },
-              },
-              select: { gatewayPaymentId: true },
-            })
-          ).map((row) => row.gatewayPaymentId),
-    );
+    let rows: Awaited<ReturnType<typeof readPageRows>>;
+    try {
+      rows = await readPageRows(page);
+    } catch (error) {
+      run.errors.push(`Dispute lookup: ${errorMessageOf(error)}`);
+      break;
+    }
+    const { stored, heldCaptures } = rows;
     let pageFailed = false;
     let cutInPage = false;
     for (const listed of page) {
@@ -313,12 +328,17 @@ export async function discoverGatewayDisputes(
       };
   run.checkpoint = JSON.stringify(next);
 
-  await reportDiscoveryFindings(
-    [...unknownPayment, ...waiting],
-    untried,
-    run.stoppedShort,
-    next,
-  );
+  // The position is already set: a finding that cannot be recorded must not lose it.
+  try {
+    await reportDiscoveryFindings(
+      [...unknownPayment, ...waiting],
+      untried,
+      run.stoppedShort,
+      next,
+    );
+  } catch (error) {
+    run.errors.push(`Dispute discovery findings: ${errorMessageOf(error)}`);
+  }
   return run;
 }
 

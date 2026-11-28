@@ -528,6 +528,44 @@ describe("the window and its position", () => {
     });
   });
 
+  it("keeps the position it reached when a database read fails on a later page", async () => {
+    mockList.mockImplementation(async (_w: unknown, _c: number, skip: number) =>
+      fullPage(`rfnd_${skip}`),
+    );
+    db.refund.findMany
+      .mockImplementationOnce(
+        async (args: { where: { refundId: { in: string[] } } }) =>
+          args.where.refundId.in.map((refundId) => ({ refundId })),
+      )
+      .mockRejectedValueOnce(new Error("connection terminated"));
+
+    const run = await discoverGatewayRefunds(never, NOW);
+
+    expect(run.errors).toEqual(["Refund lookup: connection terminated"]);
+    expect(run).toMatchObject({ listed: 200, alreadyKnown: 100 });
+    expect(positionOf(run)).toEqual({
+      since: null,
+      window: { from: NOW_S - 7 * DAY_S, to: NOW_S, skip: 100 },
+      cutRuns: 0,
+      deferred: [],
+    });
+  });
+
+  it("still returns its position when a finding cannot be recorded", async () => {
+    mockList.mockResolvedValue([listed("rfnd_orphan")]);
+    mockHandleRefundCreated.mockResolvedValue(deferral());
+    mockStanding.mockImplementationOnce(() => {
+      throw new Error("system event insert failed");
+    });
+
+    const run = await discoverGatewayRefunds(never, NOW);
+
+    expect(run.errors).toEqual([
+      "Refund discovery findings: system event insert failed",
+    ]);
+    expect(positionOf(run)).toMatchObject({ since: NOW_S, window: null });
+  });
+
   it("keeps its position when the list call fails", async () => {
     storedState({ since: NOW_S - 900, window: null, cutRuns: 0 });
     mockList.mockRejectedValue(new Error("Razorpay SDK refunds.all timed out"));

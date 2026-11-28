@@ -150,6 +150,32 @@ async function handOver(
   return row ? "imported" : "no-refund-row";
 }
 
+/** The page's refunds that already have a row, and the order of each payment row that holds a listed capture id. */
+async function readPageRows(page: RazorpayListedRefund[]) {
+  const known = new Set(
+    (
+      await prisma.refund.findMany({
+        where: { refundId: { in: page.map((refund) => refund.id) } },
+        select: { refundId: true },
+      })
+    ).map((row) => row.refundId),
+  );
+  const unseen = page.filter((refund) => !known.has(refund.id));
+  const localOrders = new Map(
+    unseen.length === 0
+      ? []
+      : (
+          await prisma.payment.findMany({
+            where: {
+              gatewayPaymentId: { in: unseen.map((r) => r.payment_id) },
+            },
+            select: { gatewayPaymentId: true, paymentIntent: true },
+          })
+        ).map((row) => [row.gatewayPaymentId, row.paymentIntent]),
+  );
+  return { known, localOrders };
+}
+
 /**
  * One bounded pass. The position moves past a page when every refund on it was
  * handed over or passed over as a remembered deferral, and past a window only
@@ -232,27 +258,14 @@ export async function discoverGatewayRefunds(
     }
     run.listed += page.length;
 
-    const known = new Set(
-      (
-        await prisma.refund.findMany({
-          where: { refundId: { in: page.map((refund) => refund.id) } },
-          select: { refundId: true },
-        })
-      ).map((row) => row.refundId),
-    );
-    const unseen = page.filter((refund) => !known.has(refund.id));
-    const localOrders = new Map(
-      unseen.length === 0
-        ? []
-        : (
-            await prisma.payment.findMany({
-              where: {
-                gatewayPaymentId: { in: unseen.map((r) => r.payment_id) },
-              },
-              select: { gatewayPaymentId: true, paymentIntent: true },
-            })
-          ).map((row) => [row.gatewayPaymentId, row.paymentIntent]),
-    );
+    let rows: Awaited<ReturnType<typeof readPageRows>>;
+    try {
+      rows = await readPageRows(page);
+    } catch (error) {
+      run.errors.push(`Refund lookup: ${errorMessageOf(error)}`);
+      break;
+    }
+    const { known, localOrders } = rows;
     let pageFailed = false;
     let cutInPage = false;
     for (const listed of page) {
@@ -345,12 +358,17 @@ export async function discoverGatewayRefunds(
       };
   run.checkpoint = JSON.stringify(next);
 
-  await reportDiscoveryFindings(
-    [...unknownPayment, ...waiting],
-    notHeld,
-    run.stoppedShort,
-    next,
-  );
+  // The position is already set: a finding that cannot be recorded must not lose it.
+  try {
+    await reportDiscoveryFindings(
+      [...unknownPayment, ...waiting],
+      notHeld,
+      run.stoppedShort,
+      next,
+    );
+  } catch (error) {
+    run.errors.push(`Refund discovery findings: ${errorMessageOf(error)}`);
+  }
   return run;
 }
 

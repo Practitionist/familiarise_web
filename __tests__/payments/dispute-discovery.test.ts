@@ -498,6 +498,41 @@ describe("the place in the list", () => {
     expect(positionOf(run)).toEqual({ skip: 100, cutRuns: 0, deferred: [] });
   });
 
+  it("keeps the position it reached when a database read fails on a later page", async () => {
+    mockList
+      .mockResolvedValueOnce(fullPage("disp_first"))
+      .mockResolvedValueOnce([listed("disp_new")]);
+    // The first page's disputes all have rows; the second page's has none.
+    db.dispute.findMany.mockImplementation(
+      async (args: { where: { disputeId: { in: string[] } } }) =>
+        args.where.disputeId.in
+          .filter((id) => id.startsWith("disp_first"))
+          .map((disputeId) => ({ disputeId, status: "NEEDS_RESPONSE" })),
+    );
+    db.payment.findMany.mockRejectedValue(new Error("connection terminated"));
+
+    const run = await discoverGatewayDisputes(never, NOW);
+
+    expect(run.errors).toEqual(["Dispute lookup: connection terminated"]);
+    expect(run).toMatchObject({ listed: 101, alreadyKnown: 100 });
+    expect(positionOf(run)).toEqual({ skip: 100, cutRuns: 0, deferred: [] });
+  });
+
+  it("still returns its position when a finding cannot be recorded", async () => {
+    mockList.mockResolvedValue([listed("disp_orphan")]);
+    mockHandleDisputeCreated.mockResolvedValue(deferral("disp_orphan"));
+    mockStanding.mockImplementationOnce(() => {
+      throw new Error("system event insert failed");
+    });
+
+    const run = await discoverGatewayDisputes(never, NOW);
+
+    expect(run.errors).toEqual([
+      "Dispute discovery findings: system event insert failed",
+    ]);
+    expect(positionOf(run)).toEqual({ skip: 0, cutRuns: 0, deferred: [] });
+  });
+
   it("raises the standing finding when a bound cuts the pass on a second run in a row", async () => {
     allKnownOpen();
     mockList.mockImplementation(async (_count: number, skip: number) =>
