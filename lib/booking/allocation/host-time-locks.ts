@@ -44,8 +44,10 @@ function heldTimeOf(key: string): HeldHostTime | null {
  * walked in one sorted key order and stopped at the first atom another
  * transaction holds, so of two overlapping writers one always gets through.
  * Never waits: a held atom throws `refusal(held)`, the door's own slot-taken
- * answer. The locks end with the transaction, so the conflict re-check the
- * writer runs next reads what every earlier writer of these atoms committed.
+ * answer. The locks end with the transaction, so a Read Committed writer's
+ * re-check reads what every earlier writer of these atoms committed; a
+ * Serializable writer's snapshot is fixed as this statement starts, so its
+ * re-check can miss a commit that lands inside the statement.
  * Only a 1:1 writer passes `learnerTimes`: group seats may clash by design.
  */
 export async function lockHostTimeInTx(
