@@ -1093,7 +1093,7 @@ function disputeSinceReadWhere(
   };
 }
 
-/** The CAS that confirms one judged row: still a candidate, the same outcome, and no dispute in its own window. */
+/** The CAS that confirms one judged row: still a candidate, the verdict it judged (outcome and time), and no dispute in that verdict's window. */
 function confirmGuard(
   where: Prisma.AppointmentOccurrenceWhereInput,
   row: {
@@ -1106,7 +1106,7 @@ function confirmGuard(
   return {
     AND: [
       where,
-      { id: row.id, outcome: row.outcome },
+      { id: row.id, outcome: row.outcome, outcomeAt: row.outcomeAt },
       { supportCases: { none: disputeSinceReadWhere(row.outcome, row) } },
     ],
   };

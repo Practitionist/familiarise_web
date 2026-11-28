@@ -230,6 +230,21 @@ describe("the window-close pass", () => {
     expect(row("strong").outcomeConfirmedAt).toBeNull();
   });
 
+  it("loses the CAS to the same verdict recorded again, at a later time, between its read and its write", async () => {
+    occurrences.rows.push(verdict("strong"));
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementationOnce(async (args) => {
+      const rows = (await read(args)) as Row[];
+      // A fresh array, so the page the pass judges still carries the time it read.
+      const pageRows = rows.map((r) => ({ ...r }));
+      row("strong").outcomeAt = hoursAgo(49);
+      return pageRows;
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(0);
+    expect(row("strong").outcomeConfirmedAt).toBeNull();
+  });
+
   it("loses the CAS to a dispute filed between its read and its write", async () => {
     occurrences.rows.push(verdict("strong"));
     const read = occurrences.findMany.getMockImplementation()!;
