@@ -21,10 +21,11 @@ export const MAX_REMEMBERED_DEFERRALS = 100;
 export const GATEWAY_READ_DEFERRALS_PER_RUN = 5;
 
 /**
- * Whether a hand-over that costs a gateway read may start now. A remembered
- * deferral waits out its retry time, and one met after the run's bound of
- * deferrals is remembered as `due` for the next run; "untried" means no room
- * was left to remember it, so the caller reports it.
+ * Whether a hand-over that costs a gateway read may start now. "wait": the
+ * handler deferred it within the retry time. "later": the run's bound of
+ * deferrals is spent, so it is remembered as `due` and tried when a later run
+ * reaches it. "untried": no room was left to remember it. Only "wait" is a
+ * handler's deferral; the caller reports the other two as not attempted.
  */
 export function gatewayReadTurn<T extends { triedAt: number }>(
   remembered: Map<string, T>,
@@ -32,7 +33,7 @@ export function gatewayReadTurn<T extends { triedAt: number }>(
   due: T,
   nowSeconds: number,
   deferralsThisRun: number,
-): "try" | "wait" | "untried" {
+): "try" | "wait" | "later" | "untried" {
   const prior = remembered.get(id);
   if (prior && nowSeconds - prior.triedAt < DEFERRED_RETRY_SECONDS) {
     return "wait";
@@ -40,7 +41,17 @@ export function gatewayReadTurn<T extends { triedAt: number }>(
   if (!prior && remembered.size >= MAX_REMEMBERED_DEFERRALS) return "untried";
   if (deferralsThisRun < GATEWAY_READ_DEFERRALS_PER_RUN) return "try";
   if (!prior) remembered.set(id, due);
-  return "wait";
+  return "later";
+}
+
+/** The standing-finding text for hand-overs a run never started, by the bound that stopped each. */
+export function notAttemptedMessage(
+  pass: "Refund" | "Dispute",
+  overRunBound: number,
+  noRoom: number,
+): string {
+  const noun = pass === "Refund" ? "refund" : "dispute";
+  return `${pass} discovery: ${overRunBound + noRoom} gateway ${noun}(s) with no payment row under their capture id were not handed over in this run, so the handler has not judged them: ${overRunBound} because ${GATEWAY_READ_DEFERRALS_PER_RUN} such hand-overs had already been deferred in the run (a later run tries them), ${noRoom} because ${MAX_REMEMBERED_DEFERRALS} deferred ${noun}s are already remembered (not tried until one of those leaves)`;
 }
 
 /** The job's stored discovery position; null when none is stored or it no longer parses. */

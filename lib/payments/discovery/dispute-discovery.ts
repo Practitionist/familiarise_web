@@ -27,6 +27,7 @@ import {
   DEFERRED_RETRY_SECONDS,
   gatewayReadTurn,
   MAX_REMEMBERED_DEFERRALS,
+  notAttemptedMessage,
   readDiscoveryState,
   type DiscoveryStoppedShort,
 } from "./checkpoint";
@@ -70,7 +71,7 @@ export interface DisputeDiscoveryRun {
   notAdopted: number;
   /** Disputes the handler deferred in this run: no payment row is held for them, or it is still PENDING. */
   unknownPayment: number;
-  /** Remembered deferrals passed over with no hand-over: not due for a retry yet, or past the run's bound on gateway reads. */
+  /** Remembered and passed over with no hand-over: deferred by the handler within the retry time, or met after the run's bound on gateway reads was spent. */
   waiting: number;
   /** Disputes with no payment under their capture id that were not tried because no deferral could be remembered any more. */
   untried: number;
@@ -214,6 +215,7 @@ export async function discoverGatewayDisputes(
   );
   const unknownPayment: string[] = [];
   const waiting: string[] = [];
+  const overRunBound: string[] = [];
   const untried: string[] = [];
   let gatewayReadDeferrals = 0;
   let skip = state.skip;
@@ -271,7 +273,8 @@ export async function discoverGatewayDisputes(
           gatewayReadDeferrals,
         );
         if (turn !== "try") {
-          (turn === "wait" ? waiting : untried).push(listed.id);
+          if (turn === "wait") waiting.push(listed.id);
+          else (turn === "later" ? overRunBound : untried).push(listed.id);
           continue;
         }
       }
@@ -313,7 +316,7 @@ export async function discoverGatewayDisputes(
   }
 
   run.unknownPayment = unknownPayment.length;
-  run.waiting = waiting.length;
+  run.waiting = waiting.length + overRunBound.length;
   run.untried = untried.length;
   // A deferral not met again for this long is no longer on the list.
   const deferred = [...remembered]
@@ -332,7 +335,7 @@ export async function discoverGatewayDisputes(
   try {
     await reportDiscoveryFindings(
       [...unknownPayment, ...waiting],
-      untried,
+      { overRunBound, untried },
       run.stoppedShort,
       next,
     );
@@ -342,15 +345,15 @@ export async function discoverGatewayDisputes(
   return run;
 }
 
-/** Once per run: the disputes no payment was found for, the ones not tried, and a pass a bound keeps cutting. */
+/** Once per run: the disputes the handler deferred, the ones never handed over, and a pass a bound keeps cutting. */
 async function reportDiscoveryFindings(
   unknownPayment: string[],
-  untried: string[],
+  notAttempted: { overRunBound: string[]; untried: string[] },
   stoppedShort: DiscoveryStoppedShort | null,
   next: DiscoveryState,
 ): Promise<void> {
   if (unknownPayment.length > 0) {
-    const message = `Dispute discovery: ${unknownPayment.length} gateway dispute(s) were deferred by the handler: no payment row is held for them, or it is still PENDING; nothing was written for them`;
+    const message = `Dispute discovery: ${unknownPayment.length} gateway dispute(s) were deferred by the handler in this run or within the last 6 hours: no payment row is held for them, or it is still PENDING; nothing was written for them`;
     await reportStandingFinding(
       {
         key: `${DISPUTE_DISCOVERY_JOB}:discovery-unknown-payment`,
@@ -367,11 +370,16 @@ async function reportDiscoveryFindings(
         }),
     );
   }
-  if (untried.length > 0) {
+  const { overRunBound, untried } = notAttempted;
+  if (overRunBound.length + untried.length > 0) {
     await reportStandingFinding({
-      key: `${DISPUTE_DISCOVERY_JOB}:discovery-untried`,
-      ids: untried,
-      message: `Dispute discovery: ${untried.length} gateway dispute(s) with no payment under their capture id were not tried, because ${MAX_REMEMBERED_DEFERRALS} deferred disputes are already remembered; look each one up by hand`,
+      key: `${DISPUTE_DISCOVERY_JOB}:discovery-not-attempted`,
+      ids: [...overRunBound, ...untried],
+      message: notAttemptedMessage(
+        "Dispute",
+        overRunBound.length,
+        untried.length,
+      ),
     });
   }
   if (stoppedShort && next.cutRuns >= CUT_RUNS_BEFORE_FINDING) {

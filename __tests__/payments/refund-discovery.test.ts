@@ -315,6 +315,47 @@ describe("a refund the handler defers", () => {
     expect(run).toMatchObject({ unknownPayment: 5, waiting: 1, notHeld: 0 });
     expect(positionOf(run).deferred).toHaveLength(6);
     expect(positionOf(run).since).toBe(NOW_S);
+    // The sixth was never handed over, so it is not reported as deferred by the handler.
+    const findings = mockStanding.mock.calls.map(([finding]) => finding);
+    expect(findings).toEqual([
+      expect.objectContaining({
+        key: "reconcile-pending-refunds:discovery-unknown-payment",
+        ids: [0, 1, 2, 3, 4].map((i) => `rfnd_orphan_${i}`),
+        message: expect.stringContaining("deferred by the handler"),
+      }),
+      expect.objectContaining({
+        key: "reconcile-pending-refunds:discovery-not-attempted",
+        ids: ["rfnd_orphan_5"],
+        message: expect.stringContaining("were not handed over"),
+      }),
+    ]);
+  });
+
+  it("reports a refund it never handed over because a hundred deferrals are remembered as not attempted, not as deferred", async () => {
+    noPaymentHeld();
+    storedState({
+      since: NOW_S - 900,
+      window: null,
+      cutRuns: 0,
+      deferred: Array.from({ length: 100 }, (_, i) => ({
+        id: `rfnd_held_${i}`,
+        createdAt: NOW_S - 1200,
+        triedAt: NOW_S - 900,
+      })),
+    });
+    mockList.mockResolvedValue([listed("rfnd_extra")]);
+
+    const run = await discoverGatewayRefunds(never, NOW);
+
+    expect(mockHandleRefundCreated).not.toHaveBeenCalled();
+    expect(run).toMatchObject({ notHeld: 1, unknownPayment: 0 });
+    expect(mockStanding.mock.calls.map(([finding]) => finding)).toEqual([
+      expect.objectContaining({
+        key: "reconcile-pending-refunds:discovery-not-attempted",
+        ids: ["rfnd_extra"],
+        message: expect.stringContaining("were not handed over"),
+      }),
+    ]);
   });
 
   it("does not count a gateway-read hand-over the handler took against the run's five", async () => {

@@ -340,8 +340,21 @@ describe("a dispute on a payment the database does not hold", () => {
     });
     expect(positionOf(first)).toMatchObject({ skip: 0, cutRuns: 0 });
     expect(positionOf(first).deferred).toHaveLength(7);
+    // The two left over were never handed over, so they are not reported as deferred by the handler.
+    expect(mockStanding.mock.calls.map(([finding]) => finding)).toEqual([
+      expect.objectContaining({
+        key: "reconcile-disputes:discovery-unknown-payment",
+        ids: orphans.slice(0, 5),
+        message: expect.stringContaining("deferred by the handler"),
+      }),
+      expect.objectContaining({
+        key: "reconcile-disputes:discovery-not-attempted",
+        ids: orphans.slice(5),
+        message: expect.stringContaining("were not handed over"),
+      }),
+    ]);
 
-    // The two left over are first in the next run; the five just tried wait.
+    // The walk starts again at the top: the two left over are due, the five just tried wait.
     mockHandleDisputeCreated.mockClear();
     db.dispute.findMany.mockResolvedValue([
       { disputeId: "disp_held", status: "NEEDS_RESPONSE" },
@@ -404,8 +417,9 @@ describe("a dispute on a payment the database does not hold", () => {
     expect(run).toMatchObject({ untried: 1, unknownPayment: 0 });
     expect(mockStanding).toHaveBeenCalledWith(
       expect.objectContaining({
-        key: "reconcile-disputes:discovery-untried",
+        key: "reconcile-disputes:discovery-not-attempted",
         ids: ["disp_extra"],
+        message: expect.stringContaining("were not handed over"),
       }),
     );
     expect(positionOf(run).deferred).toHaveLength(100);

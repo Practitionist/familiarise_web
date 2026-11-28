@@ -27,6 +27,7 @@ import {
   DEFERRED_RETRY_SECONDS,
   gatewayReadTurn,
   MAX_REMEMBERED_DEFERRALS,
+  notAttemptedMessage,
   readDiscoveryState,
   type DiscoveryStoppedShort,
 } from "./checkpoint";
@@ -92,9 +93,9 @@ export interface RefundDiscoveryRun {
   alreadyKnown: number;
   /** Refunds the handler deferred in this run: no payment, top-up or invoice holds their payment, or its capture is not recorded. */
   unknownPayment: number;
-  /** Remembered deferrals passed over with no hand-over: not due for a retry yet, or past the run's bound on gateway reads. */
+  /** Remembered and passed over with no hand-over: deferred by the handler within the retry time, or met after the run's bound on gateway reads was spent. */
   waiting: number;
-  /** Deferred refunds that no longer hold the window: created over 7 days ago, or met when no further deferral could be remembered. */
+  /** Refunds that do not hold the window: deferred and created over 7 days ago, or met when no further deferral could be remembered. */
   notHeld: number;
   /** Refunds the gateway lists as failed; never handed over, so this pass fails nothing. */
   gatewayFailed: number;
@@ -230,6 +231,8 @@ export async function discoverGatewayRefunds(
 
   const unknownPayment: string[] = [];
   const waiting: string[] = [];
+  const overRunBound: string[] = [];
+  const untried: string[] = [];
   const notHeld: string[] = [];
   let gatewayReadDeferrals = 0;
   let skip = window.skip;
@@ -292,7 +295,8 @@ export async function discoverGatewayRefunds(
           gatewayReadDeferrals,
         );
         if (turn !== "try") {
-          (turn === "wait" ? waiting : notHeld).push(listed.id);
+          if (turn === "wait") waiting.push(listed.id);
+          else (turn === "later" ? overRunBound : untried).push(listed.id);
           continue;
         }
       }
@@ -345,8 +349,8 @@ export async function discoverGatewayRefunds(
     }
   }
   run.unknownPayment = unknownPayment.length;
-  run.waiting = waiting.length;
-  run.notHeld = notHeld.length;
+  run.waiting = waiting.length + overRunBound.length;
+  run.notHeld = notHeld.length + untried.length;
   const deferred = [...remembered].map(([id, entry]) => ({ id, ...entry }));
   const next: DiscoveryState = windowDone
     ? { since: window.to, window: null, cutRuns: 0, deferred }
@@ -362,6 +366,7 @@ export async function discoverGatewayRefunds(
   try {
     await reportDiscoveryFindings(
       [...unknownPayment, ...waiting],
+      { overRunBound, untried },
       notHeld,
       run.stoppedShort,
       next,
@@ -372,15 +377,16 @@ export async function discoverGatewayRefunds(
   return run;
 }
 
-/** Once per run: the refunds the handler deferred, the ones no longer retried, and a pass a bound keeps cutting. */
+/** Once per run: the refunds the handler deferred, the ones never handed over, the ones no longer retried, and a pass a bound keeps cutting. */
 async function reportDiscoveryFindings(
   unknownPayment: string[],
+  notAttempted: { overRunBound: string[]; untried: string[] },
   notHeld: string[],
   stoppedShort: DiscoveryStoppedShort | null,
   next: DiscoveryState,
 ): Promise<void> {
   if (unknownPayment.length > 0) {
-    const message = `Refund discovery: ${unknownPayment.length} gateway refund(s) were deferred by the handler: no payment, top-up or invoice row holds their gateway payment, or the payment row still awaits its capture; nothing was written for them`;
+    const message = `Refund discovery: ${unknownPayment.length} gateway refund(s) were deferred by the handler in this run or within the last 6 hours: no payment, top-up or invoice row holds their gateway payment, or the payment row still awaits its capture; nothing was written for them`;
     await reportStandingFinding(
       {
         key: `${REFUND_DISCOVERY_JOB}:discovery-unknown-payment`,
@@ -397,8 +403,20 @@ async function reportDiscoveryFindings(
         }),
     );
   }
+  const { overRunBound, untried } = notAttempted;
+  if (overRunBound.length + untried.length > 0) {
+    await reportStandingFinding({
+      key: `${REFUND_DISCOVERY_JOB}:discovery-not-attempted`,
+      ids: [...overRunBound, ...untried],
+      message: notAttemptedMessage(
+        "Refund",
+        overRunBound.length,
+        untried.length,
+      ),
+    });
+  }
   if (notHeld.length > 0) {
-    const message = `Refund discovery: ${notHeld.length} gateway refund(s) the handler deferred are no longer retried: still deferred 7 days after the gateway created them, or met while ${MAX_REMEMBERED_DEFERRALS} deferred refunds were already remembered. Record each by hand once its payment is recorded`;
+    const message = `Refund discovery: ${notHeld.length} gateway refund(s) the handler deferred are no longer retried: still deferred 7 days after the gateway created them, or deferred while ${MAX_REMEMBERED_DEFERRALS} deferred refunds were already remembered. Record each by hand once its payment is recorded`;
     await reportStandingFinding(
       {
         key: `${REFUND_DISCOVERY_JOB}:discovery-not-held`,
