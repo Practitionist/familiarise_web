@@ -213,7 +213,13 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     expect(await shown("?occurrence=occ-a")).toBe("case-report");
     // A session's page never falls back to another thread: it starts that session's report.
     expect(await shown("?occurrence=occ-b")).toBeUndefined();
-    expect(await shown("?occurrence=occ-b&caseId=case-pay")).toBeUndefined();
+    // It keeps the caller's own booking-wide case when the page names it, as a page moved there does.
+    expect(await shown("?occurrence=occ-b&caseId=case-pay")).toBe("case-pay");
+    // Another session's case, or another person's booking-wide case, is not shown there by name.
+    expect(await shown("?occurrence=occ-b&caseId=case-report")).toBeUndefined();
+    expect(
+      await shown("?occurrence=occ-b&caseId=case-foreign"),
+    ).toBeUndefined();
     expect(await shown("?caseId=case-report")).toBe("case-report");
     // Another person's case is never shown; the default stands.
     expect(await shown("?caseId=case-foreign")).toBe("case-pay");

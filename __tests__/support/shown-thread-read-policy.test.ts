@@ -110,3 +110,26 @@ it.each([
     });
   },
 );
+
+it("a session's page keeps an organisation's booking-wide case it names only while the viewer may still read it", async () => {
+  cases.rows.push(
+    filedBy("org-wide", {
+      category: "PAYMENT_STATUS",
+      appointmentOccurrenceId: null,
+      occurrence: null,
+    }),
+  );
+  const named = async () =>
+    (
+      await readShownThread("apt-1", "operator", {
+        occurrenceId: "occ-2",
+        caseId: "org-wide",
+      })
+    )?.id;
+
+  memberships.rows.push(member("OWNER"));
+  expect(await named()).toBe("org-wide");
+
+  memberships.rows.splice(0, memberships.rows.length);
+  expect(await named()).toBeUndefined();
+});

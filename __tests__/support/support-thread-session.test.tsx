@@ -173,7 +173,7 @@ it("retries a failed answer on the case and session it was first sent for after 
   });
 });
 
-it("moves the page to the booking thread a fresh intent landed on, and names that case on the refetch", async () => {
+it("moves the page to the booking thread a fresh intent landed on, keeps it there through the refetch, and sends a reply typed afterwards to that case", async () => {
   const reads: string[] = [];
   let threadReads = 0;
   global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
@@ -200,7 +200,39 @@ it("moves the page to the booking thread a fresh intent landed on, and names tha
       };
     }
     reads.push(url);
-    if (threadReads++ > 0) return new Promise(() => undefined);
+    // A read naming the payment case on this session's page answers that case, as the reader does.
+    if (
+      threadReads++ > 0 &&
+      new URL(url, "https://x.test").searchParams.get("caseId") === "case-pay"
+    ) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            ...shown("case-pay", "occ-a").thread!,
+            appointmentOccurrenceId: null,
+            messages: [
+              {
+                id: "m-pay-1",
+                seq: 1,
+                sender: "USER",
+                body: "Payment problem",
+                createdAt: "2026-11-23T12:01:00.000Z",
+              },
+              {
+                id: "m-pay-2",
+                seq: 2,
+                sender: "BOT",
+                body: "What happened with the payment?",
+                createdAt: "2026-11-23T12:01:01.000Z",
+              },
+            ],
+          },
+          intents: [],
+          booking: null,
+        }),
+      };
+    }
     // The page opened on the session's no-show report, which has its own messages.
     const report = shown("case-report", "occ-a").thread!;
     return {
@@ -239,9 +271,31 @@ it("moves the page to the booking thread a fresh intent landed on, and names tha
     "What happened with the payment?",
   ]);
   await waitFor(() => expect(reads).toHaveLength(2));
-  expect(new URL(reads[1], "https://x.test").searchParams.get("caseId")).toBe(
-    "case-pay",
+  const refetch = new URL(reads[1], "https://x.test").searchParams;
+  expect(refetch.get("caseId")).toBe("case-pay");
+  // The session stays named, so the page's intents and report links are still that session's.
+  expect(refetch.get("occurrence")).toBe("occ-a");
+  // The refetch has answered: its messages carry the server's ids.
+  await waitFor(() =>
+    expect(result.current.messages.map((m) => m.id)).toEqual([
+      "m-pay-1",
+      "m-pay-2",
+    ]),
   );
+  expect(result.current.thread).toMatchObject({
+    id: "case-pay",
+    appointmentOccurrenceId: null,
+  });
+
+  act(() => {
+    result.current.submitTurn({ userMessage: "I was charged twice" });
+  });
+  await waitFor(() => expect(turnBodies).toHaveLength(2));
+  expect(sent(1)).toMatchObject({
+    userMessage: "I was charged twice",
+    caseId: "case-pay",
+  });
+  expect(sent(1)).not.toHaveProperty("appointmentOccurrenceId");
 });
 
 /** A complete turn result: the case and session it landed on, with the bot's reply. */

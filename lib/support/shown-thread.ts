@@ -1,6 +1,7 @@
 /**
  * Which of a booking's support cases its request page shows. A new intent other than a no-show
- * lands on the booking-wide thread, so that is the default; a session's page shows only that session's report.
+ * lands on the booking-wide thread, so that is the default; a session's page opens on that session's
+ * report and keeps a booking-wide case only when the page names it, never another session's case.
  * With no booking-wide thread the default is a fresh start, never a session's report.
  */
 
@@ -55,8 +56,9 @@ export interface ShownThreadView {
 }
 
 /**
- * A session's page shows that session's report (the case it names there, else its newest no-show case), never
- * another thread. Otherwise: the case named, else the newest booking-wide thread, else nothing.
+ * A session's page shows the case it names when that case is this session's or booking-wide (a page a
+ * fresh turn moved there keeps it), else the session's newest no-show case; never another session's case.
+ * Otherwise: the case named, else the newest booking-wide thread, else nothing.
  */
 export async function readShownThread(
   appointmentId: string,
@@ -79,10 +81,13 @@ export async function readShownThread(
     });
   if (view.occurrenceId) {
     const session = { appointmentOccurrenceId: view.occurrenceId };
-    return (
-      (view.caseId ? await newest({ ...session, id: view.caseId }) : null) ??
-      (await newest({ ...session, category: "NO_SHOW" }))
-    );
+    const named = view.caseId
+      ? await newest({
+          id: view.caseId,
+          OR: [session, { appointmentOccurrenceId: null }],
+        })
+      : null;
+    return named ?? (await newest({ ...session, category: "NO_SHOW" }));
   }
   return (
     (view.caseId ? await newest({ id: view.caseId }) : null) ??
