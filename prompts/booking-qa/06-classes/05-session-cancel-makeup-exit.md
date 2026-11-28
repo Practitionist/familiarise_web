@@ -153,7 +153,7 @@ Doors: `POST /api/appointments/[aid]/occurrences/[occ]/cancel`, `…/make-up` `{
 
 **Setup:** staff voids a past session (back office; or owner-approved `voidedAt = now()` on a past occurrence).
 
-**Steps:** as H2, schedule a make-up for it within 14 days of `voidedAt`.
+**Steps:** as H2, schedule a make-up for it within 14 days of `voidedAt`. A staff void is confirmed as written, so its 14 days run from the void; a void the outcome sweep wrote with a host-attributed verdict (`HOST_ABSENT`, `CUT_SHORT`) counts its 14 days from the confirmation (`outcomeConfirmedAt`) instead, and until then a make-up within 14 days of now is accepted.
 
 **Expect:** 200; the make-up carries the voided session's ordinal; the source is settled. (The source is in the past; only the make-up must be ahead.)
 

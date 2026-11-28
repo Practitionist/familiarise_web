@@ -37,6 +37,7 @@ import {
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
 import { occurrenceRefundsPaise } from "@/lib/booking/class-series";
+import { isSettleableVoidVerdict } from "@/lib/booking/misses";
 import { countedReleases } from "@/lib/booking/released-sessions";
 import {
   cancelWindowState,
@@ -55,6 +56,13 @@ export const LIVE_SLOT_WHERE = {
   deletedAt: null,
   completionStatus: { in: [...LIVE_SLOT_STATUSES] },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A live session in a voided one's place (the same ordinal) makes it up. */
+const MAKE_UP_STATUSES: ReadonlySet<string> = new Set([
+  "SCHEDULED",
+  "COMPLETED",
+  "UNVERIFIED",
+]);
 
 /** A payment that funds its booking now: captured and not retired. */
 export const LIVE_SUCCEEDED_PAYMENT_WHERE = {
@@ -130,6 +138,11 @@ export type BookingRefundContext = {
   confirmedSlotsTotal: number;
   /** Where the booking stands against the clock; the cancel doors refuse unless BEFORE. */
   windowState: SessionWindowState;
+  /**
+   * Voided sessions a consultation's cancel refunds in full and settles: not settled, any negative
+   * verdict on them confirmed, no make-up placed. Empty for a plan, whose voids settle with it.
+   */
+  unsettledVoidIds: string[];
 };
 
 /** Identifies a booking: the parent request/event, or a lone appointment. */
@@ -222,11 +235,15 @@ export async function resolveBookingRefundContext(
         // filter lives on the payment lookup above.
         where: { deletedAt: null },
         select: {
+          id: true,
           startsAt: true,
           endsAt: true,
           ordinal: true,
           completionStatus: true,
           isTentative: true,
+          outcome: true,
+          outcomeConfirmedAt: true,
+          seatsSettledAt: true,
         },
       },
     },
@@ -347,6 +364,24 @@ export async function resolveBookingRefundContext(
       schedulable - sessionsCompleted - scheduledStarts.length > 0,
   });
 
+  // The day-14 sweep's own reading of a void: made up by a live session in its place, else owed.
+  const madeUpOrdinals = new Set(
+    slots
+      .filter((s) => MAKE_UP_STATUSES.has(s.completionStatus))
+      .map((s) => s.ordinal),
+  );
+  const unsettledVoidIds = row?.subscription
+    ? []
+    : slots
+        .filter(
+          (s) =>
+            s.completionStatus === "VOIDED" &&
+            s.seatsSettledAt === null &&
+            isSettleableVoidVerdict(s) &&
+            !madeUpOrdinals.has(s.ordinal),
+        )
+        .map((s) => s.id);
+
   return {
     paidPayment,
     policy,
@@ -361,6 +396,7 @@ export async function resolveBookingRefundContext(
     quotedAtMs: nowMs,
     alreadyRefundedPaise,
     windowState,
+    unsettledVoidIds,
   };
 }
 

@@ -35,6 +35,7 @@ export function bookingExpiryPrismaModels() {
   return {
     consultation: {
       findMany: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },

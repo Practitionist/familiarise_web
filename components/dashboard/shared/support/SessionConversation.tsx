@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Send } from "lucide-react";
 
 import { CaseCsat } from "@/components/support/CaseCsat";
@@ -14,6 +15,7 @@ import {
   type useSupportThread,
 } from "@/components/support/useSupportThread";
 import { isBareHumanRequest } from "@/lib/support/escalation";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -140,6 +142,81 @@ function EscalateStep({
   );
 }
 
+/** A report is about one ended session: the only one starts here, and with several the person picks first. */
+function useReportEntry(t: ThreadState) {
+  const pathname = usePathname();
+  const [choosing, setChoosing] = useState(false);
+  const offered = t.availableIntents.find((i) => i.category === "NO_SHOW");
+  const hrefFor = (occurrenceId: string) =>
+    `${pathname ?? ""}?intent=NO_SHOW&occurrence=${encodeURIComponent(occurrenceId)}`;
+  const start = () => {
+    const [only, ...more] = t.reportSessions;
+    if (more.length > 0) setChoosing(true);
+    // The session the page offered is the one reported, even if another ends before the click.
+    else if (offered && only)
+      t.submitTurn({
+        category: "NO_SHOW",
+        chosenLabel: offered.label,
+        binding: { appointmentOccurrenceId: only.id },
+      });
+  };
+  return {
+    // A session's own page starts its report through the seeded intent.
+    routes: !!offered && !t.occurrenceId && t.reportSessions.length > 0,
+    choosing,
+    start,
+    stop: () => setChoosing(false),
+    hrefFor,
+  };
+}
+
+type ReportEntry = ReturnType<typeof useReportEntry>;
+
+function ReportSessionPicker({
+  t,
+  entry,
+}: Readonly<{ t: ThreadState; entry: ReportEntry }>) {
+  const clock = useZoneClock();
+  return (
+    <div className="space-y-2">
+      <p className="text-sm">Which session was it?</p>
+      <div className="flex flex-wrap gap-2">
+        {t.reportSessions.map((session) => (
+          <Button key={session.id} variant="outline" size="sm" asChild>
+            <Link href={entry.hrefFor(session.id)}>
+              {clock.date(session.startsAt)}, {clock.time(session.startsAt)}
+            </Link>
+          </Button>
+        ))}
+      </div>
+      <Button type="button" variant="ghost" size="sm" onClick={entry.stop}>
+        Back
+      </Button>
+    </div>
+  );
+}
+
+/** The booking's open session reports; its page never shows one, so each stays reachable on its session's page. */
+function SessionReportLinks({ t }: Readonly<{ t: ThreadState }>) {
+  const pathname = usePathname();
+  const clock = useZoneClock();
+  if (t.occurrenceId || t.sessionReports.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-sm">
+      {t.sessionReports.map((r) => (
+        <li key={r.caseId}>
+          <Link
+            className="font-medium underline underline-offset-4"
+            href={`${pathname ?? ""}?occurrence=${encodeURIComponent(r.occurrenceId)}`}
+          >
+            Your report about {clock.dayMonth(r.startsAt)} session
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function sessionLiveAnnouncement(t: ThreadState, offline: boolean): string {
   if (t.turnPending) return "Sending your message…";
   if (t.isHuman) return t.waitingLine ?? "";
@@ -160,6 +237,8 @@ function SessionControls({
   onPickOption: (option: Option) => void;
   onClearPicked: () => void;
 }>) {
+  const report = useReportEntry(t);
+  if (report.choosing) return <ReportSessionPicker t={t} entry={report} />;
   if (escalating) {
     return (
       <EscalateStep
@@ -216,6 +295,17 @@ function SessionControls({
             {humanExit.label}
           </Button>
         )}
+        {/* Another open thread, a session's report included, never hides the report of another session. */}
+        {report.routes && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={t.turnPending}
+            onClick={report.start}
+          >
+            Report a problem with a session
+          </Button>
+        )}
       </>
     );
   }
@@ -253,11 +343,11 @@ function SessionControls({
         isCategory: true,
       }))}
       disabled={t.turnPending}
-      onPick={(o) =>
-        o.escalates
-          ? onPickOption(o)
-          : t.submitTurn({ category: o.id, chosenLabel: o.label })
-      }
+      onPick={(o) => {
+        if (o.id === "NO_SHOW" && report.routes) report.start();
+        else if (o.escalates) onPickOption(o);
+        else t.submitTurn({ category: o.id, chosenLabel: o.label });
+      }}
     />
   );
 }
@@ -595,7 +685,10 @@ export function SessionConversation({
         </>
       )}
       <div className="space-y-3 border-t border-border p-4">
+        <SessionReportLinks t={t} />
+        {/* Each selected session starts its report entry fresh. */}
         <SessionControls
+          key={t.occurrenceId ?? "none"}
           t={t}
           escalating={escalating}
           humanExit={humanExit}

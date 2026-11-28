@@ -680,7 +680,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "detect-consultant-no-shows": {
     meta: {
       title: "Detect consultant no-shows",
-      description: "Cancel and refund sessions the consultant never joined",
+      description: "Propose a no-show on sessions the consultant never joined",
       category: "Appointments",
       manualRun: "inline",
     },
@@ -707,7 +707,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           detected: r.detected,
-          refunded: r.refunded,
           unsettled: r.unsettled,
         }),
         items: (r) => ({ processed: r.detected }),

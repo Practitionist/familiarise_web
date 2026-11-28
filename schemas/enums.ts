@@ -41,6 +41,40 @@ const SUPPORT_CASE_STATUSES = [
 export const SupportThreadCategoryEnum = z.enum(SUPPORT_THREAD_CATEGORIES);
 export const SupportCaseStatusEnum = z.enum(SUPPORT_CASE_STATUSES);
 
+/** Every terminal `reason` of the appointment flows (lib/support/flows.ts), as `SupportCase.flowReason` stores it. */
+export const SupportFlowReasonEnum = z.enum([
+  "provider_no_show",
+  "attendee_join_issue",
+  "attendee_attended",
+  "attendee_no_show",
+  "provider_join_issue",
+  "provider_attended",
+  "payment_deducted_unconfirmed",
+  "double_charge",
+  "refund_missing",
+  "gst_invoice_wrong",
+  "recording_missing",
+  "recording_broken",
+  "quality_ended_early",
+  "quality_poor",
+  "quality_av",
+  "quality_wrong_expert",
+  "quality_other",
+  "timezone_mismatch",
+  "technical_unresolved",
+  "sponsorship_charge",
+  "org_billing_dispute",
+  "org_conduct_dispute",
+  "org_operator_human",
+  "documents_missing",
+  "documents_wrong",
+  "documents_removal",
+  "safety_threat",
+  "fraud_scam",
+  "safety_other",
+]);
+export type SupportFlowReason = z.infer<typeof SupportFlowReasonEnum>;
+
 export const CancellationReasonEnum = z.enum([
   "SCHEDULE_CONFLICT",
   "FOUND_ALTERNATIVE",

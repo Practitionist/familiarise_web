@@ -44,11 +44,22 @@ describe("every sweep refund carries a dedupeKey", () => {
     for (const site of sites) expect(site).toMatch(/\bdedupeKey\b/);
   });
 
-  // The no-show refund is an owed marker; the marker's key is the dedupeKey.
-  it("scripts/appointments/detect-consultant-no-shows.ts", () => {
-    const src = read("scripts/appointments/detect-consultant-no-shows.ts");
+  // A no-show refund is an owed marker; the marker's key is the dedupeKey.
+  it("lib/booking/consultant-no-show.ts", () => {
+    const src = read("lib/booking/consultant-no-show.ts");
     expect(refundCallSites(src)).toEqual([]);
     expect(src).toContain("key: `consultant-no-show:${paymentId}`");
-    expect(src).toContain("driveRefundOwed(noShowRefundOwed(");
+    expect(src).toContain(
+      "key: `expert-absent:${refund.occurrenceId}:pay:${refund.payment.id}`",
+    );
+    // One drive, of a marker, and each marker handed to it comes from one of the two keyed builders.
+    expect(src.match(/driveRefundOwed\(/g)).toEqual(["driveRefundOwed("]);
+    expect(src).toContain("driveRefundOwed(marker)");
+    expect(
+      src.match(
+        /driveNoShowRefund\(\s*(?:noShowRefundOwed|sessionNoShowRefundOwed)\(/g,
+      ),
+    ).toHaveLength(2);
+    expect(src.match(/driveNoShowRefund\(/g)).toHaveLength(3);
   });
 });

@@ -16,9 +16,12 @@ export default async function OrgSupportRequestPage({
   searchParams,
 }: Readonly<{
   params: Promise<{ orgId: string; caseKey: string }>;
-  searchParams: Promise<{ intent?: string | string[] }>;
+  searchParams: Promise<{
+    intent?: string | string[];
+    occurrence?: string | string[];
+  }>;
 }>) {
-  const [{ orgId, caseKey }, { intent }] = await Promise.all([
+  const [{ orgId, caseKey }, { intent, occurrence }] = await Promise.all([
     params,
     searchParams,
   ]);
@@ -42,6 +45,7 @@ export default async function OrgSupportRequestPage({
       supportHref={supportHref}
       appointmentsBase={`${base}/appointments`}
       intent={intent}
+      occurrence={occurrence}
     />
   );
 }

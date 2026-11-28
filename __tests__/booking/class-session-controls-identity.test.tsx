@@ -159,3 +159,27 @@ it("schedules a make-up at the picked instant, unchanged", async () => {
     ),
   );
 });
+
+it("names a confirmed void's make-up deadline 14 days from its confirmation, not from the void", () => {
+  const voidedAt = new Date("2099-11-01T12:00:00Z");
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <Harness
+        sessions={[
+          {
+            id: "occ-1",
+            ordinal: 1,
+            startsAt: voidedAt,
+            completionStatus: "VOIDED",
+            voidedAt,
+            outcome: "HOST_ABSENT",
+            outcomeConfirmedAt: new Date("2099-11-21T12:00:00Z"),
+          },
+        ]}
+      />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Schedule make-up" }));
+  // 21 Nov plus 14 days.
+  expect(screen.getByText(/make up by .*5 Dec/)).toBeTruthy();
+});

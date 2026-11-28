@@ -30,7 +30,7 @@ import type { Tx } from "@/lib/prisma";
 import { classEnrolmentFrom } from "./class-enrolment";
 import { HOST_ATTRIBUTED_OUTCOMES } from "./session-outcome";
 import { INCIDENT_REFUND_KEY_PREFIX } from "./incident-keys";
-import { missedAt } from "./misses";
+import { isNegativeMoneyOutcome, missedAt } from "./misses";
 
 export interface LedgerOccurrence {
   ordinal: number;
@@ -43,10 +43,23 @@ export interface LedgerOccurrence {
   /** #1569 — a held session voided by the outcome sweep; a miss like a cancel. */
   voidedAt?: Date | null;
   outcome?: OccurrenceOutcome | null;
+  /** A negative verdict's confirmation; a void whose verdict is unconfirmed is not yet a series miss. */
+  outcomeConfirmedAt?: Date | null;
 }
 
 /** #1569 — host-cancelled or voided: owed a make-up or a refund, never delivered. */
 const isMissed = (o: LedgerOccurrence) => !!(o.hostCancelledAt ?? o.voidedAt);
+
+/** A void whose negative verdict nobody confirmed yet: it feeds neither the exit right nor the reliability flag. */
+const isUnconfirmedVoid = (o: LedgerOccurrence) =>
+  !!o.voidedAt &&
+  !o.hostCancelledAt &&
+  isNegativeMoneyOutcome(o.outcome ?? null) &&
+  !o.outcomeConfirmedAt;
+
+/** A miss the series ledger counts. */
+const isSeriesMiss = (o: LedgerOccurrence) =>
+  isMissed(o) && !isUnconfirmedVoid(o);
 
 /** D6 — a miss the host answers for: every host cancel, and CUT_SHORT/HOST_ABSENT voids. */
 const isHostMiss = (o: LedgerOccurrence) =>
@@ -219,6 +232,7 @@ const LEDGER_OCCURRENCE_SELECT = {
   hostCancelledAt: true,
   voidedAt: true,
   outcome: true,
+  outcomeConfirmedAt: true,
 } as const;
 
 /** A seat's ledger counts confirmed, untombstoned rows only. */
@@ -378,8 +392,9 @@ export function seriesLedgerFrom(args: {
   const { N, now } = args;
   const delivered = args.occurrences.filter((o) => isDelivered(o, now)).length;
   const remaining = args.occurrences.filter((o) => isLiveAhead(o, now)).length;
-  const misses = args.occurrences.filter(isMissed).length;
-  const hostMissAts = args.occurrences
+  const counted = args.occurrences.filter(isSeriesMiss);
+  const misses = counted.length;
+  const hostMissAts = counted
     .filter(isHostMiss)
     .flatMap((o) => missedAt(o) ?? []);
   return {

@@ -9,16 +9,16 @@
 
 jest.mock("../../lib/prisma", () => {
   const { memTable } = jest.requireActual("../fixtures/mem-db");
-  return {
-    __esModule: true,
-    default: {
-      appointmentOccurrence: memTable([], "occ"),
-      maintenanceWindow: memTable([], "mw"),
-      platformIncident: memTable([], "pi"),
-      refund: memTable([], "rf"),
-      bookingStatusHistory: memTable([], "h"),
-    },
+  const client: Record<string, unknown> = {
+    appointmentOccurrence: memTable([], "occ"),
+    maintenanceWindow: memTable([], "mw"),
+    platformIncident: memTable([], "pi"),
+    refund: memTable([], "rf"),
+    bookingStatusHistory: memTable([], "h"),
+    systemEvent: memTable([], "se"),
   };
+  client.$transaction = (fn: (tx: unknown) => unknown) => fn(client);
+  return { __esModule: true, default: client };
 });
 jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: jest.fn(
@@ -30,29 +30,73 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 jest.mock("../../lib/booking/class-sessions", () => ({
   onClassSessionVoided: jest.fn(),
+  // No make-up was offered for these sessions.
+  cancelUnstartedMakeUp: jest.fn(async () => ({ cancelled: false, bells: [] })),
+  onClassVoidConfirmed: jest.fn(async () => ({
+    bells: [],
+    cancelEmailArgs: null,
+    exitEmailArgs: null,
+  })),
+}));
+const mockStandingFinding = jest.fn(async (_finding: unknown) => true);
+jest.mock("../../lib/observability/standing-finding", () => ({
+  reportStandingFinding: (finding: unknown) => mockStandingFinding(finding),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
+}));
+jest.mock("../../lib/booking/consultant-no-show", () => ({
+  confirmConsultantNoShow: jest.fn(async () => ({
+    kind: "claimed",
+    refunded: true,
+    held: null,
+  })),
+  readNoShowClaim: jest.fn(async () => ({ consultationId: "cons-a" })),
+  readOperatorNoShowClaim: jest.fn(async () => ({
+    claim: { consultationId: "cons-a" },
+  })),
+  // No payment on record unless a case says so.
+  readSessionNoShow: jest.fn(async () => null),
+  oweSessionNoShowRefundTx: jest.fn(async () => ({ held: null })),
+  settleSessionNoShowRefund: jest.fn(async () => ({ refunded: true })),
+  claimNoShowTx: jest.fn(async () => ({ held: null })),
+  settleClaimedNoShow: jest.fn(async () => ({ refunded: true })),
 }));
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { matchesWhere, type memTable, type Row } from "../fixtures/mem-db";
 import {
+  makeUpWindowStart,
   needsHumanWhere,
+  UNSETTLED_MISS,
   OUTCOME_REPORT_WINDOW_HOURS,
   UNCONFIRMED_LEARNER_ABSENT,
   unconfirmedClosedVerdictWhere,
+  voidWindowStartedBefore,
 } from "@/lib/booking/misses";
-import {
-  confirmClosedOutcomes,
-  OUTAGE_READ_CAP,
-} from "@/lib/booking/session-outcome-sweep";
+import { confirmClosedOutcomes } from "@/lib/booking/session-outcome-sweep";
 import {
   confirmSessionOutcome,
   setSessionOutcome,
 } from "@/lib/backoffice/session-outcomes";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { readJobCheckpoint } from "@/lib/cron/with-cron-lock";
+import { onClassVoidConfirmed } from "@/lib/booking/class-sessions";
+import {
+  claimNoShowTx,
+  confirmConsultantNoShow,
+  oweSessionNoShowRefundTx,
+  readNoShowClaim,
+  readOperatorNoShowClaim,
+  readSessionNoShow,
+  settleClaimedNoShow,
+  settleSessionNoShowRefund,
+} from "@/lib/booking/consultant-no-show";
 
 type Table = ReturnType<typeof memTable>;
 const occurrences = prisma.appointmentOccurrence as unknown as Table;
+const { systemEvent: strikes, platformIncident: incidents } =
+  prisma as unknown as Record<string, Table>;
 
 const NOW = new Date("2026-11-25T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -80,10 +124,16 @@ function verdict(id: string, overrides: Row = {}, meeting: Row = {}): Row {
       presences: [{ userId: "hannah", joinedAt: at(0), leftAt: at(60) }],
       ...meeting,
     },
+    supportCases: [],
     appointment: {
       subscriptionId: null,
+      participants: [{ userId: "priya" }],
+      organizationId: null,
       consultation: {
-        consultationPlan: { consultantProfile: { userId: "hannah" } },
+        consultationPlan: {
+          consultantProfileId: "cp-hannah",
+          consultantProfile: { userId: "hannah" },
+        },
       },
       subscription: null,
       trial: null,
@@ -98,7 +148,9 @@ const row = (id: string) => occurrences.rows.find((r) => r.id === id)!;
 const tx = prisma as unknown as Tx;
 
 beforeEach(() => {
-  occurrences.rows.splice(0, occurrences.rows.length);
+  for (const table of [occurrences, strikes, incidents]) {
+    table.rows.splice(0, table.rows.length);
+  }
   jest.clearAllMocks();
   jest.mocked(readJobCheckpoint).mockImplementation(async () => null);
 });
@@ -111,7 +163,7 @@ describe("the predicates", () => {
     );
   });
 
-  it("an unconfirmed learner absence holds a consultation's earning, not a subscription's", () => {
+  it("an unconfirmed learner absence holds its booking's earnings, a subscription's included", () => {
     const open = verdict("a");
     expect(matchesWhere(open, UNCONFIRMED_LEARNER_ABSENT)).toBe(true);
     expect(
@@ -125,7 +177,7 @@ describe("the predicates", () => {
         { ...open, appointment: { subscriptionId: "sub-1" } },
         UNCONFIRMED_LEARNER_ABSENT,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("lists an applied negative verdict for ops once its window closes unconfirmed", () => {
@@ -151,7 +203,10 @@ describe("the window-close pass", () => {
     const run = await confirmClosedOutcomes(NOW, () => false);
     expect(run).toEqual({
       confirmed: 1,
+      claimed: 0,
+      declined: 0,
       weak: 2,
+      disputed: 0,
       errors: [],
       checkpoint: null,
     });
@@ -175,28 +230,134 @@ describe("the window-close pass", () => {
     expect(row("strong").outcomeConfirmedAt).toBeNull();
   });
 
-  it("confirms nothing when an outage read fills its cap, since an overlapping window may be missing", async () => {
-    const incidents = prisma.platformIncident as unknown as Table;
+  it("loses the CAS to the same verdict recorded again, at a later time, between its read and its write", async () => {
     occurrences.rows.push(verdict("strong"));
-    for (let i = 0; i < OUTAGE_READ_CAP; i++) {
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementationOnce(async (args) => {
+      const rows = (await read(args)) as Row[];
+      // A fresh array, so the page the pass judges still carries the time it read.
+      const pageRows = rows.map((r) => ({ ...r }));
+      row("strong").outcomeAt = hoursAgo(49);
+      return pageRows;
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(0);
+    expect(row("strong").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("a stamp that fails does not stop the others on its page or a claim after them, and is reported with the run's failed rows", async () => {
+    occurrences.rows.push(
+      verdict("bad", { outcomeAt: hoursAgo(70) }),
+      verdict("good", { outcomeAt: hoursAgo(60) }),
+      proposal("claim"),
+    );
+    const write = occurrences.updateMany.getMockImplementation()!;
+    occurrences.updateMany.mockImplementation(async (args) => {
+      if (matchesWhere(row("bad"), args.where)) {
+        throw new Error("the connection dropped");
+      }
+      return write(args);
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    occurrences.updateMany.mockImplementation(write);
+
+    expect(run).toMatchObject({ confirmed: 2, claimed: 1 });
+    expect(row("good").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("bad").outcomeConfirmedAt).toBeNull();
+    expect(confirmConsultantNoShow).toHaveBeenCalledTimes(1);
+    expect(run.errors).toEqual([
+      "Failed to confirm the verdict on bad: the connection dropped",
+    ]);
+    expect(mockStandingFinding).toHaveBeenCalledWith(
+      expect.objectContaining({ ids: ["bad"] }),
+    );
+  });
+
+  it("loses the CAS to a dispute filed between its read and its write", async () => {
+    occurrences.rows.push(verdict("strong"));
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementationOnce(async (args) => {
+      const rows = (await read(args)) as Row[];
+      // A fresh array, so the page the pass judges still shows no report.
+      const pageRows = rows.map((r) => ({ ...r, supportCases: [] }));
+      row("strong").supportCases = [filed("attendee_attended", "priya")];
+      return pageRows;
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(0);
+    expect(row("strong").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("holds each row only on a dispute inside its own window, even when the rows are stamped together", async () => {
+    // A's window closed 12 hours ago, B's 2 hours ago.
+    occurrences.rows.push(
+      verdict("a", { outcomeAt: hoursAgo(60) }),
+      verdict("b", { outcomeAt: hoursAgo(50) }),
+    );
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementationOnce(async (args) => {
+      const rows = (await read(args)) as Row[];
+      const pageRows = rows.map((r) => ({ ...r, supportCases: [] }));
+      // Both answered 5 hours ago, after the read: late for A, inside B's window.
+      for (const id of ["a", "b"]) {
+        row(id).supportCases = [
+          { ...filed("attendee_attended", "priya"), flowReasonAt: hoursAgo(5) },
+        ];
+      }
+      return pageRows;
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("a").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("b").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("sees an incident over a booking however many older incidents the history holds, and confirms the booking none overlaps", async () => {
+    const incidents = prisma.platformIncident as unknown as Table;
+    const DAY = 24 * 60;
+    // "clear" was booked ten days before "hit"; neither overlaps the 250 incidents between them.
+    const shifted = (minutes: number) => at(minutes - 10 * DAY);
+    occurrences.rows.push(
+      verdict(
+        "clear",
+        { startsAt: shifted(0), endsAt: shifted(60) },
+        {
+          endedAt: shifted(62),
+          presences: [
+            { userId: "hannah", joinedAt: shifted(0), leftAt: shifted(60) },
+          ],
+        },
+      ),
+      verdict("hit"),
+    );
+    for (let i = 0; i < 250; i++) {
       incidents.rows.push({
-        id: `pi-${i}`,
-        startsAt: hoursAgo(10),
-        endsAt: hoursAgo(9),
+        id: `pi-${String(i).padStart(3, "0")}`,
+        startsAt: at(-9 * DAY + i * 10),
+        endsAt: at(-9 * DAY + i * 10 + 1),
       });
     }
-    // The stored cursor sits just before the capped page; the run must move past it, not hand it back.
-    const stored = `${hoursAgo(49).toISOString()}|zzz`;
-    jest.mocked(readJobCheckpoint).mockImplementation(async () => stored);
+    // The 251st by start time is the one over "hit".
+    incidents.rows.push({ id: "pi-hit", startsAt: at(10), endsAt: at(20) });
+    // Postgres honours order and take; the in-memory table does not, so page it the same way.
+    const read = incidents.findMany.getMockImplementation()!;
+    incidents.findMany.mockImplementation(async (args) => {
+      const rows = (await read(args)) as Row[];
+      const ordered = [...rows].sort(
+        (a, b) =>
+          (a.startsAt as Date).getTime() - (b.startsAt as Date).getTime(),
+      );
+      const take = (args as unknown as { take?: number }).take;
+      return take ? ordered.slice(0, take) : ordered;
+    });
     try {
       const run = await confirmClosedOutcomes(NOW, () => false);
-      expect(run.confirmed).toBe(0);
-      expect(run.errors).toHaveLength(1);
-      expect(row("strong").outcomeConfirmedAt).toBeNull();
-      // The page was the last, so the scan wraps to the newest instead of revisiting it.
-      expect(run.checkpoint).toBeNull();
+      expect(run).toMatchObject({ confirmed: 1, weak: 1, errors: [] });
+      expect(row("clear").outcomeConfirmedAt).toEqual(NOW);
+      expect(row("hit").outcomeConfirmedAt).toBeNull();
     } finally {
       incidents.rows.splice(0, incidents.rows.length);
+      incidents.findMany.mockImplementation(read);
     }
   });
 
@@ -264,6 +425,164 @@ describe("the window-close pass", () => {
   });
 });
 
+/** A linked case in the shape the pass's select returns. */
+const filed = (flowReason: string, requesterUserId: string): Row => ({
+  id: `case-${flowReason}`,
+  flowReason,
+  requesterUserId,
+  ownershipScope: "PERSONAL",
+  flowReasonAt: hoursAgo(49),
+  deletedAt: null,
+});
+
+/** Priya waited the hour and Hannah never came: a strong host absence. */
+const hostAbsent = (id: string, overrides: Row = {}, meeting: Row = {}) =>
+  verdict(
+    id,
+    { completionStatus: "VOIDED", outcome: "HOST_ABSENT", ...overrides },
+    {
+      presences: [{ userId: "priya", joinedAt: at(0), leftAt: at(60) }],
+      ...meeting,
+    },
+  );
+
+describe("participant reports", () => {
+  it("does not stamp a closed, strong verdict the accused party disputed, and lists it for ops", async () => {
+    occurrences.rows.push(
+      verdict("a", { supportCases: [filed("attendee_attended", "priya")] }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 0, weak: 0, disputed: 1 });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+    expect(matchesWhere(row("a"), needsHumanWhere(NOW))).toBe(true);
+  });
+
+  it("stamps a strong verdict at once when the harmed party agrees inside the window", async () => {
+    occurrences.rows.push(
+      hostAbsent("a", {
+        outcomeAt: hoursAgo(10),
+        supportCases: [
+          { ...filed("provider_no_show", "priya"), flowReasonAt: hoursAgo(9) },
+        ],
+      }),
+    );
+    // In the window it is on the list until the pass applies it.
+    expect(matchesWhere(row("a"), needsHumanWhere(NOW))).toBe(true);
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("a").outcomeConfirmedAt).toEqual(NOW);
+    expect(matchesWhere(row("a"), needsHumanWhere(NOW))).toBe(false);
+  });
+
+  it("judges a report by when its reason was answered, not when its case was opened", async () => {
+    occurrences.rows.push(
+      // Opened inside the window, answered an hour after it closed: no effect.
+      verdict("late", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            createdAt: hoursAgo(49),
+            flowReasonAt: hoursAgo(1),
+          },
+        ],
+      }),
+      // Answered before the session ended: no effect.
+      verdict("beforeEnd", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            createdAt: at(-10),
+            flowReasonAt: at(-5),
+          },
+        ],
+      }),
+      // Opened before the session ended, answered after it: a dispute.
+      verdict("early", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            createdAt: at(-10),
+            flowReasonAt: hoursAgo(49),
+          },
+        ],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 2, disputed: 1 });
+    expect(row("late").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("beforeEnd").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("early").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("stamps past a dispute reason on an org operator's case, which counts for nothing", async () => {
+    occurrences.rows.push(
+      verdict("a", {
+        supportCases: [
+          {
+            ...filed("attendee_attended", "priya"),
+            ownershipScope: "ORG_OPERATIONS",
+          },
+        ],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("a").outcomeConfirmedAt).toEqual(NOW);
+  });
+
+  it("does not stamp an open window on an agreement the wrong side filed", async () => {
+    occurrences.rows.push(
+      hostAbsent("a", {
+        outcomeAt: hoursAgo(10),
+        supportCases: [
+          { ...filed("provider_no_show", "hannah"), flowReasonAt: hoursAgo(9) },
+        ],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 0, weak: 0, disputed: 0 });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("does not stamp a weak verdict the harmed party agrees with", async () => {
+    occurrences.rows.push(
+      hostAbsent(
+        "a",
+        {
+          outcomeAt: hoursAgo(10),
+          supportCases: [
+            {
+              ...filed("provider_no_show", "priya"),
+              flowReasonAt: hoursAgo(9),
+            },
+          ],
+        },
+        { attendanceCorroboratedSessionIds: ["s-2"] },
+      ),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 0, weak: 1 });
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("changes nothing on a neutral report, closed or open", async () => {
+    occurrences.rows.push(
+      verdict("closed", {
+        supportCases: [filed("attendee_no_show", "hannah")],
+      }),
+      verdict("open", {
+        outcomeAt: hoursAgo(10),
+        supportCases: [filed("attendee_no_show", "hannah")],
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 1, weak: 0, disputed: 0 });
+    expect(row("closed").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("open").outcomeConfirmedAt).toBeNull();
+    expect(matchesWhere(row("open"), needsHumanWhere(NOW))).toBe(false);
+  });
+});
+
 describe("the ops confirm door", () => {
   it("stamps only outcomeConfirmedAt, by CAS on the outcome the operator saw", async () => {
     occurrences.rows.push(verdict("a", { outcomeAt: hoursAgo(10) }));
@@ -297,7 +616,7 @@ describe("the ops confirm door", () => {
     expect(row("a").outcomeConfirmedAt).toBeNull();
   });
 
-  it("refuses a parked UNVERIFIED verdict, which ops decide through set-outcome", async () => {
+  it("refuses a parked UNVERIFIED verdict other than a consultation's no-show, which ops decide through set-outcome", async () => {
     occurrences.rows.push(
       verdict("a", { completionStatus: "UNVERIFIED", outcome: "HOST_ABSENT" }),
     );
@@ -381,4 +700,645 @@ describe("set-outcome", () => {
       outcomeConfirmedAt: null,
     });
   });
+});
+
+/** A consultation's proposed host no-show: Hannah never joined, Priya waited the hour. */
+function proposal(id: string, overrides: Row = {}): Row {
+  return verdict(
+    id,
+    {
+      completionStatus: "UNVERIFIED",
+      outcome: "HOST_ABSENT",
+      appointment: {
+        ...(verdict(id).appointment as Row),
+        consultationId: `cons-${id}`,
+      },
+      ...overrides,
+    },
+    { presences: [{ userId: "priya", joinedAt: at(0), leftAt: at(60) }] },
+  );
+}
+
+describe("a proposed consultant no-show", () => {
+  it("is claimed at the window close on strong, silent evidence, with the pass's own guard", async () => {
+    occurrences.rows.push(proposal("a"));
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ confirmed: 1, claimed: 1, weak: 0 });
+    expect(confirmConsultantNoShow).toHaveBeenCalledTimes(1);
+    const [id, opts] = jest.mocked(confirmConsultantNoShow).mock.calls[0];
+    expect(id).toBe("a");
+    // The claim's CAS re-checks the candidate, the outcome and the dispute window, like a bare stamp.
+    expect(matchesWhere(row("a"), opts.guard)).toBe(true);
+    row("a").supportCases = [filed("provider_attended", "hannah")];
+    expect(matchesWhere(row("a"), opts.guard)).toBe(false);
+    // The pass never stamps a proposal itself: the claim does, in its transaction.
+    expect(row("a").outcomeConfirmedAt).toBeNull();
+  });
+
+  it("guards another proposed session of the booking only when this page judged it strong, closed or agreed, and undisputed too", async () => {
+    occurrences.rows.push(
+      proposal("a"),
+      proposal("b"),
+      proposal("disputed", {
+        supportCases: [filed("provider_attended", "hannah")],
+      }),
+      proposal("weak", {
+        meeting: {
+          ...(proposal("weak").meeting as Row),
+          attendanceCorroboratedSessionIds: ["s-2"],
+        },
+      }),
+    );
+    // Its window is still open; the learner's counted agreement qualifies it early.
+    occurrences.rows.push(
+      proposal("agreed", {
+        outcomeAt: hoursAgo(5),
+        supportCases: [filed("provider_no_show", "priya")],
+      }),
+    );
+    await confirmClosedOutcomes(NOW, () => false);
+    const call = jest
+      .mocked(confirmConsultantNoShow)
+      .mock.calls.find(([id]) => id === "a");
+    const { siblingGuard } = call![1];
+    expect(siblingGuard("agreed")).not.toBeNull();
+    expect(matchesWhere(row("b"), siblingGuard("b") ?? {})).toBe(true);
+    expect(matchesWhere(row("a"), siblingGuard("b") ?? {})).toBe(false);
+    expect(siblingGuard("disputed")).toBeNull();
+    expect(siblingGuard("weak")).toBeNull();
+    expect(siblingGuard("on-another-page")).toBeNull();
+  });
+
+  it("is claimed early when the learner agrees, and not while the window is open and silent", async () => {
+    occurrences.rows.push(
+      proposal("agreed", {
+        outcomeAt: hoursAgo(5),
+        supportCases: [filed("provider_no_show", "priya")],
+      }),
+      proposal("open", { outcomeAt: hoursAgo(5) }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.claimed).toBe(1);
+    expect(
+      jest.mocked(confirmConsultantNoShow).mock.calls.map((c) => c[0]),
+    ).toEqual(["agreed"]);
+  });
+
+  it("is never claimed when the consultant disputes it, or on weak evidence", async () => {
+    occurrences.rows.push(
+      proposal("disputed", {
+        supportCases: [filed("provider_attended", "hannah")],
+      }),
+      proposal("weak", {
+        meeting: {
+          ...(proposal("weak").meeting as Row),
+          attendanceCorroboratedSessionIds: ["s-2"],
+        },
+      }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run).toMatchObject({ claimed: 0, disputed: 1, weak: 1 });
+    expect(confirmConsultantNoShow).not.toHaveBeenCalled();
+  });
+
+  it("counts a declined claim for ops, and keeps the cursor before a page whose claims the deadline cut", async () => {
+    occurrences.rows.push(proposal("a"));
+    jest
+      .mocked(confirmConsultantNoShow)
+      .mockResolvedValueOnce({ kind: "declined" });
+    expect(await confirmClosedOutcomes(NOW, () => false)).toMatchObject({
+      claimed: 0,
+      declined: 1,
+    });
+    // Two checks before the page is read; the third, before the claim, is past the deadline.
+    let checks = 0;
+    const run = await confirmClosedOutcomes(NOW, () => checks++ > 1);
+    expect(run.claimed).toBe(0);
+    expect(run.checkpoint).toBeNull();
+  });
+
+  it("ops Confirm runs the claim in the door's transaction and drives the refund after the commit", async () => {
+    occurrences.rows.push(proposal("a"));
+    const result = await confirmSessionOutcome(tx, {
+      occurrenceId: "a",
+      outcome: "HOST_ABSENT",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    expect(readNoShowClaim).toHaveBeenCalledWith(tx, "a");
+    expect(claimNoShowTx).toHaveBeenCalledWith(
+      tx,
+      { consultationId: "cons-a" },
+      { now: NOW, actorUserId: "ops-1" },
+    );
+    expect(settleClaimedNoShow).not.toHaveBeenCalled();
+    await result.afterCommit?.();
+    expect(settleClaimedNoShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("ops Confirm refuses a proposal whose booking no longer qualifies, claiming nothing", async () => {
+    occurrences.rows.push(proposal("a"));
+    jest.mocked(readNoShowClaim).mockResolvedValueOnce(null);
+    await expect(
+      confirmSessionOutcome(tx, { occurrenceId: "a", outcome: "HOST_ABSENT" }),
+    ).rejects.toMatchObject({ code: "NO_SHOW_NOT_CLAIMABLE" });
+    expect(claimNoShowTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("a host-attributed class void", () => {
+  const classVoid = (id: string, overrides: Row = {}) =>
+    hostAbsent(id, {
+      appointmentId: `apt-${id}`,
+      appointment: {
+        ...(verdict(id).appointment as Row),
+        consultation: null,
+        class: {
+          classPlan: {
+            consultantProfile: { userId: "hannah" },
+            collaborators: [],
+          },
+        },
+        classId: `cls-${id}`,
+      },
+      ...overrides,
+    });
+
+  it("counts toward the series only when the pass stamps it, in the stamp's transaction", async () => {
+    occurrences.rows.push(
+      classVoid("closed"),
+      classVoid("open", { outcomeAt: hoursAgo(5) }),
+    );
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    expect(run.confirmed).toBe(1);
+    expect(row("closed").outcomeConfirmedAt).toEqual(NOW);
+    expect(onClassVoidConfirmed).toHaveBeenCalledTimes(1);
+    expect(onClassVoidConfirmed).toHaveBeenCalledWith(prisma, {
+      appointmentId: "apt-closed",
+      occurrenceId: "closed",
+      confirmedAt: NOW,
+    });
+  });
+
+  it("confirms none once the pass is past its deadline, and keeps the cursor before the page", async () => {
+    occurrences.rows.push(classVoid("closed"));
+    // Two checks before the page is read; the third, before the class void, is past the deadline.
+    let checks = 0;
+    const run = await confirmClosedOutcomes(NOW, () => checks++ > 1);
+    expect(run.confirmed).toBe(0);
+    expect(onClassVoidConfirmed).not.toHaveBeenCalled();
+    expect(row("closed").outcomeConfirmedAt).toBeNull();
+    expect(run.checkpoint).toBeNull();
+  });
+
+  it("a void whose confirmation fails and spends the pass's time on every run does not stop a later void on its page: the next run starts past it, and it is reported once per run", async () => {
+    occurrences.rows.push(
+      classVoid("stuck", { outcomeAt: hoursAgo(50) }),
+      classVoid("later", { outcomeAt: hoursAgo(60) }),
+    );
+    // The stuck void's confirmation rolls back, and takes what was left of the pass's share.
+    let spent = false;
+    jest.mocked(onClassVoidConfirmed).mockImplementation(async (_tx, args) => {
+      if (args.occurrenceId === "stuck") {
+        row("stuck").outcomeConfirmedAt = null;
+        spent = true;
+        throw new Error("the series lock timed out");
+      }
+      return { bells: [], cancelEmailArgs: null, exitEmailArgs: null };
+    });
+
+    const first = await confirmClosedOutcomes(NOW, () => spent);
+    expect(first.confirmed).toBe(0);
+    expect(row("later").outcomeConfirmedAt).toBeNull();
+    // The cursor stands after the void that was tried, not before the page.
+    expect(first.checkpoint).not.toBeNull();
+    expect(mockStandingFinding).toHaveBeenCalledTimes(1);
+    expect(mockStandingFinding).toHaveBeenCalledWith(
+      expect.objectContaining({ ids: ["stuck"] }),
+    );
+
+    spent = false;
+    jest
+      .mocked(readJobCheckpoint)
+      .mockImplementation(async () => first.checkpoint ?? null);
+    const second = await confirmClosedOutcomes(NOW, () => spent);
+
+    expect(second.confirmed).toBe(1);
+    expect(row("later").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("stuck").outcomeConfirmedAt).toBeNull();
+  });
+});
+
+describe("ops set-outcome", () => {
+  it("refuses a relabel when a confirmation was stamped between its read and its write", async () => {
+    occurrences.rows.push(
+      verdict("a", { completionStatus: "VOIDED", outcome: "HOST_ABSENT" }),
+    );
+    const read = occurrences.findUnique.getMockImplementation()!;
+    occurrences.findUnique.mockImplementationOnce(async (args) => {
+      const stale = await read(args);
+      // The window-close pass stamps the void after the door read it.
+      row("a").outcomeConfirmedAt = NOW;
+      return stale;
+    });
+    await expect(
+      setSessionOutcome(tx, {
+        occurrenceId: "a",
+        outcome: "CUT_SHORT",
+        actorUserId: "ops-1",
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_MOVED" });
+    expect(row("a").outcome).toBe("HOST_ABSENT");
+  });
+
+  const relabelVoid = async (
+    from: Row,
+    outcome: "PLATFORM_OUTAGE" | "CUT_SHORT",
+  ) => {
+    occurrences.rows.push(
+      verdict("a", { completionStatus: "VOIDED", ordinal: 1, ...from }),
+    );
+    await setSessionOutcome(tx, {
+      occurrenceId: "a",
+      outcome,
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+    return row("a");
+  };
+
+  it("relabelling a void that waited for its confirmation to an outage starts its 14 days at the relabel", async () => {
+    // Voided 4 days ago as expert absent, never confirmed.
+    const relabelled = await relabelVoid(
+      {
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+        outcomeAt: hoursAgo(96),
+      },
+      "PLATFORM_OUTAGE",
+    );
+    expect(relabelled).toMatchObject({
+      outcome: "PLATFORM_OUTAGE",
+      outcomeConfirmedAt: null,
+      voidedAt: NOW,
+    });
+    expect(makeUpWindowStart(relabelled)).toEqual(NOW);
+    // The settle sweep's own test of the window agrees: not over until 14 days after the relabel.
+    expect(matchesWhere(relabelled, voidWindowStartedBefore(NOW))).toBe(false);
+    expect(
+      matchesWhere(relabelled, voidWindowStartedBefore(hoursAgo(-1))),
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      "a confirmed void relabelled to an outage",
+      {
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+        outcomeConfirmedAt: hoursAgo(48),
+      },
+      "PLATFORM_OUTAGE",
+      hoursAgo(48),
+    ],
+    [
+      "a confirmed void relabelled to another host-attributed outcome",
+      {
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+        outcomeConfirmedAt: hoursAgo(48),
+      },
+      "CUT_SHORT",
+      hoursAgo(48),
+    ],
+    [
+      "an outage void, which never waited, relabelled to a host-attributed outcome",
+      { outcome: "PLATFORM_OUTAGE", voidedAt: hoursAgo(96) },
+      "CUT_SHORT",
+      hoursAgo(96),
+    ],
+  ] as const)(
+    "%s keeps its make-up window",
+    async (_label, from, to, start) => {
+      const relabelled = await relabelVoid(from, to);
+      expect(relabelled.outcome).toBe(to);
+      expect(makeUpWindowStart(relabelled)).toEqual(start);
+    },
+  );
+
+  it("refuses a relabel when another relabel changed the outcome between its read and its write, whatever the stamp", async () => {
+    occurrences.rows.push(
+      verdict("a", {
+        completionStatus: "VOIDED",
+        ordinal: 1,
+        outcome: "HOST_ABSENT",
+        voidedAt: hoursAgo(96),
+      }),
+    );
+    const read = occurrences.findUnique.getMockImplementation()!;
+    occurrences.findUnique.mockImplementationOnce(async (args) => {
+      const stale = await read(args);
+      // Another operator relabels it to an outage, which leaves the stamp null.
+      row("a").outcome = "PLATFORM_OUTAGE";
+      return stale;
+    });
+    await expect(
+      setSessionOutcome(tx, {
+        occurrenceId: "a",
+        outcome: "CUT_SHORT",
+        actorUserId: "ops-1",
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_MOVED" });
+    expect(row("a").outcome).toBe("PLATFORM_OUTAGE");
+  });
+
+  const expertAbsent = (occurrenceId = "a") =>
+    setSessionOutcome(tx, {
+      occurrenceId,
+      outcome: "HOST_ABSENT",
+      actorUserId: "ops-1",
+      now: NOW,
+    });
+
+  it("expert absent on a consultation runs the no-show claim in the door's transaction, whatever parked the session, and never voids it", async () => {
+    // The pass declined this proposal, the sweep parked this one inconclusive, and this one was written held.
+    for (const parked of [
+      proposal("a"),
+      proposal("a", { outcome: "INCONCLUSIVE" }),
+      proposal("a", { completionStatus: "COMPLETED", outcome: "HELD" }),
+    ]) {
+      occurrences.rows.splice(0, occurrences.rows.length, parked);
+      jest.clearAllMocks();
+
+      const result = await expertAbsent();
+
+      expect(readOperatorNoShowClaim).toHaveBeenCalledWith(tx, "a");
+      expect(claimNoShowTx).toHaveBeenCalledWith(
+        tx,
+        { consultationId: "cons-a" },
+        { now: NOW, actorUserId: "ops-1" },
+      );
+      // The session is the standing proposal the claim's compare-and-set cancels.
+      expect(row("a")).toMatchObject({
+        completionStatus: "UNVERIFIED",
+        outcome: "HOST_ABSENT",
+        outcomeConfirmedAt: null,
+      });
+      expect(result.after).toEqual({
+        completionStatus: "CANCELLED",
+        outcome: "HOST_ABSENT",
+      });
+      // The refund is driven only after the door's transaction commits.
+      expect(settleClaimedNoShow).not.toHaveBeenCalled();
+      await result.afterCommit?.();
+      expect(settleClaimedNoShow).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  const parked = (overrides: Row = {}) =>
+    proposal("a", {
+      outcome: "INCONCLUSIVE",
+      ordinal: 1,
+      seatsSettledAt: null,
+      ...overrides,
+    });
+
+  const REFUND = {
+    consultationId: "cons-a",
+    occurrenceId: "a",
+    payment: { id: "pay-a", currency: "INR" },
+  };
+  const paidSingleSession = (status: "COMPLETED" | "APPROVED" | "CANCELLED") =>
+    jest.mocked(readSessionNoShow).mockResolvedValueOnce({
+      status,
+      otherSessions: 0,
+      refund: REFUND,
+    } as never);
+
+  it.each([
+    [
+      "a completed, paid, single-session consultation",
+      parked({ completionStatus: "COMPLETED", outcome: "HELD" }),
+      {
+        reason: "NOT_APPROVED",
+        status: "COMPLETED",
+        paid: true,
+        otherSessions: 0,
+      },
+      "COMPLETED",
+    ],
+    [
+      "a consultation session already voided as cut short",
+      parked({
+        completionStatus: "VOIDED",
+        outcome: "CUT_SHORT",
+        voidedAt: hoursAgo(50),
+        outcomeConfirmedAt: hoursAgo(2),
+      }),
+      null,
+      "APPROVED",
+    ],
+  ] as const)(
+    "expert absent on %s owes the full refund in the door's transaction, settles the session so the day-14 sweep never refunds it, and drives the refund after the commit",
+    async (_label, session, bar, status) => {
+      occurrences.rows.push(session);
+      if (bar) {
+        jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({ bar });
+      }
+      paidSingleSession(status);
+
+      const result = await expertAbsent();
+
+      expect(row("a")).toMatchObject({
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+        // Settled with the owed refund: the sweep's cohort and the earnings-holding miss both need this null.
+        seatsSettledAt: NOW,
+      });
+      expect(matchesWhere(row("a"), UNSETTLED_MISS)).toBe(false);
+      expect(oweSessionNoShowRefundTx).toHaveBeenCalledWith(tx, REFUND);
+      expect(strikes.rows).toHaveLength(1);
+      // The booking is not cancelled: the whole-booking claim did not run.
+      expect(claimNoShowTx).not.toHaveBeenCalled();
+      expect(settleSessionNoShowRefund).not.toHaveBeenCalled();
+      await result.afterCommit?.();
+      expect(settleSessionNoShowRefund).toHaveBeenCalledWith(
+        REFUND,
+        null,
+        expect.anything(),
+      );
+    },
+  );
+
+  it("expert absent on a session of a cancelled booking records the strike and owes nothing more: what the cancel paid stands", async () => {
+    occurrences.rows.push(parked());
+    jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({
+      bar: {
+        reason: "NOT_APPROVED",
+        status: "CANCELLED",
+        paid: true,
+        otherSessions: 0,
+      },
+    });
+    paidSingleSession("CANCELLED");
+
+    const result = await expertAbsent();
+
+    expect(row("a")).toMatchObject({
+      completionStatus: "VOIDED",
+      seatsSettledAt: null,
+    });
+    expect(strikes.rows).toHaveLength(1);
+    expect(oweSessionNoShowRefundTx).not.toHaveBeenCalled();
+    expect(result.afterCommit).toBeUndefined();
+  });
+
+  it.each([["an unpaid booking", { reason: "UNPAID" }]] as const)(
+    "expert absent on %s voids this one session, confirmed as written, with one strike and no claim",
+    async (_label, bar) => {
+      occurrences.rows.push(parked());
+      jest.mocked(readOperatorNoShowClaim).mockResolvedValueOnce({ bar });
+
+      const result = await expertAbsent();
+
+      // Both stamps at the same instant: the 14-day make-up window starts now.
+      expect(row("a")).toMatchObject({
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+        outcomeConfirmedAt: NOW,
+        voidedAt: NOW,
+      });
+      expect(result.after).toEqual({
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+      });
+      // No cancel, no owed refund marker and no refund drive: the day-14 sweep owns the money.
+      expect(claimNoShowTx).not.toHaveBeenCalled();
+      expect(result.afterCommit).toBeUndefined();
+      expect(strikes.rows.map((r) => r.context)).toEqual([
+        {
+          strike: "CONSULTANT_NO_SHOW",
+          consultantProfileId: "cp-hannah",
+          appointmentId: "apt-a",
+          occurrenceIds: ["a"],
+        },
+      ]);
+    },
+  );
+
+  it("expert absent on a session already voided relabels it and records the strike once: a repeat click writes no second strike", async () => {
+    occurrences.rows.push(
+      parked({
+        completionStatus: "VOIDED",
+        outcome: "CUT_SHORT",
+        voidedAt: hoursAgo(50),
+      }),
+    );
+
+    await expertAbsent();
+
+    expect(row("a")).toMatchObject({
+      completionStatus: "VOIDED",
+      outcome: "HOST_ABSENT",
+      outcomeConfirmedAt: NOW,
+    });
+    expect(readOperatorNoShowClaim).not.toHaveBeenCalled();
+    expect(strikes.rows).toHaveLength(1);
+
+    await expertAbsent();
+    expect(strikes.rows).toHaveLength(1);
+  });
+
+  it.each([
+    // The parked session's booking is unpaid, so the session-level void would otherwise run.
+    ["a parked session", {}, true],
+    [
+      "an already voided session",
+      {
+        completionStatus: "VOIDED",
+        outcome: "PLATFORM_OUTAGE",
+        voidedAt: hoursAgo(50),
+      },
+      false,
+    ],
+  ] as const)(
+    "refuses expert absent on %s inside a declared incident: no void, no relabel, no strike",
+    async (_label, session, judged) => {
+      occurrences.rows.push(parked(session));
+      incidents.rows.push({ id: "pi-1", startsAt: at(30), endsAt: at(90) });
+      if (judged) {
+        jest
+          .mocked(readOperatorNoShowClaim)
+          .mockResolvedValueOnce({ bar: { reason: "UNPAID" } });
+      }
+      const before = { ...row("a") };
+
+      await expect(expertAbsent()).rejects.toMatchObject({
+        code: "NO_SHOW_DURING_OUTAGE",
+        httpStatus: 409,
+      });
+
+      expect(row("a")).toEqual(before);
+      expect(strikes.rows).toHaveLength(0);
+    },
+  );
+
+  const sibling = (over: Row) => ({
+    id: "b",
+    startsAt: at(-1440),
+    endsAt: at(-1380),
+    completionStatus: "COMPLETED",
+    outcome: "HELD",
+    ...over,
+  });
+
+  it.each([
+    [
+      // Parked and undecided: the whole-booking cancel may still apply once it is decided.
+      {
+        reason: "SIBLING",
+        siblings: [
+          sibling({ completionStatus: "UNVERIFIED", outcome: "NOBODY_JOINED" }),
+        ],
+      },
+      "NO_SHOW_SIBLING_SESSION",
+    ],
+    [
+      // A held session stands on a paid booking: one session's share has no refund path yet.
+      { reason: "SIBLING", siblings: [sibling({})] },
+      "NO_SHOW_OTHER_SESSIONS_STAND",
+    ],
+    [
+      {
+        reason: "NOT_APPROVED",
+        status: "COMPLETED",
+        paid: true,
+        otherSessions: 1,
+      },
+      "NO_SHOW_OTHER_SESSIONS_STAND",
+    ],
+    [{ reason: "BOOKING_MISSING" }, "NO_SHOW_NOT_CLAIMABLE"],
+  ] as const)(
+    "refuses expert absent by name where neither remedy fits (%j), writing nothing",
+    async (bar, code) => {
+      occurrences.rows.push(parked());
+      jest
+        .mocked(readOperatorNoShowClaim)
+        .mockResolvedValueOnce({ bar } as never);
+
+      await expect(expertAbsent()).rejects.toMatchObject({
+        code,
+        httpStatus: 409,
+      });
+
+      expect(claimNoShowTx).not.toHaveBeenCalled();
+      expect(row("a")).toMatchObject({
+        completionStatus: "UNVERIFIED",
+        outcome: "INCONCLUSIVE",
+      });
+      expect(strikes.rows).toHaveLength(0);
+    },
+  );
 });

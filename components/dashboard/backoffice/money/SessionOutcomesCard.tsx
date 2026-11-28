@@ -1,6 +1,8 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
@@ -29,6 +31,7 @@ import {
   isNegativeMoneyOutcome,
   type NegativeMoneyOutcome,
 } from "@/lib/booking/misses";
+import { reportEffect } from "@/lib/booking/outcome-reports";
 import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
 import { OperatorTime } from "@/lib/time/operator-time";
 import {
@@ -82,6 +85,49 @@ function ConfirmButton({
     >
       Confirm
     </Button>
+  );
+}
+
+/** One badge per kind of report, linking to the first case filed; a dispute wins the wording of the row. */
+function ReportBadges({ s }: Readonly<{ s: NeedsHumanItem }>) {
+  const tree = useParams<{ tree?: string }>()?.tree ?? "admin";
+  const { outcome } = s;
+  if (!isNegativeMoneyOutcome(outcome)) return null;
+  const dispute = s.reports.find(
+    (r) => reportEffect(outcome, r.reason) === "dispute",
+  );
+  const agree = s.reports.find(
+    (r) => reportEffect(outcome, r.reason) === "agree",
+  );
+  const badges = [
+    dispute && {
+      caseId: dispute.caseId,
+      label:
+        dispute.side === "HOST"
+          ? "Disputed by the expert"
+          : "Disputed by the learner",
+      tone: "warning" as const,
+    },
+    agree && {
+      caseId: agree.caseId,
+      label: "Learner agrees",
+      tone: "info" as const,
+    },
+  ].filter((b) => !!b);
+  if (badges.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {badges.map((b) => (
+        <Link
+          key={b.caseId}
+          href={`/dashboard/${tree}/support/c_${b.caseId}`}
+          onClick={(e) => e.stopPropagation()}
+          className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <StatusBadge label={b.label} tone={b.tone} />
+        </Link>
+      ))}
+    </div>
   );
 }
 
@@ -168,6 +214,7 @@ function queueColumns(
       cell: (s) => (
         <div className={`${CAP} space-y-1 text-sm`}>
           <p>{whyParked(s)}</p>
+          <ReportBadges s={s} />
           <p className="text-xs text-muted-foreground">
             {s.lostMinutes ? `${s.lostMinutes} min lost` : "No minutes lost"}
           </p>

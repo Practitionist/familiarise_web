@@ -27,3 +27,6 @@ export function isRebookableParent(
 ): boolean {
   return !!status && REBOOKABLE_PARENT_STATUSES[kind].has(status);
 }
+
+/** Ops items for consultations a confirmed no-show claim cancelled inside an incident. */
+export const INCIDENT_NO_SHOW_CLAIM_PREFIX = "incident-no-show-claim:";

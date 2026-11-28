@@ -68,6 +68,8 @@ const occurrences = (misses: number) =>
       hostCancelledAt: i < misses && !voided ? missAt(misses, i) : null,
       voidedAt: voided ? missAt(misses, i) : null,
       outcome: voided ? db.lastMissVoid : null,
+      // An ops relabel confirms the verdict it writes.
+      outcomeConfirmedAt: voided ? missAt(misses, i) : null,
     };
   });
 const db = {
@@ -77,6 +79,10 @@ const db = {
   missGapDays: 0,
   /** The newest miss's void outcome, or null when it is a host cancel. */
   lastMissVoid: null as string | null,
+  /** The voided session's verdict still waits for its confirmation. */
+  voidUnconfirmed: false,
+  /** When the voided session's verdict was confirmed; null is "as written". */
+  voidConfirmedAt: null as Date | null,
   flagged: null as Record<string, unknown> | null,
   /** The plan's team, as the recipients helper reads it. */
   team: [] as string[],
@@ -91,6 +97,15 @@ jest.mock("../../lib/prisma", () => {
     $executeRaw: (...a: unknown[]) => db.rowLock(...a),
     appointmentOccurrence: {
       findUniqueOrThrow: async () => ({ startsAt: new Date() }),
+      // The voided session as written: an ops verdict, confirmed when written, unless the case says otherwise.
+      findUnique: async () => ({
+        startsAt: new Date("2026-11-01T04:30:00Z"),
+        voidedAt: new Date("2026-11-01T12:00:00Z"),
+        outcome: db.lastMissVoid,
+        outcomeConfirmedAt: db.voidUnconfirmed
+          ? null
+          : (db.voidConfirmedAt ?? new Date()),
+      }),
       findMany: async () => occurrences(db.misses),
       findFirst: async () => ({
         ordinal: 5,
@@ -152,6 +167,7 @@ import prisma from "@/lib/prisma";
 import {
   cancelClassSession,
   onClassSessionVoided,
+  onClassVoidConfirmed,
   reliabilityFlagDue,
   scheduleClassMakeUp,
   type HostedClass,
@@ -177,6 +193,8 @@ beforeEach(() => {
   db.N = 12;
   db.missGapDays = 0;
   db.lastMissVoid = null;
+  db.voidUnconfirmed = false;
+  db.voidConfirmedAt = null;
   db.flagged = null;
   db.team = [];
   db.sourceProfile = null;
@@ -408,6 +426,78 @@ it("tells the plan's team that a session did not count, in its own sentence and 
   ]);
   expect(toTeam[0]).not.toHaveProperty("required");
   expect(toTeam[0].payload).not.toHaveProperty("makeUpBy");
+});
+
+it("a void awaiting its confirmation promises seat holders no make-up date; the confirmation tells them, 14 days from itself", async () => {
+  db.lastMissVoid = "CUT_SHORT";
+  db.voidUnconfirmed = true;
+  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell") as {
+    stageBell: jest.Mock;
+  };
+  const toSeats = () =>
+    stageBell.mock.calls
+      .map(([, bell]) => bell)
+      .filter((bell) => bell.dedupeKey === "occ-void:occ-3");
+
+  const atVoid = await prisma.$transaction((tx) =>
+    onClassSessionVoided(tx, {
+      appointmentId: "apt-1",
+      occurrenceId: "occ-3",
+      startsAt: new Date("2026-11-01T04:30:00Z"),
+      voidedAt: new Date("2026-11-01T12:00:00Z"),
+      hostAttributed: true,
+    }),
+  );
+  expect(toSeats()).toEqual([]);
+  expect(atVoid.cancelEmailArgs).toBeNull();
+
+  const confirmed = await prisma.$transaction((tx) =>
+    onClassVoidConfirmed(tx, {
+      appointmentId: "apt-1",
+      occurrenceId: "occ-3",
+      confirmedAt: new Date("2026-11-21T04:30:00Z"),
+    }),
+  );
+  expect(toSeats()).toEqual([
+    expect.objectContaining({
+      workflowId: "class-session-cancelled",
+      recipients: ["u-1"],
+      payload: expect.objectContaining({
+        voided: true,
+        // 21 Nov plus 14 days.
+        makeUpBy: expect.stringContaining("5 Dec"),
+      }),
+    }),
+  ]);
+  expect(confirmed.cancelEmailArgs).toMatchObject({
+    appointmentId: "apt-1",
+    userIds: ["u-1"],
+  });
+});
+
+it("a relabel of a void confirmed earlier names the make-up date its window already had, not 14 days from the relabel", async () => {
+  db.lastMissVoid = "CUT_SHORT";
+  db.voidConfirmedAt = new Date("2026-11-21T04:30:00Z");
+  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell") as {
+    stageBell: jest.Mock;
+  };
+
+  await prisma.$transaction((tx) =>
+    onClassSessionVoided(tx, {
+      appointmentId: "apt-1",
+      occurrenceId: "occ-3",
+      startsAt: new Date("2026-11-01T04:30:00Z"),
+      voidedAt: new Date("2026-11-28T04:30:00Z"),
+      hostAttributed: true,
+      relabelled: true,
+    }),
+  );
+
+  const toSeats = stageBell.mock.calls
+    .map(([, bell]) => bell)
+    .filter((bell) => bell.dedupeKey === "occ-void:occ-3");
+  // 21 Nov plus 14 days, not 28 Nov plus 14.
+  expect(toSeats[0].payload.makeUpBy).toContain("5 Dec");
 });
 
 it("refuses a make-up onto host time any other booking holds, and takes the host's atoms first", async () => {

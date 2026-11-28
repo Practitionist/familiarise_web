@@ -22,6 +22,7 @@ export async function SupportRequestCasePage({
   appointmentsBase,
   paymentsBase,
   intent,
+  occurrence,
 }: Readonly<{
   caseKey: string;
   /** The dashboard's Support requests page. */
@@ -29,6 +30,7 @@ export async function SupportRequestCasePage({
   appointmentsBase?: string;
   paymentsBase?: string;
   intent?: string | string[];
+  occurrence?: string | string[];
 }>) {
   const ref = parseCaseKey(caseKey);
   if (!ref) notFound();
@@ -39,6 +41,7 @@ export async function SupportRequestCasePage({
       appointmentsBase={appointmentsBase}
       paymentsBase={paymentsBase}
       intent={typeof intent === "string" ? intent : undefined}
+      occurrence={typeof occurrence === "string" ? occurrence : undefined}
       articles={articleLinksByTopic()}
     />
   );
@@ -60,11 +63,13 @@ export function PersonalSupportRequestPage({
   profileId,
   caseKey,
   intent,
+  occurrence,
 }: Readonly<{
   tree: "consultee" | "consultant";
   profileId: string;
   caseKey: string;
   intent?: string | string[];
+  occurrence?: string | string[];
 }>) {
   const base = `/dashboard/${tree}/${profileId}`;
   return (
@@ -75,6 +80,7 @@ export function PersonalSupportRequestPage({
       // Payment pages exist only in the consultee tree.
       paymentsBase={tree === "consultee" ? `${base}/payments` : undefined}
       intent={intent}
+      occurrence={occurrence}
     />
   );
 }

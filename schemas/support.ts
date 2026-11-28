@@ -1,11 +1,15 @@
 import { z } from "zod";
-import { SupportPriorityEnum, SupportIssueTypeEnum } from "./enums";
+import {
+  SupportPriorityEnum,
+  SupportIssueTypeEnum,
+  SupportThreadCategoryEnum,
+} from "./enums";
 import {
   MAX_SHORT_FIELD_LENGTH,
   MAX_TEXT_LENGTH,
   MAX_TITLE_LENGTH,
 } from "@/lib/validation/input-limits";
-import { callbackPhoneSchema } from "@/lib/validation/phone";
+import { callbackPhoneSchema, stripCallbackTags } from "@/lib/validation/phone";
 
 // #831 — every user-typed string carries a .max()
 export const CreateSupportTicketSchema = z.object({
@@ -58,4 +62,37 @@ export const CaseRecommendationParams = z.object({
 /** Optional evidence-request scope on a case attachment list. */
 export const CaseAttachmentQuery = z.object({
   evidenceRequestId: OpaqueId.optional(),
+});
+
+/** One turn of a booking's support conversation (`POST /api/appointments/[id]/support`). */
+export const SupportTurnSchema = z
+  .object({
+    clientTurnId: z.string().min(1).max(128).optional(),
+    category: SupportThreadCategoryEnum.optional(),
+    chosenOptionId: z.string().max(200).optional(),
+    userMessage: z
+      .string()
+      .transform((s) => stripCallbackTags(s).trim())
+      .pipe(z.string().max(2000))
+      .optional(),
+    urgent: z.boolean().optional(),
+    /** "This didn't fix it" on a resolved human conversation; carries a message. */
+    reopen: z.boolean().optional(),
+    /** The session a retrospective intent is about; the route checks it belongs to the booking and has ended. */
+    appointmentOccurrenceId: z.string().min(1).max(64).optional(),
+    /** The case a follow-up answers; the turn checks it is the caller's own open case on this booking. */
+    caseId: z.string().min(1).max(64).optional(),
+  })
+  .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
+    message: "A turn needs a category, a chosen option, or a message",
+  })
+  .refine((v) => !v.reopen || v.userMessage, {
+    message: "Tell us what still isn't fixed",
+    path: ["userMessage"],
+  });
+
+/** What a booking's support page names when it loads its thread (`GET /api/appointments/[id]/support`). */
+export const SupportThreadQuerySchema = z.object({
+  caseId: z.string().min(1).max(64).optional(),
+  occurrence: z.string().min(1).max(64).optional(),
 });

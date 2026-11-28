@@ -13,6 +13,15 @@ import { flowForCategory, flowsForContext } from "@/lib/support/flows";
 import { decideEscalation } from "@/lib/support/escalation";
 import type { SupportContext } from "@/lib/support/types";
 
+/** One session that has ended, which a no-show report needs. */
+const ENDED_SESSION = [
+  {
+    id: "occ-1",
+    startsAt: new Date("2026-08-01T10:00:00Z"),
+    endsAt: new Date("2026-08-01T11:00:00Z"),
+  },
+];
+
 function ctx(overrides: Partial<SupportContext> = {}): SupportContext {
   return {
     threadId: "t1",
@@ -26,6 +35,8 @@ function ctx(overrides: Partial<SupportContext> = {}): SupportContext {
     stage: "UPCOMING",
     startsAt: new Date("2026-08-01T10:00:00Z"),
     endsAt: new Date("2026-08-01T11:00:00Z"),
+    reportSessions: [],
+    reportOccurrenceId: null,
     refundPctIfCancelledNow: 100,
     paymentId: "pay1",
     paymentAmountPaise: 1000_00,
@@ -107,9 +118,9 @@ describe("flow availability by context", () => {
     expect(upcoming).not.toContain("RECORDING_ACCESS");
 
     // Completed: post-session intents, no cancel/reschedule.
-    const completed = flowsForContext(ctx({ stage: "COMPLETED" })).map(
-      (f) => f.category,
-    );
+    const completed = flowsForContext(
+      ctx({ stage: "COMPLETED", reportSessions: ENDED_SESSION }),
+    ).map((f) => f.category);
     expect(completed).not.toContain("CANCEL_REFUND");
     expect(completed).not.toContain("RESCHEDULE");
     expect(completed).toContain("NO_SHOW");
@@ -123,10 +134,18 @@ describe("flow availability by context", () => {
 
   it("picks the provider no-show variant for the delivering side", () => {
     const attendee = flowsForContext(
-      ctx({ stage: "COMPLETED", isProvider: false }),
+      ctx({
+        stage: "COMPLETED",
+        isProvider: false,
+        reportSessions: ENDED_SESSION,
+      }),
     );
     const provider = flowsForContext(
-      ctx({ stage: "COMPLETED", isProvider: true }),
+      ctx({
+        stage: "COMPLETED",
+        isProvider: true,
+        reportSessions: ENDED_SESSION,
+      }),
     );
     expect(attendee.find((f) => f.category === "NO_SHOW")?.title).toContain(
       "expert",
@@ -190,7 +209,11 @@ describe("flow availability by context", () => {
 
   it("carries machine-readable reasons on escalating terminals", () => {
     const flow = flowForCategory(
-      ctx({ stage: "COMPLETED", isProvider: false }),
+      ctx({
+        stage: "COMPLETED",
+        isProvider: false,
+        reportSessions: ENDED_SESSION,
+      }),
       "NO_SHOW",
     )!;
     const expert = flow.nodes["expert"];

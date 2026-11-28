@@ -192,7 +192,8 @@ jest.mock("../../lib/prisma", () => {
 
 import prisma from "../../lib/prisma";
 import { expireStaleRequests } from "../../scripts/appointments/expire-stale-requests";
-import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
+import { confirmConsultantNoShow } from "../../lib/booking/consultant-no-show";
+import { createRunFailureReporter } from "../../lib/observability/run-failures";
 
 const db = prisma as unknown as Record<string, Record<string, jest.Mock>> & {
   $transaction: jest.Mock;
@@ -245,48 +246,48 @@ function pendingConsultationRow(id: string) {
   };
 }
 
-/** A candidate the no-show detector will classify as a real consultant no-show. */
+/** A proposed consultant no-show on `occ-1`, as the claim's read returns it. */
 function noShowCandidate(paymentId: string) {
   return {
     id: "cons-1",
+    status: "APPROVED",
     consultationPlan: {
       title: "Career strategy",
+      consultantProfileId: "cp-1",
       consultantProfile: { userId: "user-consultant", user: { name: "C" } },
     },
     requestedBy: { userId: "user-consultee", user: { name: "K" } },
     appointment: {
       id: "apt-1",
       organizationId: null,
-      payment: [
-        {
-          id: paymentId,
-          amount: 150000,
-          currency: "INR",
-          paymentStatus: "SUCCEEDED",
-        },
-      ],
+      payment: [{ id: paymentId, currency: "INR" }],
       occurrences: [
         {
           id: "occ-1",
           startsAt: hoursAgo(4),
           endsAt: hoursAgo(3),
-          completionStatus: "SCHEDULED",
-          outcome: null,
+          completionStatus: "UNVERIFIED",
+          outcome: "HOST_ABSENT",
+          outcomeConfirmedAt: null,
+          seatsSettledAt: null,
           deletedAt: null,
           isTentative: false,
-          meeting: {
-            id: "meeting-1",
-            streamCallId: "call-1",
-            extendedSeconds: 0,
-            attendanceSettledAt: null,
-            endedAt: hoursAgo(3),
-            endedReason: "call_ended",
-          },
+          meeting: { presences: [{ userId: "user-consultee" }] },
         },
       ],
     },
   };
 }
+
+/** The window-close pass confirming that proposal: the claim, then its refund. */
+const confirmNoShow = () =>
+  confirmConsultantNoShow("occ-1", {
+    now: new Date(),
+    guard: {},
+    siblingGuard: () => null,
+    errors: [],
+    failures: createRunFailureReporter("bookings"),
+  });
 
 /** The 48 h arm is the cohort that names a capture clock; the others do not. */
 function isPaidUnallocatedCohort(where: Record<string, unknown>): boolean {
@@ -423,14 +424,14 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   });
 
   it("keys the consultant no-show refund under its own arm", async () => {
-    db.consultation.findMany.mockResolvedValue([noShowCandidate("pay-1")]);
+    db.consultation.findFirst.mockResolvedValue(noShowCandidate("pay-1"));
     db.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
       { id: "occ-1", appointmentId: "apt-1" },
     ]);
 
-    const result = await detectConsultantNoShows();
+    const result = await confirmNoShow();
 
-    expect(result.refunded).toBe(1);
+    expect(result).toMatchObject({ kind: "claimed", refunded: true });
     expect(refundBookingPayment.mock.calls[0][0]).toMatchObject({
       paymentId: "pay-1",
       dedupeKey: "consultant-no-show:pay-1",
@@ -458,9 +459,10 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
         if (where.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
           return [];
         }
-        return [noShowCandidate("pay-1")];
+        return [];
       },
     );
+    db.consultation.findFirst.mockResolvedValue(noShowCandidate("pay-1"));
     db.subscription.findMany.mockImplementation(
       async ({
         where,
@@ -490,7 +492,7 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
     ]);
 
     await expireStaleRequests();
-    await detectConsultantNoShows();
+    await confirmNoShow();
 
     expect([...refundKeys()].sort()).toEqual([
       "approved-unallocated:pay-1",
@@ -501,13 +503,13 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   });
 
   it("derives the key from nothing that varies per run", async () => {
-    db.consultation.findMany.mockResolvedValue([noShowCandidate("pay-1")]);
+    db.consultation.findFirst.mockResolvedValue(noShowCandidate("pay-1"));
     db.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
       { id: "occ-1", appointmentId: "apt-1" },
     ]);
 
-    await detectConsultantNoShows();
-    await detectConsultantNoShows();
+    await confirmNoShow();
+    await confirmNoShow();
 
     // A lost `cron:lock:` grant produces two runs of the same arm on the same
     // row. Identical strings are the whole point: the unique index only

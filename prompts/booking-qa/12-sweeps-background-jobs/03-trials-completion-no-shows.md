@@ -48,15 +48,17 @@ Control D: a paid session whose call ran and ended 3 hours ago.
 
 **Aftermath:** B1's view of B: does it say anything ("we're checking what happened")? H1's view? Staff Money → booking ops shows B under session outcomes with **Set outcome**.
 
-## SW-21 — A consultant no-show is cancelled, refunded in full and struck `[sweep]`
+## SW-21 — A consultant no-show is proposed, then cancelled, refunded in full and struck once confirmed `[sweep]`
 
 **Why it matters:** the buyer showed up; the expert didn't.
 
 **Setup:** a paid B2 consultation running now (owner-approved shift so it starts within minutes). B2 joins the room during its booked window and stays; H1 never joins. Do not move it afterwards: B2's Stream stays must fall inside the booked window. Wait until the call ended more than six hours ago, since Stream's record is read only then. If the room can't be joined, BLOCKED.
 
-**Steps:** NEEDS-OWNER-RUN `auto-complete-appointments` (it must leave this one alone) and `detect-consultant-no-shows`; run both again.
+**Steps:** NEEDS-OWNER-RUN `auto-complete-appointments` (it must leave this one alone) and `detect-consultant-no-shows`; then B2 files "The expert never showed up" on the session (or, owner-approved, move the proposal's `outcomeAt` back 49 hours); run `auto-complete-appointments` again, then both jobs once more.
 
-**Expect:** auto-complete doesn't complete it; the no-show job cancels it, refunds 100 % under `consultant-no-show:<paymentId>`, records one `CONSULTANT_NO_SHOW` strike for H1. A session ended 100 minutes ago (inside the 120-minute grace) is not touched, and neither is one whose call ended less than six hours ago (its record is not read yet). Run 2: no second refund or strike. Multi-session bookings (partial refunds) are excluded from this job: record what happens to a subscription session with the same shape (expected: needs-human, not auto-refunded).
+**Expect:** auto-complete doesn't complete it; the no-show job only proposes it (the session `UNVERIFIED`, outcome `HOST_ABSENT`, `outcomeConfirmedAt` empty, the booking still `APPROVED`, no refund, no strike, the row on the needs-human list). The next window-close pass after B2's agreement (or the window's close) cancels it, refunds 100 % under `consultant-no-show:<paymentId>`, records one `CONSULTANT_NO_SHOW` strike for H1 and stamps the session confirmed. A session ended 100 minutes ago (inside the 120-minute grace) is not touched, and neither is one whose call ended less than six hours ago (its record is not read yet). Run 2: no second refund or strike. Multi-session bookings (partial refunds) are excluded from this job: record what happens to a subscription session with the same shape (expected: needs-human, not auto-refunded).
+
+**Dispute first (its own fixture):** a second paid B2 consultation set up the same way, proposed by the same detector run. Before any confirmation trigger (no report from B2, `outcomeAt` not moved), H1 files "I was there" (`provider_attended`) on that session. Owner-approved: move this proposal's `outcomeAt` back 49 hours, and move H1's report's `flowReasonAt` into the shifted window, to one hour after the booked end (a report counts only between the booked end and the shifted `outcomeAt` plus 48 hours), then NEEDS-OWNER-RUN `auto-complete-appointments` twice. **Expect:** this booking stays `APPROVED`, the session `UNVERIFIED` with `outcomeConfirmedAt` empty, no `Refund` and no owed marker on its payment, no strike for H1, and the session on the needs-human list with a "Disputed by the expert" badge.
 
 **Aftermath:** B2 is told the expert didn't attend and the refund amount; H1's dashboard shows the strike count and the reason (CO-85 for the public profile threshold).
 
