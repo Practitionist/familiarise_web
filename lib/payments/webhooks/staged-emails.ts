@@ -571,8 +571,11 @@ export async function stageBookedBells(
       dedupeKey,
       { tx },
     );
+    // One staged row comes back per recipient of a batch; return each row once.
     for (const item of bookedTriggers ?? []) {
-      if (item?.staged) staged.push(item.staged);
+      if (item?.staged && !staged.some((row) => row.id === item.staged?.id)) {
+        staged.push(item.staged);
+      }
     }
   }
 
