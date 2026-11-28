@@ -47,20 +47,14 @@ jest.mock("../../../lib/compliance/dpdp", () => ({
   __esModule: true,
   checkConsent: jest.fn(async () => true),
 }));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/email", () => {
-  const noop = jest.fn(async () => ({ success: true }));
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/email", () =>
+  jest
+    .requireActual("../../fixtures/noop-module")
+    .noopModule({ success: true }),
+);
 jest.mock("../../../utils/contentValidation", () =>
   jest.requireActual("../../fixtures/content-validation-stub"),
 );
@@ -68,10 +62,9 @@ const sessionUser = { current: { id: "" } as Record<string, unknown> };
 jest.mock("../../../lib/auth-server", () => ({
   getSession: async () => ({ user: sessionUser.current }),
 }));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
+jest.mock("../../../lib/rate-limit", () =>
+  jest.requireActual("./harness-edges").rateLimitMock(),
+);
 
 /**
  * The Redis slot tier and the consultee key have lapsed: every batch and every

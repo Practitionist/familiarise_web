@@ -14,18 +14,11 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
 }));
 
-jest.mock("../../lib/prisma", () => {
-  const { bookingExpiryPrismaModels } = jest.requireActual(
-    "../fixtures/booking-expiry-test-doubles",
-  );
-  const db: Record<string, unknown> = {
-    ...bookingExpiryPrismaModels(),
-    $queryRaw: jest.fn(async () => []),
-    $disconnect: jest.fn(),
-  };
-  db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
-  return { __esModule: true, default: db };
-});
+jest.mock("../../lib/prisma", () =>
+  jest
+    .requireActual("../fixtures/booking-expiry-test-doubles")
+    .bookingExpiryPrismaModule(),
+);
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   __esModule: true,
