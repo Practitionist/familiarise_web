@@ -46,7 +46,11 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { isExclusionViolation, isWriteConflict } from "@/lib/db/pg-errors";
+import {
+  isExclusionViolation,
+  isLockTimeout,
+  isWriteConflict,
+} from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   isDeadOccurrence,
@@ -1158,7 +1162,11 @@ export async function handlePaymentSuccess(
                 phase1EarningsErr instanceof
                   Prisma.PrismaClientKnownRequestError &&
                 phase1EarningsErr.code === "P2034";
-              if (isRetryableSerialization) {
+              // A lock timeout fails the whole capture, so its door retries it later.
+              if (
+                isRetryableSerialization ||
+                isLockTimeout(phase1EarningsErr)
+              ) {
                 throw phase1EarningsErr;
               }
               console.warn(
@@ -2951,7 +2959,7 @@ async function stageStartedBeforePaymentNotice(
     return staged;
   } catch (error) {
     await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_started_notice`;
-    if (isWriteConflict(error)) throw error;
+    if (isWriteConflict(error) || isLockTimeout(error)) throw error;
     reportSentryError(error, {
       subsystem: "payments",
       op: "capture.started-before-payment-notice.stage",
@@ -3023,7 +3031,7 @@ async function stageTrialPaidAfterStartNotice(
     };
   } catch (error) {
     await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_trial_started_notice`;
-    if (isWriteConflict(error)) throw error;
+    if (isWriteConflict(error) || isLockTimeout(error)) throw error;
     reportSentryError(error, {
       subsystem: "payments",
       op: "capture.trial-paid-after-start-notice.stage",

@@ -76,7 +76,10 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
 import { isLockTimeout } from "../../lib/db/pg-errors";
-import { expectCaptureLockFirst } from "../fixtures/capture-order-lock";
+import {
+  expectCaptureLockFirst,
+  rawCall,
+} from "../fixtures/capture-order-lock";
 
 const pgError = (code: string, message: string) =>
   Object.assign(new Error(message), {
@@ -118,6 +121,13 @@ it("hands a lock timeout back to the door without a serializable retry", async (
     .mockResolvedValueOnce(1)
     .mockRejectedValueOnce(pgError("40001", "could not serialize access"));
   transaction.mockClear();
+  txExecuteRaw.mockClear();
   await handlePaymentSuccess("order_lock", {});
   expect(transaction).toHaveBeenCalledTimes(2);
+  // The replay opens with the same lock timeout and order lock as the first attempt.
+  const statements = txExecuteRaw.mock.calls.map(rawCall);
+  expect(statements).toHaveLength(4);
+  expect(statements.slice(2)).toEqual(statements.slice(0, 2));
+  expect(statements[2].values).toEqual(["4000"]);
+  expect(statements[3].values).toEqual(["payment-capture:order_lock"]);
 });

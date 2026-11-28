@@ -139,8 +139,9 @@ it("a door kept waiting past the lock timeout fails with 55P03 and writes nothin
   await holder;
 
   expect(isLockTimeout(failure)).toBe(true);
+  // The whole call, pre-transaction reads included, still ends below pg's 6 s client query_timeout.
   expect(waitedMs).toBeGreaterThanOrEqual(4_000);
-  expect(waitedMs).toBeLessThan(5_000);
+  expect(waitedMs).toBeLessThan(6_000);
   const row = await prisma.payment.findUniqueOrThrow({
     where: { id: payment.id },
     select: { paymentStatus: true },
