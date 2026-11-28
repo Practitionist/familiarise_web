@@ -106,6 +106,46 @@ describe("the poll leaves discovery its share of the run", () => {
   });
 });
 
+describe("the poll's cutoff leaves neither cohort unstarted", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("takes the near-deadline and the stale disputes in turn, near-deadline first, so a stale one starts before the cutoff", async () => {
+    const startedAt = 1_800_000_000_000;
+    let clock = startedAt;
+    jest.spyOn(Date, "now").mockImplementation(() => clock);
+    findMany
+      .mockImplementationOnce(async () =>
+        ["n1", "n2", "n3", "n4", "n5", "n6"].map((id) => row(id)),
+      )
+      .mockImplementationOnce(async () =>
+        ["s1", "s2", "s3"].map((id) => row(id)),
+      );
+    // Each poll of the gateway takes two seconds.
+    mockGetRazorpayDispute.mockImplementation(async () => {
+      clock += 2_000;
+      return {
+        paymentId: "pay_1",
+        status: "under_review",
+        evidence: {},
+        isChargeRefundable: true,
+        dueBy: null,
+      };
+    });
+
+    const result = await reconcileDisputes({ limit: 9, startedAt });
+
+    expect(mockGetRazorpayDispute.mock.calls.map((c) => c[0])).toEqual([
+      "n1",
+      "s1",
+      "n2",
+      "s2",
+    ]);
+    expect(result.totalProcessed).toBe(4);
+  });
+});
+
 describe("the discovery pass runs after the poll", () => {
   it("returns the pass's counts, keeps its position as the run's checkpoint, and fails the run on its errors", async () => {
     findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);

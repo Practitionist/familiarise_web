@@ -238,7 +238,12 @@ async function reconcileDisputesUnlocked(opts: {
     limit === undefined
       ? deadlineRows
       : deadlineRows.slice(0, limit - stale.length);
-  const disputesToReconcile = [...nearDeadline, ...stale];
+  // Taken in turn, near-deadline first, so the poll's cutoff leaves neither cohort unstarted.
+  const disputesToReconcile: typeof nearDeadline = [];
+  for (let i = 0; i < Math.max(nearDeadline.length, stale.length); i++) {
+    if (i < nearDeadline.length) disputesToReconcile.push(nearDeadline[i]);
+    if (i < stale.length) disputesToReconcile.push(stale[i]);
+  }
 
   console.log(`Found ${disputesToReconcile.length} disputes to reconcile`);
 
