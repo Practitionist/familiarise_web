@@ -92,7 +92,7 @@ const noShowFlowProvider: FlowDefinition = {
       id: "client",
       kind: "TERMINAL",
       // The fee waits for the report window; ops can overturn the record through a support case.
-      body: "Noted. The participant's absence is recorded from the call, and your fee for this session stays with you once the 48-hour window from our record closes without the participant telling us they were there. If you think it was recorded incorrectly, contact support and our team can review and correct it.",
+      body: "Noted. The participant's absence is recorded from the call, and your fee for this session stays with you once the 48-hour window from our record closes without the participant telling us they were there. If our call record is incomplete, our team checks it first. If you think it was recorded incorrectly, contact support and our team can review and correct it.",
       resolved: true,
       reason: "attendee_no_show",
     },
