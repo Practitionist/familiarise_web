@@ -12,6 +12,7 @@ import { cancelWindowRefusal } from "@/lib/booking/session-window";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
 import {
   anySeatCarriesMoney,
+  pendingVoidCancelAction,
   pendingVoidRefusal,
 } from "@/lib/booking/pending-void-gate";
 import {
@@ -131,16 +132,19 @@ async function quoteIndividualBooking(
     isConsultantInitiated ? "host" : "buyer",
   );
   if (windowRefusal) throw windowRefusal;
-  // The cancel itself refuses while a consultation's void waits for its verdict, with the same sentence.
+  // The cancel itself refuses while a consultation's or a plan's void waits for its verdict, with the same sentence.
   if (
-    appointment.consultationId &&
+    (appointment.consultationId || appointment.subscriptionId) &&
     ctx.paidPayment &&
     !isPriceFreePayment(ctx.paidPayment)
   ) {
     const pending = await pendingVoidRefusal(prisma, {
       appointmentId: appointment.id,
       readerUserId,
-      action: "cancelBooking",
+      action: pendingVoidCancelAction({
+        class: null,
+        subscription: appointment.subscriptionId,
+      }),
     });
     if (pending) {
       throw new Refusal({

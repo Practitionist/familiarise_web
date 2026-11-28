@@ -64,6 +64,23 @@ it("names the session and its window's close for each remedy, in the reader's zo
   );
 });
 
+it("tells whoever cancels a plan what waits and by when, without promising what the session will refund", () => {
+  const wait = {
+    sessionStartsAt: new Date("2026-11-12T04:30:00Z"),
+    settlesBy: new Date("2026-11-14T11:45:00Z"),
+  };
+  expect(
+    pendingVerdictMessage(
+      wait,
+      "Asia/Kolkata",
+      new Date("2026-11-13T00:00:00Z"),
+      "cancelPlan",
+    ),
+  ).toBe(
+    "We're confirming what happened in the 12 Nov session. You can cancel this plan once that's confirmed, so the refund counts that session correctly; the report window closes 14 Nov, 5:15 pm IST, and if it needs a review our team will decide.",
+  );
+});
+
 it("tells whoever cancels a consultation what waits, by when, and that the session is refunded in full once confirmed", () => {
   const wait = {
     sessionStartsAt: new Date("2026-11-12T04:30:00Z"),

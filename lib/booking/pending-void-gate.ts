@@ -46,6 +46,15 @@ export async function anySeatCarriesMoney(
   return payments.some(seatCarriesMoney);
 }
 
+/** Which whole-booking cancel is waiting, for its sentence: a class's, a plan's or a consultation's. */
+export function pendingVoidCancelAction(booking: {
+  class: unknown;
+  subscription: unknown;
+}): PendingVoidAction {
+  if (booking.class) return "cancel";
+  return booking.subscription ? "cancelPlan" : "cancelBooking";
+}
+
 /**
  * Null when the remedy may run; otherwise the sentence that names the pending
  * session and its window's close. `occurrenceId` narrows it to one source session.

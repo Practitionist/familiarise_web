@@ -383,7 +383,8 @@ function bookingRows(c: Case) {
       subscription:
         c.kind === "subscription"
           ? {
-              sessionsTotal: done.length + live.length,
+              sessionsTotal:
+                done.length + live.length + (c.voidedHoursAgo ? 1 : 0),
               subscriptionPlan: { totalSessions: 0 },
             }
           : null,
@@ -808,12 +809,133 @@ describe("a consultation whose only session was voided and is not settled", () =
   });
 });
 
+const prismaOccurrences = (
+  jest.requireMock("../../lib/prisma").default as {
+    appointmentOccurrence: { findMany: jest.Mock };
+  }
+).appointmentOccurrence;
+/** The pending-void gate's own read, on whichever client the door uses. */
+const gateRead =
+  (c: Case) => async (args: { where?: { completionStatus?: unknown } }) =>
+    args.where?.completionStatus === "VOIDED"
+      ? bookingRows(c)[0].occurrences.filter(
+          (o) => o.completionStatus === "VOIDED",
+        )
+      : [];
+const armGate = (c: Case) => {
+  txStub.appointmentOccurrence.findMany.mockImplementation(gateRead(c));
+  prismaOccurrences.findMany.mockImplementation(gateRead(c));
+};
+/** Platform staff, not a party, through the audited door: the preview, then the cancel. */
+async function staffQuoteThenCancel(c: Case) {
+  mockGetSession.mockResolvedValue({
+    user: {
+      id: "admin-1",
+      name: "Ops",
+      role: "ADMIN",
+      twoFactorEnabled: true,
+      consultantProfileId: null,
+      consulteeProfileId: null,
+    },
+  });
+  mockAppointmentFindUnique.mockResolvedValue(appointmentRow(c.kind));
+  mockAppointmentFindMany.mockImplementation(async () => bookingRows(c));
+  const previewRes = await previewHandler(
+    new Request(`http://localhost/api/appointments/${APPT}/cancel/preview`),
+    makeParams(APPT),
+  );
+  const request = new Request(
+    `http://localhost/api/appointments/${APPT}/cancel`,
+    { method: "POST" },
+  );
+  grantPlatformCancel(request, "ops-1");
+  const cancelRes = await cancelHandler(request as never, makeParams(APPT));
+  return { previewRes, cancelRes };
+}
+
+describe("a plan with a voided session that still waits for its verdict", () => {
+  // Four sessions for ₹4,000: one held, one cut short and unconfirmed, two ahead.
+  const waiting = (actor: Case["actor"], over: Partial<Case> = {}): Case => ({
+    name: "plan with an unconfirmed void",
+    kind: "subscription",
+    policy: DEFAULT_POLICY,
+    liveSlotHours: [120, 300],
+    completedSlotHours: [-60],
+    voidedHoursAgo: 30,
+    voidUnconfirmed: true,
+    grossPaise: 400_000,
+    actor,
+    ...over,
+  });
+  afterEach(() => {
+    prismaOccurrences.findMany.mockReset().mockResolvedValue([]);
+  });
+
+  it.each(["consultee", "consultant"] as const)(
+    "refuses the %s at the preview and at the cancel with one sentence, and commits nothing",
+    async (actor) => {
+      const c = waiting(actor);
+      armGate(c);
+
+      const { previewRes, preview, cancelRes, cancelled } =
+        await quoteThenCancel(c);
+
+      expect(previewRes.status).toBe(409);
+      expect(cancelRes.status).toBe(409);
+      expect(preview.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.error).toBe(preview.error);
+      expect(cancelled.error).toContain(
+        "You can cancel this plan once that's confirmed, so the refund counts that session correctly",
+      );
+      expect(txStub.subscription.updateMany).not.toHaveBeenCalled();
+      expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses platform staff the same way", async () => {
+    const c = waiting("consultee");
+    armGate(c);
+
+    const { previewRes, cancelRes } = await staffQuoteThenCancel(c);
+
+    expect(previewRes.status).toBe(409);
+    expect((await previewRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(cancelRes.status).toBe(409);
+    expect((await cancelRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(txStub.subscription.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("refunds the void's unit with the two sessions ahead once its verdict is confirmed", async () => {
+    const c = waiting("consultee", { voidUnconfirmed: false });
+    armGate(c);
+
+    const { preview, cancelRes, cancelled } = await quoteThenCancel(c);
+
+    expect(preview.estimatedRefundPaise).toBe(300_000);
+    expect(cancelRes.status).toBe(200);
+    expect(cancelled.refund.amountRefundedPaise).toBe(300_000);
+  });
+
+  it("lets a plan that cost nothing be cancelled: no refund waits on the verdict", async () => {
+    const c = waiting("consultee", {
+      completedSlotHours: [],
+      grossPaise: 0,
+      listPricePaise: 0,
+      paymentIntent: "free_1730000000_sub",
+    });
+    armGate(c);
+
+    const { previewRes, cancelRes } = await quoteThenCancel(c);
+
+    expect(previewRes.status).toBe(200);
+    expect(cancelRes.status).toBe(200);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
 describe("a consultation whose voided session still waits for its verdict", () => {
-  const prismaOccurrences = (
-    jest.requireMock("../../lib/prisma").default as {
-      appointmentOccurrence: { findMany: jest.Mock };
-    }
-  ).appointmentOccurrence;
   const waiting = (actor: Case["actor"], over: Partial<Case> = {}): Case => ({
     name: "cut short, unconfirmed",
     kind: "consultation",
@@ -825,18 +947,7 @@ describe("a consultation whose voided session still waits for its verdict", () =
     actor,
     ...over,
   });
-  /** The pending-void gate's own read, on whichever client the door uses. */
-  const gateRead =
-    (c: Case) => async (args: { where?: { completionStatus?: unknown } }) =>
-      args.where?.completionStatus === "VOIDED"
-        ? bookingRows(c)[0].occurrences.filter(
-            (o) => o.completionStatus === "VOIDED",
-          )
-        : [];
-  const arm = (c: Case) => {
-    txStub.appointmentOccurrence.findMany.mockImplementation(gateRead(c));
-    prismaOccurrences.findMany.mockImplementation(gateRead(c));
-  };
+  const arm = armGate;
   afterEach(() => {
     prismaOccurrences.findMany.mockReset().mockResolvedValue([]);
   });
@@ -867,29 +978,8 @@ describe("a consultation whose voided session still waits for its verdict", () =
   it("refuses platform staff the same way", async () => {
     const c = waiting("consultee");
     arm(c);
-    mockGetSession.mockResolvedValue({
-      user: {
-        id: "admin-1",
-        name: "Ops",
-        role: "ADMIN",
-        twoFactorEnabled: true,
-        consultantProfileId: null,
-        consulteeProfileId: null,
-      },
-    });
-    mockAppointmentFindUnique.mockResolvedValue(appointmentRow(c.kind));
-    mockAppointmentFindMany.mockImplementation(async () => bookingRows(c));
 
-    const previewRes = await previewHandler(
-      new Request(`http://localhost/api/appointments/${APPT}/cancel/preview`),
-      makeParams(APPT),
-    );
-    const request = new Request(
-      `http://localhost/api/appointments/${APPT}/cancel`,
-      { method: "POST" },
-    );
-    grantPlatformCancel(request, "ops-1");
-    const cancelRes = await cancelHandler(request as never, makeParams(APPT));
+    const { previewRes, cancelRes } = await staffQuoteThenCancel(c);
 
     expect(previewRes.status).toBe(409);
     expect((await previewRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");

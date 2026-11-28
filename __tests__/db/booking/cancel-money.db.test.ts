@@ -278,6 +278,74 @@ describe("a voided session whose verdict is not yet confirmed", () => {
   });
 });
 
+describe("a plan with a voided session whose verdict is not yet confirmed", () => {
+  it("refuses the learner's cancel with nothing committed, and no longer refuses it for the verdict once that is confirmed", async () => {
+    const host = await seedHost();
+    const buyer = await seedConsultee();
+    const startsAt = new Date(Date.now() - 3 * HOUR_MS);
+    const plan = await seedOneToOne(
+      "subscription",
+      host,
+      buyer,
+      { startsAt, endsAt: new Date(startsAt.getTime() + HOUR_MS) },
+      {
+        status: "APPROVED",
+        isTentative: false,
+        payment: { status: "SUCCEEDED", expiresAt: null },
+      },
+    );
+    sessionUser.current = {
+      id: buyer.userId,
+      role: "CONSULTEE",
+      consulteeProfileId: buyer.consulteeProfileId,
+      consultantProfileId: null,
+      name: "Buyer",
+    };
+    const verdictAt = new Date(Date.now() - HOUR_MS);
+    await prisma.appointmentOccurrence.update({
+      where: { id: plan.occurrenceId },
+      data: {
+        completionStatus: "VOIDED",
+        voidedAt: verdictAt,
+        outcome: "CUT_SHORT",
+        outcomeAt: verdictAt,
+      },
+    });
+    const planStatus = async () =>
+      (
+        await prisma.subscription.findUniqueOrThrow({
+          where: { id: plan.subscriptionId! },
+          select: { status: true },
+        })
+      ).status;
+
+    const refused = await cancelRequest(plan.appointmentId);
+
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      code: "CANCEL_WAITS_FOR_VERDICT",
+    });
+    expect(await planStatus()).toBe("APPROVED");
+    expect(
+      await prisma.payment.findUniqueOrThrow({
+        where: { id: plan.payment!.id },
+        select: { refundOwedKey: true },
+      }),
+    ).toMatchObject({ refundOwedKey: null });
+    expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+
+    await prisma.appointmentOccurrence.update({
+      where: { id: plan.occurrenceId },
+      data: { outcomeConfirmedAt: new Date() },
+    });
+    const after = await cancelRequest(plan.appointmentId);
+
+    expect(await after.json()).not.toMatchObject({
+      code: "CANCEL_WAITS_FOR_VERDICT",
+    });
+  });
+});
+
 describe("discount use on an unpaid end", () => {
   async function seedUnpaidWithCode() {
     const host = await seedHost();

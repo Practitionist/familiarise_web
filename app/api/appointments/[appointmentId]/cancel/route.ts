@@ -78,6 +78,7 @@ import { cancelWindowRefusal } from "@/lib/booking/session-window";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
 import {
   anySeatCarriesMoney,
+  pendingVoidCancelAction,
   pendingVoidRefusal,
 } from "@/lib/booking/pending-void-gate";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
@@ -950,19 +951,19 @@ export async function POST(
                 isConsultantInitiated ? "host" : "buyer",
               );
               if (windowRefusal) throw windowRefusal;
-              // A void whose negative verdict is unconfirmed may yet be held, so a class's or a
-              // consultation's cancel waits for it; a booking that cost nothing cancels.
+              // A void whose negative verdict is unconfirmed may yet be held, so a class's, a
+              // consultation's or a plan's cancel waits for it; a booking that cost nothing cancels.
               const paidPayment = bookingCtx?.paidPayment ?? null;
               const waitsOnVerdict = appointment.class
                 ? await anySeatCarriesMoney(tx, appointmentId)
-                : !!appointment.consultation &&
+                : isExclusiveType &&
                   paidPayment !== null &&
                   !isPriceFreePayment(paidPayment);
               if (waitsOnVerdict) {
                 const pending = await pendingVoidRefusal(tx, {
                   appointmentId,
                   readerUserId: session.user.id,
-                  action: appointment.class ? "cancel" : "cancelBooking",
+                  action: pendingVoidCancelAction(appointment),
                 });
                 if (pending) {
                   throw new Refusal({
