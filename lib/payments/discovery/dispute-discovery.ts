@@ -68,7 +68,7 @@ export interface DisputeDiscoveryRun {
   updated: number;
   /** Disputes whose row differs from the listing and that the handler left as they were. */
   notAdopted: number;
-  /** Disputes the handler deferred in this run: no captured payment is held for them. */
+  /** Disputes the handler deferred in this run: no payment row is held for them, or it is still PENDING. */
   unknownPayment: number;
   /** Remembered deferrals passed over with no hand-over: not due for a retry yet, or past the run's bound on gateway reads. */
   waiting: number;
@@ -330,7 +330,7 @@ async function reportDiscoveryFindings(
   next: DiscoveryState,
 ): Promise<void> {
   if (unknownPayment.length > 0) {
-    const message = `Dispute discovery: ${unknownPayment.length} gateway dispute(s) are on a payment the database does not hold as captured; nothing was written for them`;
+    const message = `Dispute discovery: ${unknownPayment.length} gateway dispute(s) were deferred by the handler: no payment row is held for them, or it is still PENDING; nothing was written for them`;
     await reportStandingFinding(
       {
         key: `${DISPUTE_DISCOVERY_JOB}:discovery-unknown-payment`,
