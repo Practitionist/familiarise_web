@@ -10,6 +10,8 @@
  *  - allocator × class creation on one host (both orders);
  *  - checkout × request-for-approval by one learner with two different
  *    experts: the learner's own time is the only thing the two share.
+ * A last case holds one half-hour and asks for the hour around it: the walk
+ * refuses on the held atom, not only on the first.
  */
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -164,6 +166,10 @@ jest.mock("../../../lib/collaborators/availability", () => {
 });
 
 import { allocate } from "../../../lib/booking/allocation";
+import {
+  lockHostTimeInTx,
+  type HeldHostTime,
+} from "../../../lib/booking/allocation/host-time-locks";
 import { acceptProposal } from "../../../lib/booking/reschedule-respond";
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { withAppointmentLock } from "../../../utils/appointmentlock";
@@ -190,6 +196,62 @@ const settled = <T>(racing: Promise<T>) =>
     (value) => ({ ok: true as const, value }),
     (error: unknown) => ({ ok: false as const, error }),
   );
+
+/**
+ * Parks `first` at `slot` with its atoms taken, runs `second` to its end, then
+ * lets `first` finish, and answers both. The gate opens and `first` is awaited
+ * even when the race fails, so no writer outlives its test.
+ */
+async function race<A, B>(
+  slot: { current: Gate | null },
+  first: () => Promise<A>,
+  second: () => Promise<B>,
+): Promise<[A, B]> {
+  const paused = gate();
+  slot.current = paused;
+  const running = first();
+  const finished = settled(running);
+  try {
+    await parked(paused, running);
+    const answer = await second();
+    paused.open();
+    return [await running, answer];
+  } finally {
+    slot.current = null;
+    paused.open();
+    await finished;
+  }
+}
+
+/** `user` asks `host` for an hour at `startsAt` through the request door. */
+async function requestSession(
+  user: Record<string, unknown>,
+  host: SeededHost,
+  planId: string,
+  startsAt: Date,
+) {
+  const row = await prisma.availabilityWindowCustom.findFirstOrThrow({
+    where: { consultantProfileId: host.consultantProfileId },
+    select: { id: true },
+  });
+  sessionUser.current = user;
+  return requestForApproval(
+    new NextRequest("https://x.test/api/scheduling/request-for-approval", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": randomUUID(),
+      },
+      body: JSON.stringify({
+        consultantProfileId: host.consultantProfileId,
+        consultationPlanId: planId,
+        availabilityWindowCustomId: row.id,
+        startsAt: startsAt.toISOString(),
+        endsAt: new Date(startsAt.getTime() + HOUR_MS).toISOString(),
+      }),
+    }),
+  );
+}
 
 /** Live rows of `host` that overlap [startsAt, startsAt + 1h). */
 function occupyingAt(host: SeededHost, startsAt: Date) {
@@ -227,50 +289,30 @@ describe("checkout × request-for-approval on an expert who hosts one and reques
     return { expert, expertPlan, other, otherPlan, buyer: await seedBuyer() };
   }
 
-  async function request(
+  const request = (
     expert: Awaited<ReturnType<typeof seedDualRole>>,
     other: SeededHost,
     planId: string,
     startsAt: Date,
-  ) {
-    const row = await prisma.availabilityWindowCustom.findFirstOrThrow({
-      where: { consultantProfileId: other.consultantProfileId },
-      select: { id: true },
-    });
-    sessionUser.current = {
-      id: expert.userId,
-      consultantProfileId: expert.consultantProfileId,
-    };
-    return requestForApproval(
-      new NextRequest("https://x.test/api/scheduling/request-for-approval", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": randomUUID(),
-        },
-        body: JSON.stringify({
-          consultantProfileId: other.consultantProfileId,
-          consultationPlanId: planId,
-          availabilityWindowCustomId: row.id,
-          startsAt: startsAt.toISOString(),
-          endsAt: new Date(startsAt.getTime() + HOUR_MS).toISOString(),
-        }),
-      }),
+  ) =>
+    requestSession(
+      { id: expert.userId, consultantProfileId: expert.consultantProfileId },
+      other,
+      planId,
+      startsAt,
     );
-  }
 
   it("the request holding the expert's time first: the checkout is refused, unwritten", async () => {
     const { expert, expertPlan, other, otherPlan, buyer } = await seedPair();
     const startsAt = futureAt(8, 10);
 
-    const paused = gate();
-    requestGate.current = paused;
-    const requesting = request(expert, other, otherPlan.id, startsAt);
-    await parked(paused, requesting);
-    const bought = await settled(checkout(expertPlan.id, startsAt, buyer));
-    paused.open();
+    const [requested, bought] = await race(
+      requestGate,
+      () => request(expert, other, otherPlan.id, startsAt),
+      () => settled(checkout(expertPlan.id, startsAt, buyer)),
+    );
 
-    expect((await requesting).status).toBe(201);
+    expect(requested.status).toBe(201);
     expect(bought.ok).toBe(false);
     expect(String(!bought.ok && bought.error)).toMatch(/already booked/i);
     expect(await occupyingAt(expert, startsAt)).toBe(0);
@@ -281,14 +323,13 @@ describe("checkout × request-for-approval on an expert who hosts one and reques
     const { expert, expertPlan, other, otherPlan, buyer } = await seedPair();
     const startsAt = futureAt(8, 12);
 
-    const paused = gate();
-    checkoutGate.current = paused;
-    const buying = checkout(expertPlan.id, startsAt, buyer);
-    await parked(paused, buying);
-    const requested = await request(expert, other, otherPlan.id, startsAt);
-    paused.open();
+    const [bought, requested] = await race(
+      checkoutGate,
+      () => checkout(expertPlan.id, startsAt, buyer),
+      () => request(expert, other, otherPlan.id, startsAt),
+    );
 
-    await expect(buying).resolves.toBeDefined();
+    expect(bought).toBeDefined();
     expect(requested.status).toBe(409);
     expect(await requested.json()).toMatchObject({ code: "SLOT_TAKEN" });
     expect(await occupyingAt(expert, startsAt)).toBe(1);
@@ -365,14 +406,13 @@ describe("checkout × reschedule acceptance on one host", () => {
     const move = await seedOpenProposal(host, newStart);
     const buyer = await seedBuyer();
 
-    const paused = gate();
-    allocatorGate.current = paused;
-    const accepting = accept(host, move);
-    await parked(paused, accepting);
-    const bought = await settled(checkout(plan.id, newStart, buyer));
-    paused.open();
+    const [accepted, bought] = await race(
+      allocatorGate,
+      () => accept(host, move),
+      () => settled(checkout(plan.id, newStart, buyer)),
+    );
 
-    expect(await accepting).toEqual({ done: true });
+    expect(accepted).toEqual({ done: true });
     expect(bought.ok).toBe(false);
     expect(String(!bought.ok && bought.error)).toMatch(/already booked/i);
     expect(await proposalStatus(move.proposalId)).toBe("ACCEPTED");
@@ -388,14 +428,13 @@ describe("checkout × reschedule acceptance on one host", () => {
     const move = await seedOpenProposal(host, newStart);
     const buyer = await seedBuyer();
 
-    const paused = gate();
-    checkoutGate.current = paused;
-    const buying = checkout(plan.id, newStart, buyer);
-    await parked(paused, buying);
-    const accepted = await accept(host, move);
-    paused.open();
+    const [bought, accepted] = await race(
+      checkoutGate,
+      () => checkout(plan.id, newStart, buyer),
+      () => accept(host, move),
+    );
 
-    await expect(buying).resolves.toBeDefined();
+    expect(bought).toBeDefined();
     expect(accepted).toEqual({ done: false, reason: "TIMES_TAKEN" });
     expect(await proposalStatus(move.proposalId)).toBe("PENDING_REVIEW");
     expect(await occupyingAt(host, newStart)).toBe(1);
@@ -437,6 +476,14 @@ describe("allocator × class creation on one host", () => {
     );
   }
 
+  const placeByHand = (consultationId: string, startsAt: Date) =>
+    allocate({
+      eventType: "consultation",
+      eventId: consultationId,
+      mode: "manual",
+      slots: halfHourStarts(startsAt),
+    });
+
   const scheduledClasses = (host: SeededHost) =>
     prisma.class.count({
       where: {
@@ -451,20 +498,16 @@ describe("allocator × class creation on one host", () => {
     const startsAt = futureAt(10, 10);
     const request = await seedRequest(host, await seedConsultee());
 
-    const paused = gate();
-    allocatorGate.current = paused;
-    const allocating = allocate({
-      eventType: "consultation",
-      eventId: request.consultationId,
-      mode: "manual",
-      slots: halfHourStarts(startsAt),
-    });
-    await parked(paused, allocating);
-    const created = await create(host, startsAt);
-    paused.open();
+    const [allocation, created] = await race(
+      allocatorGate,
+      () => placeByHand(request.consultationId, startsAt),
+      () => create(host, startsAt),
+    );
 
-    expect(await allocating).toMatchObject({ success: true });
+    expect(allocation).toMatchObject({ success: true });
     expect(created.status).toBe(409);
+    // The held atom's own answer, not a standing calendar conflict.
+    expect((await created.json()).error).toMatch(/being booked right now/i);
     expect(await scheduledClasses(host)).toBe(0);
     expect(await overlappingOccupyingPairs(host.consultantProfileId)).toBe(0);
   }, 45_000);
@@ -475,19 +518,13 @@ describe("allocator × class creation on one host", () => {
     const startsAt = futureAt(10, 12);
     const request = await seedRequest(host, await seedConsultee());
 
-    const paused = gate();
-    classGate.current = paused;
-    const creating = create(host, startsAt);
-    await parked(paused, creating);
-    const allocation = await allocate({
-      eventType: "consultation",
-      eventId: request.consultationId,
-      mode: "manual",
-      slots: halfHourStarts(startsAt),
-    });
-    paused.open();
+    const [created, allocation] = await race(
+      classGate,
+      () => create(host, startsAt),
+      () => placeByHand(request.consultationId, startsAt),
+    );
 
-    expect((await creating).status).toBeLessThan(300);
+    expect(created.status).toBeLessThan(300);
     expect(allocation).toMatchObject({
       success: false,
       errorCode: "TIMES_TAKEN",
@@ -495,6 +532,45 @@ describe("allocator × class creation on one host", () => {
     });
     expect(await scheduledClasses(host)).toBe(1);
     expect(await overlappingOccupyingPairs(host.consultantProfileId)).toBe(0);
+  }, 45_000);
+});
+
+describe("an atom after the first", () => {
+  it("a writer holding 10:30 refuses one asking for 10:00 to 11:00, and names 10:30", async () => {
+    const consultantProfileId = randomUUID();
+    const startsAt = futureAt(12, 10);
+    const half = new Date(startsAt.getTime() + HOUR_MS / 2);
+    const endsAt = new Date(startsAt.getTime() + HOUR_MS);
+    const holding = gate();
+    const holder = prisma.$transaction(async (tx) => {
+      await lockHostTimeInTx(
+        tx,
+        [{ consultantProfileId, startsAt: half, endsAt }],
+        () => new Error("the holder was refused"),
+      );
+      await holding.park();
+    });
+    const finished = settled(holder);
+    try {
+      await parked(holding, holder);
+      const held = await prisma.$transaction(async (tx) => {
+        let refusedOn: HeldHostTime | null = null;
+        await lockHostTimeInTx(
+          tx,
+          [{ consultantProfileId, startsAt, endsAt }],
+          (atom) => {
+            refusedOn = atom;
+            return new Error("held");
+          },
+        ).catch(() => undefined);
+        return refusedOn as HeldHostTime | null;
+      });
+      expect(held?.consultantProfileId).toBe(consultantProfileId);
+      expect(held?.startsAt.toISOString()).toBe(half.toISOString());
+    } finally {
+      holding.open();
+      await finished;
+    }
   }, 45_000);
 });
 
@@ -512,35 +588,14 @@ describe("one learner × two experts at one time", () => {
     const planB = await seedConsultationPlan(hostB, "Arbiter learner request");
     const learner = await seedBuyer();
     const startsAt = futureAt(11, 10);
-    const rowB = await prisma.availabilityWindowCustom.findFirstOrThrow({
-      where: { consultantProfileId: hostB.consultantProfileId },
-      select: { id: true },
-    });
 
-    const paused = gate();
-    checkoutGate.current = paused;
-    const buying = checkout(planA.id, startsAt, learner);
-    await parked(paused, buying);
-    sessionUser.current = { id: learner.userId };
-    const requested = await requestForApproval(
-      new NextRequest("https://x.test/api/scheduling/request-for-approval", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": randomUUID(),
-        },
-        body: JSON.stringify({
-          consultantProfileId: hostB.consultantProfileId,
-          consultationPlanId: planB.id,
-          availabilityWindowCustomId: rowB.id,
-          startsAt: startsAt.toISOString(),
-          endsAt: new Date(startsAt.getTime() + HOUR_MS).toISOString(),
-        }),
-      }),
+    const [bought, requested] = await race(
+      checkoutGate,
+      () => checkout(planA.id, startsAt, learner),
+      () => requestSession({ id: learner.userId }, hostB, planB.id, startsAt),
     );
-    paused.open();
 
-    await expect(buying).resolves.toBeDefined();
+    expect(bought).toBeDefined();
     expect(requested.status).toBe(409);
     const body = await requested.json();
     expect(body.code).toBe("SLOT_TAKEN");
