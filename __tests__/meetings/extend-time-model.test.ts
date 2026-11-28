@@ -249,8 +249,13 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
     resetStore();
     getMockRedis().clear();
     lockHostTimeInTx.mockClear();
-    mockStore.occurrence.appointment.webinar = {
-      webinarPlan: { collaborators: [] },
+    mockStore.occurrence = {
+      ...mockStore.occurrence,
+      appointment: {
+        participants: [{ userId: "learner" }],
+        webinar: { webinarPlan: { collaborators: [] } },
+        class: null,
+      },
     };
     expect((await extend()).status).toBe(200);
     expect(lockHostTimeInTx.mock.calls[0][3]).toEqual([]);

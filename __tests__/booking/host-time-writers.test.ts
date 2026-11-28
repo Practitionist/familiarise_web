@@ -289,9 +289,10 @@ describe("a held atom is the door's own slot-taken answer", () => {
 
 describe("an event edit that publishes its live sessions", () => {
   const at = (hour: number) => new Date(Date.UTC(2027, 2, 1, hour));
-  const liveSessions = (live: { startsAt: Date; endsAt: Date }[]) => ({
-    appointmentOccurrence: { findMany: jest.fn(async () => live) },
-  });
+  const liveSessions = (live: { startsAt: Date; endsAt: Date }[]) =>
+    ({
+      appointmentOccurrence: { findMany: jest.fn(async () => live) },
+    }) as never;
   const held = [{ startsAt: at(10), endsAt: at(11) }];
 
   it("refuses a session re-timed since its batch was sized, as the transient conflict", async () => {
