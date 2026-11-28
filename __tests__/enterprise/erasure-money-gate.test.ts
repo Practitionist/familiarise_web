@@ -60,10 +60,22 @@ const counts = {
 const tx = {
   ...supportScrubModels(),
   user: { update: jest.fn(async () => ({})) },
-  consultantProfile: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  // The scrub re-reads the user's bookings on its own transaction: none, and no expert profile.
+  consultantProfile: {
+    updateMany: jest.fn(async () => ({ count: 0 })),
+    findFirst: jest.fn(async () => null),
+  },
   consulteeProfile: { updateMany: jest.fn(async () => ({ count: 1 })) },
-  trial: { updateMany: jest.fn(async () => ({ count: 1 })) },
-  consultation: { updateMany: jest.fn(async () => ({ count: 1 })) },
+  trial: {
+    updateMany: jest.fn(async () => ({ count: 1 })),
+    count: jest.fn(async () => 0),
+  },
+  consultation: {
+    updateMany: jest.fn(async () => ({ count: 1 })),
+    count: jest.fn(async () => 0),
+  },
+  subscription: { count: jest.fn(async () => 0) },
+  appointment: { count: jest.fn(async () => 0) },
   session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   consentArtifact: { updateMany: jest.fn(async () => ({ count: 0 })) },
@@ -101,6 +113,12 @@ jest.mock("../../lib/prisma", () => ({
     organizationInvoice: {
       count: jest.fn(async () => counts.organizationInvoice),
     },
+    // The user hosts and holds no live booking; that gate has its own suite.
+    consultantProfile: { findFirst: jest.fn(async () => null) },
+    consultation: { count: jest.fn(async () => 0) },
+    subscription: { count: jest.fn(async () => 0) },
+    trial: { count: jest.fn(async () => 0) },
+    appointment: { count: jest.fn(async () => 0) },
     $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) =>
       fn(tx),
     ),
@@ -163,6 +181,23 @@ describe("erasure money gate and consultee free text (#1598 P4-P0-05)", () => {
     expect(tx.consultation.updateMany).toHaveBeenCalledWith({
       where: { requestedBy: { userId: "u1" } },
       data: { requestNotes: null },
+    });
+  });
+
+  it("a plan that committed after the door's check is caught inside the scrub's transaction: 409, nothing scrubbed, request back to PENDING", async () => {
+    tx.subscription.count.mockResolvedValueOnce(1);
+
+    const res = await post();
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("ERASURE_BLOCKED_ACTIVE_BOOKINGS");
+    expect(body.counts).toMatchObject({ activeSubscriptions: 1 });
+    // The transaction threw before its later writes, so it rolls back whole.
+    expect(tx.account.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.erasureRequest.update).toHaveBeenLastCalledWith({
+      where: { id: "er_1" },
+      data: { status: "PENDING" },
     });
   });
 

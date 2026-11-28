@@ -19,11 +19,14 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      count: jest.fn().mockResolvedValue(1),
     },
     paymentLeg: { updateMany: jest.fn() },
     overageEvent: {
       findFirst: jest.fn().mockResolvedValue({ basePaise: 100_000 }),
+      findMany: jest.fn().mockResolvedValue([]),
     },
+    systemEvent: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   return {
     __esModule: true,
@@ -68,8 +71,13 @@ import { handleOverageMemberSuccess } from "../../lib/payments/webhooks/overage-
 const tx = (
   prisma as unknown as {
     __tx: {
-      payment: { findUnique: jest.Mock; updateMany: jest.Mock };
+      payment: {
+        findUnique: jest.Mock;
+        updateMany: jest.Mock;
+        count: jest.Mock;
+      };
       paymentLeg: { updateMany: jest.Mock };
+      overageEvent: { findMany: jest.Mock };
     };
   }
 ).__tx;
@@ -227,6 +235,49 @@ describe("handleOverageMemberSuccess", () => {
     expect(mockRefund).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "tomb1", amountPaise: 129_500 }),
     );
+  });
+
+  describe("a side payment already SUCCEEDED", () => {
+    const captured = { ...side, paymentStatus: "SUCCEEDED" };
+    const uncharged = expect.objectContaining({
+      category: "OVERAGE",
+      correlationId: "overage-captured-uncharged:side1",
+    });
+
+    it("is settled, and silent, only when its overage is CHARGED", async () => {
+      tx.payment.findUnique.mockResolvedValue(captured);
+      tx.overageEvent.findMany.mockResolvedValue([{ chargeStatus: "CHARGED" }]);
+
+      await handleOverageMemberSuccess("order_abc", 129_500);
+
+      expect(mockSystemError).not.toHaveBeenCalled();
+      expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("is reported, and nothing is moved, when its overage was never charged", async () => {
+      tx.payment.findUnique.mockResolvedValue(captured);
+      tx.overageEvent.findMany.mockResolvedValue([{ chargeStatus: "PENDING" }]);
+
+      await handleOverageMemberSuccess("order_abc", 129_500);
+
+      expect(mockSystemError).toHaveBeenCalledTimes(1);
+      expect(mockSystemError).toHaveBeenCalledWith(uncharged);
+      expect(tx.payment.updateMany).not.toHaveBeenCalled();
+      expect(mockTransition).not.toHaveBeenCalled();
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("stays with the refund path when the capture is already being returned", async () => {
+      tx.payment.findUnique.mockResolvedValue(captured);
+      tx.overageEvent.findMany.mockResolvedValue([
+        { chargeStatus: "REVERSED" },
+      ]);
+      tx.payment.count.mockResolvedValueOnce(0);
+
+      await handleOverageMemberSuccess("order_abc", 129_500);
+
+      expect(mockSystemError).not.toHaveBeenCalled();
+    });
   });
 
   it("non-overage payment (no parentPaymentId) is ignored", async () => {

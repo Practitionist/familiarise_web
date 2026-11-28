@@ -8,6 +8,10 @@ import {
   withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
+import {
+  gatewayPaymentTime,
+  razorpayNotesSchema,
+} from "@/schemas/webhooks/razorpay";
 import { applyRateLimit, checkoutLimiter } from "@/lib/rate-limit";
 import {
   deriveBookingPresentation,
@@ -240,9 +244,9 @@ export async function GET(req: NextRequest) {
           razorpayClient.orders.fetch(paymentIntent),
         );
         if (rzpOrder.status === "paid") {
-          // Resolve the captured payment so the parity check and the
-          // notes-based routing both see gateway truth, exactly as the
-          // webhook does.
+          // Resolve the captured payment so the parity check sees gateway
+          // truth. The app writes its notes on the order, so the order's are
+          // handed on; the payment's stand in only when the order has none.
           const orderPayments = await withRazorpaySdkTimeout(
             "orders.fetchPayments",
             () => razorpayClient.orders.fetchPayments(paymentIntent),
@@ -251,18 +255,19 @@ export async function GET(req: NextRequest) {
             (p) => p.status === "captured",
           );
 
+          const orderNotes = razorpayNotesSchema.parse(rzpOrder.notes);
           await routeCapturedPayment({
             orderId: paymentIntent,
-            notes: Object.fromEntries(
-              Object.entries(captured?.notes ?? rzpOrder.notes ?? {}).map(
-                ([k, v]) => [k, String(v)],
-              ),
-            ),
+            notes:
+              Object.keys(orderNotes).length > 0
+                ? orderNotes
+                : razorpayNotesSchema.parse(captured?.notes),
             amountPaise:
               captured?.amount !== undefined
                 ? Number(captured.amount)
                 : undefined,
             gatewayPaymentId: captured?.id,
+            gatewayCapturedAt: gatewayPaymentTime(captured?.created_at),
           });
 
           // Re-read the whole graph: bookingState below reads the request

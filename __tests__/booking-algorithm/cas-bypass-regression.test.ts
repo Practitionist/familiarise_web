@@ -131,8 +131,11 @@ describe("moderation and the two sweeps write status through the helpers", () =>
     }
   });
 
-  it("detect-consultant-no-shows tombstones the released occurrences", () => {
-    const src = read("scripts/appointments/detect-consultant-no-shows.ts");
+  it.each([
+    "scripts/appointments/detect-consultant-no-shows.ts",
+    "lib/booking/consultant-no-show.ts",
+  ])("%s moves the no-show's sessions through the CAS helper", (file) => {
+    const src = read(file);
     expect(src).not.toMatch(/appointmentOccurrence\.updateMany\(/);
     expect(src).toContain("transitionOccurrenceCompletion(");
   });

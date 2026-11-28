@@ -9,7 +9,12 @@ import {
 } from "@/lib/booking/cancellation-scope";
 import { resolveCancelActor } from "@/lib/booking/cancel-actor";
 import { cancelWindowRefusal } from "@/lib/booking/session-window";
-import { isRefusal } from "@/lib/errors/refusal";
+import { isRefusal, Refusal } from "@/lib/errors/refusal";
+import {
+  anySeatCarriesMoney,
+  pendingVoidCancelAction,
+  pendingVoidRefusal,
+} from "@/lib/booking/pending-void-gate";
 import {
   isSuspendedInFundingOrg,
   membershipSuspendedResponse,
@@ -19,7 +24,10 @@ import {
   classSeriesLedgers,
   quoteWholeEventRefunds,
 } from "@/lib/payments/operations/event-refunds";
-import { fundingRailForIntent } from "@/lib/payments/funding-rail";
+import {
+  fundingRailForIntent,
+  isPriceFreePayment,
+} from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import prisma from "@/lib/prisma";
@@ -108,6 +116,7 @@ async function quoteWholeEventRefund(
 async function quoteIndividualBooking(
   appointment: PreviewAppointment,
   isConsultantInitiated: boolean,
+  readerUserId: string,
 ) {
   const bookingRef = {
     appointmentId: appointment.id,
@@ -123,6 +132,27 @@ async function quoteIndividualBooking(
     isConsultantInitiated ? "host" : "buyer",
   );
   if (windowRefusal) throw windowRefusal;
+  // The cancel itself refuses while a consultation's or a plan's void waits for its verdict, with the same sentence.
+  if (
+    (appointment.consultationId || appointment.subscriptionId) &&
+    ctx.paidPayment &&
+    !isPriceFreePayment(ctx.paidPayment)
+  ) {
+    const pending = await pendingVoidRefusal(prisma, {
+      appointmentId: appointment.id,
+      readerUserId,
+      action: pendingVoidCancelAction({
+        class: null,
+        subscription: appointment.subscriptionId,
+      }),
+    });
+    if (pending) {
+      throw new Refusal({
+        code: "CANCEL_WAITS_FOR_VERDICT",
+        userMessage: pending,
+      });
+    }
+  }
 
   // The context deliberately ignores zero-amount payments, so a booking paid
   // entirely in referral credits reads as unpaid there. Its `free_` intent is
@@ -151,6 +181,7 @@ async function quoteIndividualBooking(
     scheduledStarts: ctx.scheduledStarts,
     nowMs: ctx.quotedAtMs,
     alreadyRefundedPaise: ctx.alreadyRefundedPaise,
+    unsettledVoid: ctx.unsettledVoidIds.length > 0,
     isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated,
     // #1500 — a booking funded entirely by referral credit. The rail alone is not
@@ -328,6 +359,23 @@ export async function GET(
         actor.isConsultantInitiated ? "host" : "buyer",
       );
       if (windowRefusal) throw windowRefusal;
+      // The cancel itself refuses while a class void's verdict is pending, with the same sentence.
+      if (
+        groupEvent.kind === "class" &&
+        (await anySeatCarriesMoney(prisma, appointment.id))
+      ) {
+        const pending = await pendingVoidRefusal(prisma, {
+          appointmentId: appointment.id,
+          readerUserId: session.user.id,
+          action: "cancel",
+        });
+        if (pending) {
+          throw new Refusal({
+            code: "CANCEL_WAITS_FOR_VERDICT",
+            userMessage: pending,
+          });
+        }
+      }
       return NextResponse.json(
         await wholeEventPreview(groupEvent.kind, groupEvent.id),
         NO_STORE,
@@ -335,7 +383,11 @@ export async function GET(
     }
 
     return NextResponse.json(
-      await quoteIndividualBooking(appointment, actor.isConsultantInitiated),
+      await quoteIndividualBooking(
+        appointment,
+        actor.isConsultantInitiated,
+        session.user.id,
+      ),
       NO_STORE,
     );
   } catch (error) {

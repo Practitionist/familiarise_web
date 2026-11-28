@@ -129,7 +129,7 @@ describe("seriesLedgerFrom", () => {
     expect(reliabilityThresholdMet(ledger)).toBe(false);
   });
 
-  it("a host-absent and a cut-short void count in the 30-day window by their void time", () => {
+  it("a confirmed host-absent and cut-short void count in the 30-day window by their void time", () => {
     const ledger = seriesLedgerFrom({
       N: 100,
       now: day(40),
@@ -139,11 +139,13 @@ describe("seriesLedgerFrom", () => {
           completionStatus: "VOIDED",
           voidedAt: day(10),
           outcome: "HOST_ABSENT",
+          outcomeConfirmedAt: day(12),
         }),
         row(3, {
           completionStatus: "VOIDED",
           voidedAt: day(20),
           outcome: "CUT_SHORT",
+          outcomeConfirmedAt: day(22),
         }),
       ],
     });
@@ -154,6 +156,33 @@ describe("seriesLedgerFrom", () => {
       exitRight: true,
     });
     expect(reliabilityThresholdMet(ledger)).toBe(true);
+  });
+
+  it("an unconfirmed host-attributed void is no miss yet; an unconfirmed outage void is", () => {
+    const ledger = seriesLedgerFrom({
+      N: 12,
+      now: day(20),
+      occurrences: [
+        row(1, { hostCancelledAt: day(1) }),
+        row(2, {
+          completionStatus: "VOIDED",
+          voidedAt: day(2),
+          outcome: "HOST_ABSENT",
+          outcomeConfirmedAt: null,
+        }),
+        row(3, {
+          completionStatus: "VOIDED",
+          voidedAt: day(3),
+          outcome: "PLATFORM_OUTAGE",
+          outcomeConfirmedAt: null,
+        }),
+      ],
+    });
+    expect(ledger).toMatchObject({
+      misses: 2,
+      hostMisses: 1,
+      exitRight: false,
+    });
   });
 
   it("100 sessions: 3 host misses a month apart give no exit right yet", () => {

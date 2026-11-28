@@ -43,14 +43,14 @@ The tables below were generated from `netlify/functions/cron-tick.mts`, `lib/cro
 
 #### Every 30 minutes
 
-| Job (slug)                    | Schedule (UTC)      | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                           |
-| ----------------------------- | ------------------- | -------------- | ------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `reconcile-orphaned-payments` | every 30 min at :10 | 10             | 20 s    | yes              | Heals the stranded cohort: links a late appointment or refunds the payment.                            |
-| `auto-complete-appointments`  | every 30 min at :15 | 25             | 24 s    | yes              | Marks finished sessions `COMPLETED`, which is what lets their earnings hold run out.                   |
-| `detect-consultant-no-shows`  | every 30 min at :20 | 10             | 24 s    | yes              | Cancels a confirmed consultant no-show and refunds 100 % through `refundBookingPayment`.               |
-| `settle-cancelled-sessions`   | every 30 min at :25 | 10             | 20 s    | yes              | Refunds each seat of a host-cancelled class session nobody made up in 14 days.                         |
-| `vest-referral-credits`       | every 30 min at :05 | 10             | 20 s    | yes              | Vests or voids `QUALIFYING` referrals once the session is delivered and its refund window has passed.  |
-| `support-sla-sweep`           | every 30 min at :10 | 20             | 15 s    | no               | Support SLA outbox alerts, 28-day `RESOLVED` auto-close and the 72 h and 24 h dispute-deadline alerts. |
+| Job (slug)                    | Schedule (UTC)      | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                            |
+| ----------------------------- | ------------------- | -------------- | ------- | ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `reconcile-orphaned-payments` | every 30 min at :10 | 10             | 20 s    | yes              | Heals the stranded cohort: links a late appointment or refunds the payment.                             |
+| `auto-complete-appointments`  | every 30 min at :15 | 25             | 24 s    | yes              | Marks finished sessions `COMPLETED`, which is what lets their earnings hold run out.                    |
+| `detect-consultant-no-shows`  | every 30 min at :20 | 10             | 24 s    | yes              | Proposes a consultant no-show; the window-close pass or ops Confirm refunds 100 % once it is confirmed. |
+| `settle-cancelled-sessions`   | every 30 min at :25 | 10             | 20 s    | yes              | Refunds each seat of a host-cancelled class session nobody made up in 14 days.                          |
+| `vest-referral-credits`       | every 30 min at :05 | 10             | 20 s    | yes              | Vests or voids `QUALIFYING` referrals once the session is delivered and its refund window has passed.   |
+| `support-sla-sweep`           | every 30 min at :10 | 20             | 15 s    | no               | Support SLA outbox alerts, 28-day `RESOLVED` auto-close and the 72 h and 24 h dispute-deadline alerts.  |
 
 #### Hourly
 
@@ -99,7 +99,7 @@ capacity. See [worker recovery](../../maintenance/12-worker-recovery.md#invoice-
 | `gst-outward-register-export`     | day 2 of every month: 19 slots 04:45–22:45 UTC (every hour)       | 25             | 24 s    | yes              | Heals missing consumer invoices, then uploads the monthly GSTR-1 working register; an unset GSTIN is a config skip.                                                                                                                                        |
 | `heal-consumer-invoices`          | daily: 4 slots 01:50–19:50 UTC (every 6 hours)                    | 25             | 20 s    | yes              | Mints the consumer tax invoice for `SUCCEEDED` payments of the last 90 days that the capture path missed; an unset GSTIN is a config skip.                                                                                                                 |
 | `tds-return-draft`                | day 5 of Jan, Apr, Jul, Oct: 2 slots 01:55–02:55 UTC (every hour) | none           | 20 s    | no               | Quarterly TDS return draft (Form 26Q or 140) for the closed quarter.                                                                                                                                                                                       |
-| `reconcile-gateway-settlements`   | daily: 6 slots 06:55–11:55 UTC (every hour)                       | none           | 20 s    | yes              | Matches Razorpay's settlement report to our money rows, books missing capture fees and settlement journals.                                                                                                                                                |
+| `reconcile-gateway-settlements`   | daily: 6 slots 06:55–11:55 UTC (every hour)                       | none           | 20 s    | yes              | Walks Razorpay's settlement report day by day from its checkpoint, matches lines to our money rows, books missing capture fees, and posts a settlement journal only when its lines add up.                                                                 |
 | `reconcile-ledgers`               | hourly at `:55`, yielding at ticker capacity                      | none           | 20 s    | no               | Advances a bounded persisted full-scope audit; reuses completed daily audit. 200 RUNNING means continuation, 207 means completed discrepancies.                                                                                                            |
 
 ### How this table was produced

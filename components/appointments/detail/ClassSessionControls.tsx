@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { NEGATIVE_MONEY_OUTCOMES } from "@/lib/booking/misses";
 
 import {
   SessionConfirmDialog,
@@ -40,6 +41,8 @@ export interface ClassSessionRow {
   hostCancelledAt?: NullableDate;
   /** #1569 — a held session that lost too much time; owed a make-up like a cancel. */
   voidedAt?: NullableDate;
+  outcome?: string | null;
+  outcomeConfirmedAt?: NullableDate;
   seatsSettledAt?: NullableDate;
   deletedAt?: NullableDate;
 }
@@ -60,6 +63,17 @@ async function post(url: string, body?: unknown) {
 }
 
 const missedAt = (s: ClassSessionRow) => s.hostCancelledAt ?? s.voidedAt;
+
+const NEEDS_CONFIRMATION: readonly string[] = NEGATIVE_MONEY_OUTCOMES;
+
+/** The client twin of `makeUpWindowStart` (lib/booking/misses.ts): null while a void's verdict waits for its confirmation. */
+const makeUpWindowStart = (s: ClassSessionRow): NullableDate => {
+  if (s.hostCancelledAt) return s.hostCancelledAt;
+  if (!s.voidedAt) return null;
+  return s.outcome && NEEDS_CONFIRMATION.includes(s.outcome)
+    ? (s.outcomeConfirmedAt ?? null)
+    : s.voidedAt;
+};
 
 /** A make-up keeps its source's length; 60 minutes when the read lacks an end. */
 function sessionMinutesOf(s: ClassSessionRow): number {
@@ -247,9 +261,12 @@ export function useClassSessionActions({
   };
 
   const source = makeUpFor ? owed.get(makeUpFor) : undefined;
+  const windowStart = source ? makeUpWindowStart(source) : null;
+  // Before a void's confirmation the window has not started: 14 days from now, as the server counts it.
   const by = source
     ? new Date(
-        toDate(missedAt(source)!).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
+        (windowStart ? toDate(windowStart).getTime() : now) +
+          MAKEUP_WINDOW_DAYS * DAY_MS,
       )
     : null;
   const picked = source ? (makeUpAt[source.id] ?? null) : null;

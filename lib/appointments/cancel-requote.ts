@@ -133,6 +133,7 @@ const CancelRefusalSchema = z.object({
     "SESSION_ALREADY_DELIVERED",
     "REFUND_IN_PROGRESS",
     "REFUND_NEEDS_SUPPORT",
+    "CANCEL_WAITS_FOR_VERDICT",
   ]),
   error: z.string(),
 });

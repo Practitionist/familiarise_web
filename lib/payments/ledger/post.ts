@@ -3,6 +3,7 @@ import {
   reportSentryMessage,
 } from "@/lib/observability/report";
 import type { PrismaLike } from "@/lib/prisma";
+import { isWriteConflict } from "@/lib/db/pg-errors";
 /**
  * #771 D1/D5 — double-entry posting helper (Batch 2 foundation).
  *
@@ -106,9 +107,46 @@ async function ensureAccounts(
   return refs.map(ledgerAccountId);
 }
 
+/** Keys whose replay already reported a mismatch in this process; bounded. */
+const reportedReplayMismatches = new Set<string>();
+const MAX_REPORTED_REPLAY_MISMATCHES = 500;
+
+/**
+ * A posted journal is immutable, so a replay that asks for a different debit
+ * total or account set changes nothing; it is reported once per key per process.
+ */
+function reportReplayMismatch(
+  input: PostLedgerTxnInput,
+  requested: { debitPaise: number; accountIds: readonly string[] },
+  stored: { debitPaise: number; accountIds: readonly string[] },
+): void {
+  if (reportedReplayMismatches.has(input.idempotencyKey)) return;
+  if (reportedReplayMismatches.size >= MAX_REPORTED_REPLAY_MISMATCHES) {
+    reportedReplayMismatches.clear();
+  }
+  reportedReplayMismatches.add(input.idempotencyKey);
+  reportSentryMessage(
+    `Ledger replay on "${input.idempotencyKey}" differs from the posted journal; nothing was changed`,
+    {
+      subsystem: "payments",
+      op: "ledger.replay-mismatch",
+      level: "error",
+      extra: {
+        idempotencyKey: input.idempotencyKey,
+        kind: input.kind,
+        storedDebitPaise: stored.debitPaise,
+        requestedDebitPaise: requested.debitPaise,
+        storedAccountIds: stored.accountIds,
+        requestedAccountIds: requested.accountIds,
+      },
+    },
+  );
+}
+
 /**
  * Post a balanced double-entry transaction. Throws `LedgerImbalanceError` if
- * Σ(DEBIT) !== Σ(CREDIT). Idempotent on `idempotencyKey`.
+ * Σ(DEBIT) !== Σ(CREDIT). Idempotent on `idempotencyKey`: a replay returns
+ * `created: false` and never throws, whatever it asked to post.
  */
 export async function postLedgerTxn(
   db: PrismaLike,
@@ -145,16 +183,40 @@ export async function postLedgerTxn(
   // the retried tx then hits this fast-path).
   const existing = await db.ledgerTransaction.findUnique({
     where: { idempotencyKey: input.idempotencyKey },
-    select: { id: true },
+    select: {
+      id: true,
+      entries: {
+        select: { accountId: true, direction: true, amountPaise: true },
+      },
+    },
   });
   if (existing) {
-    // Idempotency short-circuit — a retried/replayed caller hit an
-    // already-posted key. The system working as designed.
-    reportSentryMessage("Ledger posting idempotency short-circuit", {
-      subsystem: "payments",
-      expected: true,
-      extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
-    });
+    const storedAccountIds = distinctSorted(
+      existing.entries.map((e) => e.accountId),
+    );
+    const requestedAccountIds = distinctSorted(
+      input.postings.map((p) => ledgerAccountId(p.account)),
+    );
+    const storedDebitPaise = existing.entries
+      .filter((e) => e.direction === "DEBIT")
+      .reduce((sum, e) => sum + sumPaise(e.amountPaise), 0);
+    if (
+      storedDebitPaise !== debit ||
+      storedAccountIds.join("\n") !== requestedAccountIds.join("\n")
+    ) {
+      reportReplayMismatch(
+        input,
+        { debitPaise: debit, accountIds: requestedAccountIds },
+        { debitPaise: storedDebitPaise, accountIds: storedAccountIds },
+      );
+    } else {
+      // A replayed caller hit an already-posted key: the system working as designed.
+      reportSentryMessage("Ledger posting idempotency short-circuit", {
+        subsystem: "payments",
+        expected: true,
+        extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
+      });
+    }
     return { transactionId: existing.id, created: false };
   }
 
@@ -241,18 +303,22 @@ export async function postLedgerTxn(
         });
       }
     }
-    // Genuine, unrecovered ledger-write failure — every caller must see this;
-    // captured here so callers that don't wrap postLedgerTxn in their own
-    // try/catch (some do, redundantly capturing the same error again) still
-    // get visibility.
+    // An unrecovered ledger-write failure is reported here so every caller is
+    // covered. A write conflict is retried by the caller, so it is not a fault.
     reportSentryError(err, {
       subsystem: "payments",
+      expected: isWriteConflict(err),
       extra: { idempotencyKey: input.idempotencyKey, kind: input.kind },
     });
     throw err;
   }
 
   return { transactionId: txn.id, created: true };
+}
+
+/** Distinct values in code-unit order, so two sets compare by position. */
+function distinctSorted(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((a, b) => Number(a > b) - Number(a < b));
 }
 
 /**

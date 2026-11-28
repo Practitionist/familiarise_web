@@ -33,6 +33,12 @@ jest.mock("../../../lib/booking/session-outcome-sweep", () => ({
 
 import { autoCompleteAppointments } from "../../../scripts/appointments/auto-complete-appointments";
 import {
+  confirmSessionOutcome,
+  setSessionOutcome,
+} from "../../../lib/backoffice/session-outcomes";
+import { createOrReuseSupportCase } from "../../../lib/support/case-service";
+import { intakeFor } from "../seed";
+import {
   planEndRefundKey,
   settleCancelledSessions,
 } from "../../../scripts/appointments/settle-cancelled-sessions";
@@ -260,6 +266,104 @@ describe("subscription completion vs voids", () => {
 
     await settleCancelledSessions();
 
+    expect(await unsettledVoids(plan.appointmentId)).toBe(0);
+    expect(refundsFor(plan.paymentId)).toEqual([]);
+  });
+});
+
+/** The void cut short and still unconfirmed, the expert's "I was there" filed inside its window. */
+async function disputedCutShort(plan: {
+  appointmentId: string;
+  occurrenceIds: string[];
+}) {
+  const voidId = plan.occurrenceIds[2];
+  const verdictAt = new Date(Date.now() - 2 * HOUR_MS);
+  const voided = await prisma.appointmentOccurrence.update({
+    where: { id: voidId },
+    data: {
+      outcome: "CUT_SHORT",
+      outcomeAt: verdictAt,
+      outcomeConfirmedAt: null,
+    },
+    select: {
+      appointment: {
+        select: {
+          subscription: {
+            select: {
+              subscriptionPlan: {
+                select: { consultantProfile: { select: { userId: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const hostUserId =
+    voided.appointment.subscription!.subscriptionPlan.consultantProfile.userId;
+  const { supportCase } = await createOrReuseSupportCase(
+    intakeFor(hostUserId, {
+      category: "NO_SHOW",
+      appointmentId: plan.appointmentId,
+      appointmentOccurrenceId: voidId,
+    }),
+  );
+  await prisma.supportCase.update({
+    where: { id: supportCase.id },
+    data: { flowReason: "provider_attended", flowReasonAt: new Date() },
+  });
+  return voidId;
+}
+
+describe("plan-end settlement and an unconfirmed void", () => {
+  it("a disputed, unconfirmed cut-short void keeps an ended plan open and unrefunded until ops confirm it", async () => {
+    const plan = await seedPlan({
+      status: "APPROVED",
+      sessions: ["COMPLETED", "COMPLETED", "VOIDED", "COMPLETED"],
+      planEndsAt: new Date(Date.now() - HOUR_MS),
+    });
+    const voidId = await disputedCutShort(plan);
+
+    await settleCancelledSessions();
+    expect(await statusOf(plan.subscriptionId)).toBe("APPROVED");
+    expect(await unsettledVoids(plan.appointmentId)).toBe(1);
+    expect(refundsFor(plan.paymentId)).toEqual([]);
+
+    await prisma.$transaction((tx) =>
+      confirmSessionOutcome(tx, { occurrenceId: voidId, outcome: "CUT_SHORT" }),
+    );
+    await settleCancelledSessions();
+    expect(await statusOf(plan.subscriptionId)).toBe("COMPLETED");
+    expect(await unsettledVoids(plan.appointmentId)).toBe(0);
+    expect(refundsFor(plan.paymentId)).toEqual([
+      {
+        key: planEndRefundKey(plan.subscriptionId, plan.paymentId),
+        amount: PRICE / 4,
+      },
+    ]);
+  });
+
+  it("a completed plan's unconfirmed void is neither refunded nor stamped; overturned to held, nothing is owed", async () => {
+    const plan = await seedPlan({
+      status: "COMPLETED",
+      sessions: ["COMPLETED", "COMPLETED", "VOIDED", "COMPLETED"],
+      planEndsAt: new Date(Date.now() - HOUR_MS),
+    });
+    const voidId = await disputedCutShort(plan);
+
+    await settleCancelledSessions();
+    expect(await unsettledVoids(plan.appointmentId)).toBe(1);
+    expect(refundsFor(plan.paymentId)).toEqual([]);
+
+    const ops = await seedConsultee();
+    await prisma.$transaction((tx) =>
+      setSessionOutcome(tx, {
+        occurrenceId: voidId,
+        outcome: "HELD",
+        actorUserId: ops.userId,
+      }),
+    );
+    await settleCancelledSessions();
     expect(await unsettledVoids(plan.appointmentId)).toBe(0);
     expect(refundsFor(plan.paymentId)).toEqual([]);
   });

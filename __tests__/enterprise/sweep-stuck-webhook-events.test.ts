@@ -131,7 +131,8 @@ describe("sweepStuckWebhookEvents", () => {
       { processed: false, error: null },
       expect.objectContaining({ error: { not: null } }),
     ]);
-    expect(where.OR[1].receivedAt).toHaveProperty("gte");
+    // No age bound on the errored arm: past the cap the sweep stamps the row.
+    expect(where.OR[1].receivedAt).toBeUndefined();
 
     const [env, evType, evId] = mockProcess.mock.calls[0];
     expect(env).toMatchObject({
@@ -188,6 +189,31 @@ describe("sweepStuckWebhookEvents", () => {
         }),
       }),
     );
+  });
+
+  it("an errored event past the give-up cap is stamped gave up by compare-and-set, with its last error, and is not re-driven", async () => {
+    const lastError = "Payment record not found for intent: order_x";
+    const ev = stuckRow({ error: lastError });
+    mockWe.findMany.mockResolvedValue([ev]);
+
+    const result = await sweepStuckWebhookEvents({ staleMinutes: 6 });
+
+    expect(mockProcess).not.toHaveBeenCalled();
+    expect(mockWe.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockWe.updateMany).toHaveBeenCalledWith({
+      where: {
+        eventId: ev.eventId,
+        processed: false,
+        claimedAt: ev.claimedAt,
+        error: lastError,
+      },
+      data: {
+        claimedAt: expect.any(Date),
+        error:
+          "gave up: still failing after 168h: Payment record not found for intent: order_x",
+      },
+    });
+    expect(result.gaveUp).toBe(1);
   });
 
   it("empty scan -> no-op", async () => {

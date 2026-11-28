@@ -8,11 +8,11 @@ import prisma, { type PrismaLike } from "@/lib/prisma";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import { reclaimStaleProcessingWebhookEvent } from "@/lib/stream/webhook-receipt";
-import { razorpayWebhookEnvelopeSchema } from "@/schemas/webhooks/razorpay";
+import { UNREADABLE_RAZORPAY_EVENT } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
+  gaveUpFailure,
   isTerminalWebhookError,
-  permanentFailure,
   TERMINAL_ERROR_PREFIXES,
   type WebhookClaim,
 } from "@/lib/webhooks/event-log";
@@ -39,6 +39,7 @@ interface StuckWebhookRow {
   claimedAt: Date | null;
   processed: boolean;
   deferCount: number;
+  error?: string | null;
 }
 
 interface SweepCounters {
@@ -160,7 +161,7 @@ async function emitBatchWarningsIfNeeded(
 async function dispatchClaimedStuckEvent(
   ev: StuckWebhookRow,
   claim: WebhookClaim,
-): Promise<string | null> {
+): Promise<void> {
   if (ev.provider === "stream") {
     const parsedStream = streamEventPayloadSchema.safeParse(ev.payload);
     const callCid = parsedStream.success
@@ -175,36 +176,37 @@ async function dispatchClaimedStuckEvent(
         claim,
       ),
     );
-    return null;
+    return;
   }
 
+  // Dispatch parses the stored event itself; a row stored whole (it named no
+  // event) is handed back as it was received.
   const payloadKeys =
     typeof ev.payload === "object" &&
     ev.payload !== null &&
     !Array.isArray(ev.payload)
       ? Object.keys(ev.payload)
       : [];
-  const parsedEnvelope = razorpayWebhookEnvelopeSchema.safeParse({
-    entity: "event",
-    account_id: "swept",
-    event: ev.eventType,
-    contains: payloadKeys,
-    created_at: Math.floor(ev.receivedAt.getTime() / 1000),
-    payload: ev.payload,
-  });
-  if (!parsedEnvelope.success) {
-    return "invalid Razorpay webhook payload";
-  }
-
+  const storedEvent =
+    ev.eventType === UNREADABLE_RAZORPAY_EVENT
+      ? ev.payload
+      : {
+          entity: "event",
+          account_id: "swept",
+          event: ev.eventType,
+          contains: payloadKeys,
+          created_at: Math.floor(ev.receivedAt.getTime() / 1000),
+          payload: ev.payload,
+        };
   await withEventTimeout(ev.eventId, () =>
     processRazorpayWebhookEvent(
-      parsedEnvelope.data,
+      storedEvent,
       ev.eventType,
       ev.eventId,
       claim,
+      ev.receivedAt,
     ),
   );
-  return null;
 }
 
 async function markWebhookEventFailed(
@@ -309,12 +311,50 @@ async function settleDispatchedEventOutcome(
   console.log(`✅ Re-drove stuck webhook ${ev.eventId}`);
 }
 
+/**
+ * An event still failing at the retry cap is stamped terminal, keeping its
+ * last error, instead of dropping out of the queue unmarked. A compare-and-set
+ * on the claim and the error read; it is not re-driven again.
+ */
+async function giveUpErroredEvent(
+  ev: StuckWebhookRow & { error: string },
+  giveUpAfterHours: number,
+  counts: SweepCounters,
+): Promise<boolean> {
+  const error = gaveUpFailure(
+    `still failing after ${giveUpAfterHours}h: ${ev.error}`,
+  );
+  const stamped = await prisma.webhookEvent.updateMany({
+    where: {
+      eventId: ev.eventId,
+      processed: false,
+      claimedAt: ev.claimedAt,
+      error: ev.error,
+    },
+    data: { claimedAt: new Date(), error },
+  });
+  if (stamped.count === 0) return false;
+  counts.gaveUp++;
+  counts.errors.push(`${ev.eventId}: ${error}`);
+  console.warn(
+    `🛑 Gave up on failing webhook ${ev.eventId} (received ${ev.receivedAt.toISOString()}, past the ${giveUpAfterHours}h cap)`,
+  );
+  return true;
+}
+
 async function processOneStuckEvent(
   ev: StuckWebhookRow,
   giveUpOlderThan: Date,
   giveUpAfterHours: number,
   counts: SweepCounters,
 ): Promise<boolean> {
+  if (ev.error && ev.receivedAt < giveUpOlderThan) {
+    return giveUpErroredEvent(
+      { ...ev, error: ev.error },
+      giveUpAfterHours,
+      counts,
+    );
+  }
   const { reclaimed, claim } = await reclaimStaleProcessingWebhookEvent(
     ev.eventId,
     ev.claimedAt,
@@ -327,28 +367,7 @@ async function processOneStuckEvent(
   }
 
   try {
-    const invalidReason = await dispatchClaimedStuckEvent(ev, claim);
-    if (invalidReason !== null) {
-      const rotatedClaimedAt = new Date();
-      await prisma.webhookEvent.updateMany({
-        where: {
-          eventId: ev.eventId,
-          processed: false,
-          claimedAt: claim.claimedAt,
-        },
-        data: {
-          processed: false,
-          processedAt: null,
-          claimedAt: rotatedClaimedAt,
-          error: permanentFailure(invalidReason),
-        },
-      });
-      counts.stillFailing++;
-      counts.stillFailingIds.push(ev.eventId);
-      counts.errors.push(`${ev.eventId}: ${invalidReason}`);
-      return true;
-    }
-
+    await dispatchClaimedStuckEvent(ev, claim);
     await settleDispatchedEventOutcome(
       ev,
       claim,
@@ -370,7 +389,6 @@ async function processOneStuckEvent(
 /** Shared by the sweep's batch query and the ticker's idle probe. */
 function stuckWebhookEventWhere(
   staleBefore: Date,
-  giveUpOlderThan: Date,
 ): Prisma.WebhookEventWhereInput {
   return {
     provider: { in: ["razorpay", "stream"] },
@@ -382,9 +400,10 @@ function stuckWebhookEventWhere(
     ],
     OR: [
       { processed: false, error: null },
+      // An errored row stays selected at any age until it is terminal: past
+      // the cap the sweep stamps it, it never just stops matching.
       {
         error: { not: null },
-        receivedAt: { gte: giveUpOlderThan },
         AND: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
           NOT: { error: { startsWith: prefix } },
         })),
@@ -406,7 +425,6 @@ export async function hasStuckWebhookEventWork(
   const row = await db.webhookEvent.findFirst({
     where: stuckWebhookEventWhere(
       new Date(now.getTime() - DEFAULT_STALE_MINUTES * 60_000),
-      new Date(now.getTime() - DEFAULT_GIVE_UP_AFTER_HOURS * 3_600_000),
     ),
     select: { id: true },
   });
@@ -439,7 +457,7 @@ async function sweepStuckWebhookEventsUnlocked(
 
   while (Date.now() - startMs < 15_000) {
     const stuck = await prisma.webhookEvent.findMany({
-      where: stuckWebhookEventWhere(staleBefore, giveUpOlderThan),
+      where: stuckWebhookEventWhere(staleBefore),
       orderBy: [
         { claimedAt: { sort: "asc", nulls: "first" } },
         { receivedAt: "asc" },

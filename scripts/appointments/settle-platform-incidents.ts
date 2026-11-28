@@ -24,8 +24,12 @@ import {
   enumerateIncident,
   extendPlanForIncident,
   freeTrialPair,
+  hasUnreportedClaims,
+  incidentsWithUnreportedClaims,
+  reportClaimedNoShows,
   type IncidentRow,
 } from "@/lib/booking/platform-incidents";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { refundIncidentSeat } from "@/lib/payments/operations/incident-refunds";
 import {
   sendIncidentDigests,
@@ -123,7 +127,37 @@ export async function hasPlatformIncidentWork(
     where: dueRemedyWhere(now),
     select: { id: true },
   });
-  return remedy !== null;
+  if (remedy) return true;
+  return hasUnreportedClaims(db, now, outOfTime);
+}
+
+/**
+ * Every incident ended inside the review period, settled or not: a no-show
+ * claim that committed inside one is never voided by its walk, so ops review it.
+ */
+async function reportRecentClaims(
+  now: Date,
+  pastDeadline: () => boolean,
+  incidentId: string | null,
+): Promise<void> {
+  // Only incidents still holding an unreported claim, so older ones are reached run by run.
+  const incidents = await incidentsWithUnreportedClaims(
+    prisma,
+    now,
+    INCIDENTS_PER_RUN,
+    incidentId,
+  );
+  for (const incident of incidents) {
+    if (pastDeadline()) return;
+    const claimed = await reportClaimedNoShows(incident);
+    if (claimed.length > 0) {
+      await reportStandingFinding({
+        key: `settle-platform-incidents:no-show-claimed:${incident.id}`,
+        ids: claimed,
+        message: `${claimed.length} consultant no-show(s) were claimed inside incident ${incident.id}; check their refunds and strikes`,
+      });
+    }
+  }
 }
 
 const emptyResult = (now: Date): SettlePlatformIncidentsResult => ({
@@ -189,6 +223,7 @@ async function settleUnlocked(
       );
     }
     await applyDueRemedies(limit, pastDeadline, now, incidentId, result);
+    await reportRecentClaims(now, pastDeadline, incidentId);
     for (const incident of incidents) {
       if (!incident.enumeratedAt || pastDeadline()) continue;
       await noticeAndSettle(incident, limit, pastDeadline, result);

@@ -51,6 +51,7 @@ function thread(over: Partial<ThreadState>): ThreadState {
     turnPending: false,
     submitTurn: jest.fn(),
     failedTurns: {},
+    sessionReports: [],
     retryTurn: jest.fn(),
     lastActions: [],
     waitingLine: "",
