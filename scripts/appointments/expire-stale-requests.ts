@@ -775,8 +775,8 @@ async function expirePendingConsultations(
             reason: UNANSWERED_REQUEST_REASON,
           });
         }
-        // Driven in this run once the consultee was told; a notice that failed
-        // leaves the committed marker to the refund retry sweep.
+        // Driven in this run whether or not the notice was delivered: the notifier
+        // never throws. The committed marker is the refund retry sweep's either way.
         markers.push(...stagedForOne.markers);
       } catch (error) {
         if (
@@ -1311,8 +1311,8 @@ async function expireApprovedUnallocatedSubscriptions(
           UNSCHEDULED_SUBSCRIPTION_REASON,
         );
         if (notice) await notifyConsulteeRequestExpired(notice);
-        // Driven in this run once the consultee was told; a notice that failed
-        // leaves the committed marker to the refund retry sweep.
+        // Driven in this run whether or not the notice was delivered: the notifier
+        // never throws. The committed marker is the refund retry sweep's either way.
         markers.push(...stagedForOne);
       } catch (error) {
         if (
