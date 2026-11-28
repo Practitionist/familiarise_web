@@ -23,6 +23,7 @@ const released: OccurrenceVM = {
   completionStatus: "RESCHEDULED",
   meetingEndedAt: null,
   meetingEndedReason: null,
+  parked: false,
 };
 
 describe("bookings with no live session", () => {

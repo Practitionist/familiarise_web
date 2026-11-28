@@ -16,6 +16,10 @@ import { REFUND_DOOR_SELECT, refundDoorRefusal } from "./refund-eligibility";
 import { CONDUCT_REMOVAL_CATEGORY } from "@/lib/support/case-topic";
 import { conductRemovalStands } from "@/lib/support/conduct-removal-state";
 import type { BookingOpsView } from "./booking-ops-types";
+import {
+  PARKED_SESSIONS_COUNT,
+  parkedSessionIds,
+} from "@/lib/booking/awaiting-decision";
 
 export type { BookingOpsView };
 
@@ -31,6 +35,7 @@ export async function readBookingOps(
       appointmentType: true,
       classId: true,
       subscriptionId: true,
+      _count: { select: PARKED_SESSIONS_COUNT },
       webinar: { select: { webinarPlan: { select: { price: true } } } },
       class: { select: { classPlan: { select: { price: true } } } },
       occurrences: {
@@ -90,6 +95,11 @@ export async function readBookingOps(
     appt.id,
     seats.map((seat) => seat.user.id),
   );
+  // A second read only when a session is parked, so each one can say so.
+  const parkedIds =
+    appt._count.occurrences > 0
+      ? await parkedSessionIds(prisma, [appt.id])
+      : new Set<string>();
   return {
     appointmentId: appt.id,
     type: appt.appointmentType,
@@ -102,6 +112,7 @@ export async function readBookingOps(
       endsAt: o.endsAt.toISOString(),
       completionStatus: o.completionStatus,
       outcome: o.outcome,
+      parked: parkedIds.has(o.id),
     })),
     payments: appt.payment.map((p) => ({
       id: p.id,

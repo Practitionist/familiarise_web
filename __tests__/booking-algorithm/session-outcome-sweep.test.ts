@@ -49,6 +49,32 @@ jest.mock("../../lib/booking/outcome-notices", () => ({
   prepareProposedOutcomeNotices: (...a: unknown[]) => prepareProposed(...a),
   stageOutcomeNotices: (...a: unknown[]) => stageNotices(...a),
 }));
+/** The appointment lock as the pass takes it: what was asked, and what the lock answers. */
+const lockAsks: { appointmentId: string; config: unknown }[] = [];
+const mockLock: { refuse: Error | null; events: string[] } = {
+  refuse: null,
+  events: [],
+};
+jest.mock("../../utils/appointmentlock", () => {
+  const actual = jest.requireActual("../../utils/appointmentlock");
+  return {
+    ...actual,
+    withAppointmentLock: async (
+      appointmentId: string,
+      fn: () => Promise<unknown>,
+      config: unknown,
+    ) => {
+      lockAsks.push({ appointmentId, config });
+      if (mockLock.refuse) throw mockLock.refuse;
+      mockLock.events.push("locked");
+      try {
+        return await fn();
+      } finally {
+        mockLock.events.push("released");
+      }
+    },
+  };
+});
 const recording = { current: null as { id: string } | null };
 const seatUpdate = jest.fn().mockResolvedValue({ count: 1 });
 jest.mock("../../lib/prisma", () => {
@@ -135,7 +161,83 @@ const slot = (hostLeaves: number): OutcomeSlot => {
   } as unknown as OutcomeSlot;
 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  lockAsks.length = 0;
+  mockLock.refuse = null;
+  mockLock.events = [];
+});
+
+describe("a void and the booking's doors take turns", () => {
+  it("writes a void under the booking's appointment lock, each lock call bounded by the run's time left; a held session takes no lock", async () => {
+    transition.mockImplementationOnce(async () => {
+      mockLock.events.push("write");
+      return 1;
+    });
+    const deadlineAt = Date.now() + 10_000;
+
+    const d = await decideSlotOutcome(slot(30), {
+      now: at(120),
+      outages: [],
+      settleDeadlineAt: deadlineAt,
+    });
+
+    expect(d).toMatchObject({ kind: "written", to: "VOIDED", moved: true });
+    expect(mockLock.events).toEqual(["locked", "write", "released"]);
+    expect(lockAsks).toEqual([
+      {
+        appointmentId: "apt-1",
+        config: expect.objectContaining({ deadlineAt }),
+      },
+    ]);
+
+    lockAsks.length = 0;
+    await decideSlotOutcome(slot(60), { now: at(120), outages: [] });
+    expect(lockAsks).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a door holds the booking",
+      () =>
+        new (jest.requireActual(
+          "../../utils/appointmentlock",
+        ).AppointmentBusyError)("apt-1"),
+    ],
+    [
+      "the lock service does not answer",
+      () =>
+        new (jest.requireActual(
+          "../../utils/appointmentlock",
+        ).BookingLockUnavailableError)("appointment"),
+    ],
+  ])(
+    "while %s the void is not written: the session stays SCHEDULED for the next run",
+    async (_label, refusal) => {
+      mockLock.refuse = refusal();
+
+      const d = await decideSlotOutcome(slot(30), {
+        now: at(120),
+        outages: [],
+      });
+
+      expect(d).toEqual({ kind: "deferred", reason: "appointment-busy" });
+      expect(transition).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not ask for the lock once the run's time is spent", async () => {
+    const d = await decideSlotOutcome(slot(30), {
+      now: at(120),
+      outages: [],
+      settleDeadlineAt: Date.now() - 1,
+    });
+
+    expect(d).toEqual({ kind: "deferred", reason: "appointment-busy" });
+    expect(lockAsks).toEqual([]);
+    expect(transition).not.toHaveBeenCalled();
+  });
+});
 
 it("a room rotated while its record was settled leaves the session SCHEDULED: the write fences on the call id loaded before the settle", async () => {
   const db = jest.requireMock("../../lib/prisma").default as {
@@ -333,16 +435,23 @@ it.each([
   },
 );
 
+const hoursPastEnd = (hours: number) =>
+  new Date(at(60).getTime() + hours * 3_600_000);
+const FAILED_REQUEST = { kind: "unavailable", throttled: false } as const;
+
 it.each([
-  ["not-final", 71],
-  ["unavailable", 71],
+  [{ kind: "not-final" }, 71],
+  [FAILED_REQUEST, 71],
+  // A request that failed says nothing about the session: it is retried at any age, never parked.
+  [FAILED_REQUEST, 73],
+  [FAILED_REQUEST, 2000],
 ] as const)(
-  "Stream answers %s %i h past the end: deferred, nothing written",
-  async (kind, hours) => {
+  "Stream answers %j %i h past the end: deferred, nothing written",
+  async (settlement, hours) => {
     const target = slot(60);
-    settle.mockResolvedValue({ kind });
+    settle.mockResolvedValue(settlement);
     const d = await decideSlotOutcome(target, {
-      now: new Date(at(60).getTime() + hours * 3_600_000),
+      now: hoursPastEnd(hours),
       outages: [],
     });
     expect(d).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
@@ -350,8 +459,76 @@ it.each([
   },
 );
 
+it("a room too fresh to ask Stream is never parked, however old the session; a too-early answer after a read still ages into the park", async () => {
+  const now = hoursPastEnd(80);
+  const base = slot(60);
+  // Rejoined an hour before this run: Stream is not asked yet, so nothing is known.
+  const fresh = {
+    ...base,
+    meeting: {
+      ...base.meeting,
+      lastJoinedAt: new Date(now.getTime() - 3_600_000),
+    },
+  } as unknown as OutcomeSlot;
+  settle.mockResolvedValue({ kind: "too-early" });
+  expect(await decideSlotOutcome(fresh, { now, outages: [] })).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(transition).not.toHaveBeenCalled();
+
+  // The room was readable, so this too-early is Stream's own answer about a late session.
+  const asked = await decideSlotOutcome(base, { now, outages: [] });
+  expect(asked).not.toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+});
+
+it("a stored record answered after this run's own read was throttled still stops the run's Stream reads", async () => {
+  const stream = { throttled: false, deferred: 0 };
+  const ctx = { now: hoursPastEnd(80), outages: [], stream };
+  const first = slot(60);
+  settle.mockResolvedValueOnce({
+    kind: "settled",
+    intervals: stays(60),
+    throttled: true,
+  } as Settlement);
+  const decided = await decideSlotOutcome(first, ctx);
+  expect(decided.kind).not.toBe("deferred");
+  expect(stream).toEqual({ throttled: true, deferred: 0 });
+});
+
+it("after the first throttled read the run asks Stream nothing more: unsettled sessions wait, a stored record is still judged", async () => {
+  const stream = { throttled: false, deferred: 0 };
+  const ctx = { now: hoursPastEnd(80), outages: [], stream };
+  const first = slot(60);
+  settle.mockResolvedValueOnce({ kind: "unavailable", throttled: true });
+  expect(await decideSlotOutcome(first, ctx)).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(stream).toEqual({ throttled: true, deferred: 1 });
+
+  settle.mockClear();
+  expect(await decideSlotOutcome(slot(60), ctx)).toEqual({
+    kind: "deferred",
+    reason: "attendance-unsettled",
+  });
+  expect(settle).not.toHaveBeenCalled();
+  expect(stream.deferred).toBe(2);
+
+  const stored = slot(60);
+  stored.meeting = { ...stored.meeting!, attendanceSettledAt: at(400) };
+  expect(await decideSlotOutcome(stored, ctx)).toMatchObject({
+    kind: "written",
+    to: "COMPLETED",
+  });
+  expect(stream.deferred).toBe(2);
+});
+
 it.each([
-  ["unavailable", 73],
+  ["not-final", 73],
   ["expired", 2],
 ] as const)(
   "Stream answers %s %i h past the end: parked UNVERIFIED as INCONCLUSIVE, no host attribution",

@@ -27,13 +27,152 @@ import {
   soldTermsOf,
   subscriptionEntitlement,
   subscriptionTranches,
+  type EntitlementOccurrence,
+  type SoldTermsShape,
 } from "./entitlement";
 
-type SettleTx = Pick<Tx, "appointment" | "consultantEarnings"> &
+type SettleTx = Pick<Tx, "$executeRaw" | "appointment" | "consultantEarnings"> &
   NonNullable<TriggerOptions["tx"]>;
+
+/**
+ * One transaction-scoped advisory lock per plan, taken before the sessions are
+ * read: the writers of a plan's tranche dates run one at a time, and each
+ * reads what the previous one committed. `$executeRaw` because the lock
+ * function returns void, which the driver adapter cannot deserialise as a row.
+ */
+async function lockPlanTranches(
+  tx: Pick<Tx, "$executeRaw">,
+  appointmentId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`plan-tranches:${appointmentId}`}, 42))`;
+}
 
 /** Tranches the accrual parked and nothing has stamped yet. */
 const UNSTAMPED_STATUSES = ["PENDING", "PENDING_TRUST"] as const;
+/** A held tranche is stamped too: its hold keeps it HELD, and its release then finds a date to wait for. */
+const UNSTAMPED = {
+  OR: [
+    { status: { in: [...UNSTAMPED_STATUSES] } },
+    { status: "HELD" as const, preHoldStatus: { in: [...UNSTAMPED_STATUSES] } },
+  ],
+};
+
+type DeliverySub = SoldTermsShape & {
+  schedulingPeriodStartsAt: Date;
+  schedulingTimezone: string;
+  planEndsAt: Date | null;
+};
+
+/**
+ * The plan's tranches as sold and the highest one its delivered sessions have
+ * matured (-1 for none). Once every session the buyer kept is delivered, every
+ * tranche has matured, including one a session-count refund cut short.
+ */
+function deliveredTranches(
+  sub: DeliverySub,
+  occurrences: EntitlementOccurrence[],
+  now: Date,
+) {
+  const terms = soldTermsOf(sub);
+  const entitlement = subscriptionEntitlement({
+    ...terms,
+    occurrences,
+    schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
+    schedulingTimezone: sub.schedulingTimezone,
+    planEndsAt: sub.planEndsAt,
+    now,
+  });
+  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
+  const matured =
+    entitlement.total > 0 && entitlement.completed >= entitlement.total
+      ? tranches.count - 1
+      : maturedTrancheOrdinal(tranches, entitlement.completed);
+  return { terms, entitlement, tranches, matured };
+}
+
+/**
+ * A live plan's tranche keeps its stamp only while its cycle is delivered, and
+ * its organisation earning only while every cycle is. Called in the
+ * transaction that voided a delivered session: every unreleased tranche above
+ * the matured ordinal, and the organisation rows once the last tranche is no
+ * longer matured, return to unstamped for the next completion to stamp. A
+ * READY, BATCHED or PAID row is left alone. Answers the rows cleared.
+ */
+export async function unstampUndeliveredTranches(
+  tx: Pick<
+    Tx,
+    | "$executeRaw"
+    | "appointment"
+    | "consultantEarnings"
+    | "organizationEarnings"
+  >,
+  args: { appointmentId: string; now: Date },
+): Promise<number> {
+  await lockPlanTranches(tx, args.appointmentId);
+  const wrapper = await tx.appointment.findUnique({
+    where: { id: args.appointmentId },
+    select: {
+      payment: {
+        where: { paymentStatus: "SUCCEEDED", deletedAt: null },
+        select: { id: true },
+      },
+      subscription: {
+        select: {
+          status: true,
+          sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
+          schedulingPeriodStartsAt: true,
+          schedulingTimezone: true,
+          planEndsAt: true,
+          subscriptionPlan: {
+            select: {
+              totalSessions: true,
+              sessionsPerWeek: true,
+              durationInMonths: true,
+            },
+          },
+        },
+      },
+      occurrences: {
+        select: {
+          startsAt: true,
+          endsAt: true,
+          completionStatus: true,
+          isTentative: true,
+          deletedAt: true,
+        },
+      },
+    },
+  });
+  if (
+    wrapper?.subscription?.status !== "APPROVED" ||
+    wrapper.payment.length === 0
+  ) {
+    return 0;
+  }
+  const { tranches, matured } = deliveredTranches(
+    wrapper.subscription,
+    wrapper.occurrences,
+    args.now,
+  );
+  const stamped = {
+    paymentId: { in: wrapper.payment.map((p) => p.id) },
+    holdUntil: { not: null },
+    ...UNSTAMPED,
+  };
+  const { count } = await tx.consultantEarnings.updateMany({
+    where: { ...stamped, cycleOrdinal: { gt: matured } },
+    data: { holdUntil: null },
+  });
+  // The mirror of the settle stamp, which dates these rows only once the last tranche has matured.
+  if (matured >= tranches.count - 1) return count;
+  const org = await tx.organizationEarnings.updateMany({
+    where: stamped,
+    data: { holdUntil: null },
+  });
+  return count + org.count;
+}
 
 /**
  * Terminal stamp on cancellation: whatever tranche value the refund leaves
@@ -64,7 +203,7 @@ export async function stampTranchesOnCancel(
           paymentId: args.paymentId,
           cycleOrdinal: { not: null },
           holdUntil: null,
-          status: { in: [...UNSTAMPED_STATUSES] },
+          ...UNSTAMPED,
         },
         holdUntil,
       )
@@ -73,7 +212,7 @@ export async function stampTranchesOnCancel(
     where: {
       paymentId: args.paymentId,
       holdUntil: null,
-      status: { in: [...UNSTAMPED_STATUSES] },
+      ...UNSTAMPED,
     },
     data: { holdUntil },
   });
@@ -89,6 +228,7 @@ export async function settleSubscriptionCycleWithNotice(
   bells: StagedTrigger[];
   emailArgs: SubscriptionLifecycleEmailArgs | null;
 }> {
+  await lockPlanTranches(tx, args.appointmentId);
   // One read, sequential by construction (PG_POOL_MAX=1): the wrapper, its
   // subscription with plan and both parties, and every occurrence row.
   const wrapper = await tx.appointment.findUnique({
@@ -139,26 +279,14 @@ export async function settleSubscriptionCycleWithNotice(
   }
   const sub = wrapper.subscription;
 
-  const terms = soldTermsOf(sub);
-  const entitlement = subscriptionEntitlement({
-    ...terms,
-    occurrences: wrapper.occurrences,
-    schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
-    schedulingTimezone: sub.schedulingTimezone,
-    planEndsAt: sub.planEndsAt,
-    now: args.now,
-  });
-
   // The money half: every tranche up to the highest matured one that is
   // still unstamped starts its hold now, anchored on the last delivered end.
-  // Tranches follow the sessions sold, as they were minted at capture. Once
-  // every session the buyer kept is delivered, every tranche left has matured,
-  // including the retained part of one a session-count refund cut short.
-  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
-  const matured =
-    entitlement.total > 0 && entitlement.completed >= entitlement.total
-      ? tranches.count - 1
-      : maturedTrancheOrdinal(tranches, entitlement.completed);
+  // Tranches follow the sessions sold, as they were minted at capture.
+  const { terms, entitlement, tranches, matured } = deliveredTranches(
+    sub,
+    wrapper.occurrences,
+    args.now,
+  );
   if (matured >= 0 && wrapper.payment.length > 0) {
     const lastCompletedEnd = wrapper.occurrences
       .filter((o) => !o.deletedAt && isCompletedOccurrence(o))
@@ -177,7 +305,7 @@ export async function settleSubscriptionCycleWithNotice(
         paymentId: { in: wrapper.payment.map((p) => p.id) },
         cycleOrdinal: { lte: matured },
         holdUntil: null,
-        status: { in: [...UNSTAMPED_STATUSES] },
+        ...UNSTAMPED,
       },
       holdUntil,
     );
@@ -186,7 +314,7 @@ export async function settleSubscriptionCycleWithNotice(
         where: {
           paymentId: { in: wrapper.payment.map((p) => p.id) },
           holdUntil: null,
-          status: { in: [...UNSTAMPED_STATUSES] },
+          ...UNSTAMPED,
         },
         data: { holdUntil },
       });

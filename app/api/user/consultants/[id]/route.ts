@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
 import { maxActivePlanClientsSchema } from "@/schemas/plan-clients";
-import { checkActiveAppointments } from "../utils/consultant-appointments";
+import { checkActiveAppointments } from "@/lib/booking/active-appointments";
 import { getSession } from "@/lib/auth-server";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import {
@@ -44,7 +44,7 @@ import {
   settleAvailabilityWrite,
   type UncoveredUpcoming,
 } from "@/lib/scheduling/uncovered-upcoming";
-import type { ActiveAppointmentsResult } from "../utils/consultant-appointments";
+import type { ActiveAppointmentsResult } from "@/lib/booking/active-appointments";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,

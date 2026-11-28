@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { ChevronDown, Loader2, MoreHorizontal, Video } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,8 @@ export interface SessionRowAction {
   key: string;
   label: string;
   onSelect: () => void;
+  /** A page the action opens; the inline entry is then a real link. */
+  href?: string;
   disabled?: boolean;
   /** Why the action is unavailable, in words; shown under the label in the menu. */
   blockedBecause?: string;
@@ -48,6 +51,24 @@ export interface SessionRowAction {
 }
 
 type RowStatus = ReturnType<typeof slotStatus>;
+
+/** A row's first action beside the session, visible at rest at every width; a link when it opens a page. */
+export function InlineRowAction({
+  action,
+}: Readonly<{ action: SessionRowAction }>) {
+  if (action.href) {
+    return (
+      <Button variant="ghost" size="sm" className="h-8" asChild>
+        <Link href={action.href}>{action.label}</Link>
+      </Button>
+    );
+  }
+  return (
+    <Button variant="ghost" size="sm" className="h-8" onClick={action.onSelect}>
+      {action.label}
+    </Button>
+  );
+}
 
 /**
  * Upcoming is the default and says nothing; only states a reader must notice
@@ -58,6 +79,7 @@ const STATUS_TEXT: Partial<Record<RowStatus, string>> = {
   cutShort: "Cut short",
   noShow: "No-show",
   inconclusive: "Verifying",
+  waitingDecision: "Waiting on a decision",
   noRecord: "No record",
   joinable: "Live now",
 };
@@ -67,6 +89,7 @@ const STATUS_DOT: Partial<Record<RowStatus, string>> = {
   cutShort: "bg-amber-500",
   noShow: "bg-amber-500",
   inconclusive: "bg-sky-500",
+  waitingDecision: "bg-amber-500",
   noRecord: "bg-amber-500",
   joinable: "bg-emerald-500",
 };
@@ -75,6 +98,7 @@ const STATUS_TITLE: Partial<Record<RowStatus, string>> = {
   cutShort: "This session ended earlier than the scheduled duration.",
   noShow: "One or more participants did not attend this session.",
   inconclusive: "Session attendance is being verified.",
+  waitingDecision: "Our team is checking what happened in this session.",
   noRecord:
     "No meeting record found for this session. It may have been missed or held outside the platform.",
   joinable:
@@ -86,6 +110,7 @@ const PAST: ReadonlySet<RowStatus> = new Set([
   "cutShort",
   "noShow",
   "inconclusive",
+  "waitingDecision",
   "noRecord",
 ]);
 
@@ -452,16 +477,7 @@ function SessionRow({
           </span>
         ) : null}
 
-        {inline && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
-            onClick={inline.onSelect}
-          >
-            {inline.label}
-          </Button>
-        )}
+        {inline && <InlineRowAction action={inline} />}
         {actions.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

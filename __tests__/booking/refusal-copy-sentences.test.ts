@@ -27,6 +27,8 @@ const cancelled = {
   completionStatus: OccurrenceCompletionStatus.CANCELLED,
   hostCancelledAt: new Date("2026-11-10T04:30:00Z"),
   voidedAt: null,
+  outcome: null,
+  outcomeConfirmedAt: null,
   seatsSettledAt: null,
 };
 const refusal = (over: Partial<Parameters<typeof makeUpWindowRefusal>[0]>) =>
@@ -68,6 +70,28 @@ describe("MAKEUP_WINDOW_LAPSED: one sentence per condition", () => {
     expect(refusal({ startsAt: new Date("2026-11-25T04:30:00Z") })).toBe(
       "A make-up must start by Tue 24 Nov, 10:00 AM, 14 days after the session was cancelled. Pick an earlier time.",
     );
+  });
+
+  it("a void whose verdict waited for a confirmation: 14 days from the confirmation, not from the void", () => {
+    // Voided 1 Nov, confirmed 17 Nov 10:00 IST, so the window closes 1 Dec 10:00 IST.
+    const source = {
+      ...cancelled,
+      completionStatus: OccurrenceCompletionStatus.VOIDED,
+      hostCancelledAt: null,
+      voidedAt: new Date("2026-11-01T04:30:00Z"),
+      outcome: "HOST_ABSENT" as const,
+      outcomeConfirmedAt: new Date("2026-11-17T04:30:00Z"),
+    };
+    expect(refusal({ source })).toBeNull();
+    expect(
+      refusal({ source, startsAt: new Date("2026-12-02T04:30:00Z") }),
+    ).toBe(
+      "A make-up must start by Tue 1 Dec, 10:00 AM, 14 days after the session was cancelled. Pick an earlier time.",
+    );
+    // Not confirmed yet: the window has not started, so a make-up within 14 days of now is accepted.
+    expect(
+      refusal({ source: { ...source, outcomeConfirmedAt: null } }),
+    ).toBeNull();
   });
 
   it("a window that already closed", () => {

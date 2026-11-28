@@ -26,7 +26,12 @@ const makeTx = () => ({
     findMany: async () => [],
     count: async () => 0,
   },
+  // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+  consultantEarnings: { findMany: async () => [] },
+  organizationEarnings: { findMany: async () => [] },
   consultation: { findUnique: async () => ({ status: "SCHEDULED" }) },
+  // The pending-void gate's read: no void of this booking waits on a verdict.
+  appointmentOccurrence: { findMany: async () => [] },
   streamRevocationRetry: createMockRevocationRetryTable(),
 });
 
@@ -127,6 +132,7 @@ jest.mock("../../../lib/booking/cancellation-scope", () => ({
   readCancelWindowState: async () => "BEFORE",
   resolveBookingRefundContext: async () => ({
     windowState: "BEFORE",
+    unsettledVoidIds: [],
     alreadyRefundedPaise: 0,
     policy: {},
     hoursUntilNextSession: 100,

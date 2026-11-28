@@ -39,15 +39,31 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 const DAY = 86_400_000;
+/** A case's make-up start, which the make-up read then honours, and what happens while the source read is answered. */
+const mockMakeUp: { startsAt: Date | null; whileSourceIsRead: () => void } = {
+  startsAt: null,
+  whileSourceIsRead: () => {},
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointmentOccurrence: {
-      findFirst: async () => ({
-        id: "occ-x",
-        ordinal: 3,
-        startsAt: new Date(Date.now() - DAY),
-      }),
+      findFirst: async (args: { where: { startsAt?: { gt: Date } } }) => {
+        const session = {
+          id: "occ-x",
+          ordinal: 3,
+          startsAt: new Date(Date.now() - DAY),
+        };
+        const after = args.where.startsAt?.gt;
+        // Only the make-up read filters on a start.
+        if (!after) {
+          mockMakeUp.whileSourceIsRead();
+          return session;
+        }
+        return !mockMakeUp.startsAt || mockMakeUp.startsAt > after
+          ? session
+          : null;
+      },
       findMany: async () =>
         [1, 2, 3, 4].map((ordinal) => ({
           ordinal,
@@ -122,4 +138,29 @@ it("refuses the skip when an operator's other-amount refund already holds the se
     }),
   ).rejects.toMatchObject({ code: "MAKEUP_NOT_SKIPPABLE" });
   expect(findDedupedRefund).not.toHaveBeenCalled();
+});
+
+it("refuses a skip whose read of the missed session outlasts the make-up's start: the start is judged after the reads, not before them", async () => {
+  const lockTaken = new Date("2026-12-01T09:59:59.750Z");
+  jest.useFakeTimers({ now: lockTaken });
+  try {
+    refundBookingPayment.mockReset();
+    mockMakeUp.startsAt = new Date("2026-12-01T10:00:00.000Z");
+    // The source read takes 450 ms, so it answers after the make-up began.
+    mockMakeUp.whileSourceIsRead = () =>
+      jest.setSystemTime(new Date("2026-12-01T10:00:00.200Z"));
+
+    await expect(
+      skipClassMakeUp({
+        appointmentId: "appt-1",
+        sourceOccurrenceId: "occ-src",
+        userId: "u-1",
+      }),
+    ).rejects.toMatchObject({ code: "MAKEUP_NOT_SKIPPABLE" });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  } finally {
+    mockMakeUp.startsAt = null;
+    mockMakeUp.whileSourceIsRead = () => {};
+    jest.useRealTimers();
+  }
 });

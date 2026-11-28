@@ -6,6 +6,8 @@
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("../../lib/booking/class-sessions", () => ({
   onClassSessionVoided: jest.fn(),
+  // No make-up was offered for these sessions.
+  cancelUnstartedMakeUp: jest.fn(async () => ({ cancelled: false, bells: [] })),
 }));
 const stageNotices = jest.fn(async (..._a: unknown[]) => ({
   bells: [],

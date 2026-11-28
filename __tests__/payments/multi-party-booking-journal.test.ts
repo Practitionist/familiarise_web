@@ -28,6 +28,11 @@ const COLLAB_INDEP_PROFILE = "consultant-collab-independent";
 const PLAN_ID = "plan-webinar-1";
 const PAYMENT_ID = "payment-1";
 
+jest.mock("../../lib/observability/report", () => ({
+  ...jest.requireActual("../../lib/observability/report"),
+  reportSentryMessage: jest.fn(),
+}));
+
 jest.mock("../../lib/feature-flags", () => ({
   ENABLE_HOST_ORGS: true,
 }));
@@ -99,9 +104,15 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    paymentLeg: { findMany: jest.fn().mockResolvedValue([]) },
+    paymentLeg: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     // #1458 — only read when an OVERAGE_INVOICE_ACCRUAL leg funded the payment.
-    overageEvent: { findMany: jest.fn().mockResolvedValue([]) },
+    overageEvent: {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     consultantEarnings: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest
@@ -156,6 +167,7 @@ import prisma from "@/lib/prisma";
 import { calculateRevenueSplit } from "@/lib/collaborators/revenue-split";
 import { resolveEffectiveRateCard } from "@/lib/api/organizations/rate-card";
 import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 const mockedTx = (
   prisma as unknown as {
@@ -169,6 +181,7 @@ const mockedTx = (
   }
 ).__mockTx;
 
+const mockedReport = jest.mocked(reportSentryMessage);
 const mockedCalculateSplit = calculateRevenueSplit as jest.MockedFunction<
   typeof calculateRevenueSplit
 >;
@@ -436,21 +449,44 @@ describe("#773 multi-party booking journal", () => {
         role: "CO_HOST",
       },
     ]);
-    // Crash-recovery shape: the journal txn survived but the earnings tx is
-    // being replayed — postLedgerTxn's fast-path must dedupe on the key.
+    const deliver = () =>
+      createEarningsFromPayment({
+        payment: makePayment(),
+        appointmentType: "WEBINAR",
+        teamAt: new Date("2026-10-09T10:00:00Z"),
+      });
+
+    // The first delivery posts the journal.
+    await deliver();
+    expect(capturedLedgerTxns).toHaveLength(1);
+    const posted = capturedLedgerTxns[0].entries.create;
+    expect(
+      legAmount(capturedLedgerTxns[0], "DEBIT", "GATEWAY_CLEARING|_|_|INR"),
+    ).toBe(118_000);
+
+    // Crash-recovery shape: that journal survived and the earnings
+    // transaction is replayed, asking to post the same lines again.
     mockedTx.ledgerTransaction.findUnique.mockResolvedValue({
       id: "ltxn-existing",
+      entries: posted,
     });
+    mockedTx.ledgerTransaction.create.mockClear();
+    capturedLedgerTxns = [];
+    mockedReport.mockClear();
 
-    const ownerId = await createEarningsFromPayment({
-      payment: makePayment(),
-      appointmentType: "WEBINAR",
-      teamAt: new Date("2026-10-09T10:00:00Z"),
-    });
+    const ownerId = await deliver();
 
     expect(ownerId).not.toBeNull();
     expect(mockedTx.ledgerTransaction.create).not.toHaveBeenCalled();
     expect(capturedLedgerTxns).toHaveLength(0);
+    // The replay matched the stored journal: the quiet short-circuit, no mismatch report.
+    expect(mockedReport.mock.calls.map(([message]) => message)).toEqual([
+      "Ledger posting idempotency short-circuit",
+    ]);
+    expect(mockedReport.mock.calls[0][1]).toMatchObject({
+      expected: true,
+      extra: { idempotencyKey: `booking:${PAYMENT_ID}` },
+    });
   });
 
   it("is idempotent on redelivery — existing earnings short-circuit before any journal work", async () => {

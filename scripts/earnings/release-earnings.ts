@@ -25,7 +25,8 @@ import {
   Prisma,
   RefundStatus,
 } from "@prisma/client";
-import prisma, { type PrismaLike } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -68,38 +69,53 @@ export const UNDELIVERED_OCCURRENCE = {
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /**
- * Release earnings that have passed their hold period
- *
- * Finds earnings with:
- * - Status: PENDING
- * - holdUntil: Past current time
- *
- * Updates them to READY status for payout processing.
- *
- * @returns ReleaseResult with counts and error details
+ * A cash refund that is PENDING, or SUCCEEDED with its cascade not yet applied.
+ * A zero-amount credit restoration never cascades and never gates.
  */
+const REFUND_IN_FLIGHT = {
+  amountPaise: { gt: 0 },
+  status: { notIn: [RefundStatus.FAILED, RefundStatus.CANCELLED] },
+  OR: [{ status: RefundStatus.PENDING }, { cascadedAt: null }],
+} satisfies Prisma.RefundWhereInput;
+
+const ACTIVE_DISPUTE = {
+  status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+} satisfies Prisma.DisputeWhereInput;
+
 /**
- * #1775 P-2 — an earning whose payment has a refund still in flight is not
- * released: the clawback cascade sizes itself when that refund settles, and a
- * READY (or paid-out) row would pay the consultant money that is leaving.
- * Repeated in the claim's WHERE so a refund opened mid-run keeps the row.
+ * Money owed back on a payment, one clause per reason. A payment matching any
+ * clause funds no payout: release, batching and both claim gates read these.
  */
-/**
- * #1569 D10 — NO_UNSETTLED_MISS rides the same payment filter: a booking owing
- * a make-up or a refund for a host-cancelled or voided session, or holding a
- * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
- * A subscription's misses do not hold it (`EARNINGS_HOLDING_MISS`).
- */
-export const RELEASABLE_PAYMENT = {
-  refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
-  // A refund some door still owes (retrying, or spent and waiting on support)
-  // holds every earning on the payment until the marker clears.
+export const MONEY_OWED_PAYMENT = {
+  refundInFlight: { refunds: { some: REFUND_IN_FLIGHT } },
+  activeDispute: { disputes: { some: ACTIVE_DISPUTE } },
+  refundOwed: { refundOwedKey: { not: null } },
+} satisfies Record<string, Prisma.PaymentWhereInput>;
+
+/** The same three clauses negated: nothing is owed back on the payment. */
+export const NO_MONEY_OWED_PAYMENT = {
+  refunds: { none: REFUND_IN_FLIGHT },
+  disputes: { none: ACTIVE_DISPUTE },
   refundOwedKey: null,
+} satisfies Prisma.PaymentWhereInput;
+
+/** Every live session of the booking has been delivered. */
+const EVERY_SESSION_DELIVERED = {
   NOT: {
     appointment: {
       occurrences: { some: UNDELIVERED_OCCURRENCE },
     },
   },
+} satisfies Prisma.PaymentWhereInput;
+
+/**
+ * The release gates that do not depend on delivery: no money owed back, and no
+ * session owing a make-up, parked for a human or carrying an unconfirmed
+ * learner-absent verdict. A subscription's misses do not hold it
+ * (`EARNINGS_HOLDING_MISS`).
+ */
+const RELEASE_GATES_BESIDE_DELIVERY = {
+  ...NO_MONEY_OWED_PAYMENT,
   OR: [
     { appointmentId: null },
     {
@@ -115,34 +131,95 @@ export const RELEASABLE_PAYMENT = {
   ],
 } satisfies Prisma.PaymentWhereInput;
 
-const NO_OPEN_REFUND: Prisma.ConsultantEarningsWhereInput = {
+/**
+ * A payment whose PENDING earnings may be released: every gate above, and every
+ * live session delivered. The claim's WHERE repeats it, so a gate that appears
+ * mid-run keeps the row.
+ */
+export const RELEASABLE_PAYMENT = {
+  ...RELEASE_GATES_BESIDE_DELIVERY,
+  ...EVERY_SESSION_DELIVERED,
+} satisfies Prisma.PaymentWhereInput;
+
+/**
+ * The gate on one consultant earning. A plan tranche is dated only when its
+ * cycle is delivered and loses the date when a void un-delivers it, so a dated
+ * tranche does not wait for the plan's later sessions; every other gate holds
+ * it. Any other earning waits for every live session of its booking.
+ */
+const RELEASABLE_CONSULTANT_EARNING = {
+  payment: RELEASE_GATES_BESIDE_DELIVERY,
+  OR: [{ cycleOrdinal: { not: null } }, { payment: EVERY_SESSION_DELIVERED }],
+} satisfies Prisma.ConsultantEarningsWhereInput;
+
+/** The payment gate on the host-organisation arm: a plan's one earning waits for the whole plan. */
+const RELEASABLE_ORG_EARNING: Prisma.OrganizationEarningsWhereInput = {
   payment: RELEASABLE_PAYMENT,
 };
 
-/** The same guards on the host-organisation arm (#1775 P-2, #1569). */
-const NO_OPEN_REFUND_ORG: Prisma.OrganizationEarningsWhereInput = {
-  payment: RELEASABLE_PAYMENT,
-};
+export type IncidentWindow = { startsAt: Date; endsAt: Date };
 
-/** Consultant earnings past their hold; shared with the ticker's idle probe. */
+/** Declared incidents whose enumeration has not yet decided every overlapping session. */
+export function undecidedIncidents(
+  db: Pick<Tx, "platformIncident">,
+): Promise<IncidentWindow[]> {
+  return db.platformIncident.findMany({
+    where: { enumeratedAt: null },
+    select: { startsAt: true, endsAt: true },
+  });
+}
+
+/**
+ * Holds a payment whose booking has a session inside one of these incident
+ * windows (the enumerator's own overlap test), until the enumeration decides
+ * the session. Empty when no incident is undecided.
+ */
+export function clearOfIncidents(incidents: IncidentWindow[]): {
+  AND?: [{ payment: Prisma.PaymentWhereInput }];
+} {
+  if (incidents.length === 0) return {};
+  const overlapping = {
+    isTentative: false,
+    deletedAt: null,
+    OR: incidents.map((incident) => ({
+      startsAt: { lt: incident.endsAt },
+      endsAt: { gt: incident.startsAt },
+    })),
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+  return {
+    AND: [
+      {
+        payment: {
+          NOT: { appointment: { occurrences: { some: overlapping } } },
+        },
+      },
+    ],
+  };
+}
+
+/** Consultant earnings past their hold; shared by the read, the claim and, without incidents, the ticker's idle probe. */
 function releasableEarningsWhere(
   now: Date,
+  incidents: IncidentWindow[],
 ): Prisma.ConsultantEarningsWhereInput {
   return {
     status: EarningStatus.PENDING,
     holdUntil: { lte: now },
-    ...NO_OPEN_REFUND,
+    ...RELEASABLE_CONSULTANT_EARNING,
+    ...clearOfIncidents(incidents),
   };
 }
 
-/** Host-organisation earnings past their hold; shared with the ticker's idle probe. */
+/** Host-organisation earnings past their hold; shared by the read, the claim and, without incidents, the ticker's idle probe. */
 function releasableOrgEarningsWhere(
   now: Date,
+  incidents: IncidentWindow[],
 ): Prisma.OrganizationEarningsWhereInput {
   return {
     status: EarningStatus.PENDING,
     holdUntil: { lte: now },
-    ...NO_OPEN_REFUND_ORG,
+    ...RELEASABLE_ORG_EARNING,
+    ...clearOfIncidents(incidents),
   };
 }
 
@@ -153,14 +230,15 @@ export async function hasReleasableEarningsWork(
   outOfTime: () => boolean,
 ): Promise<boolean> {
   if (outOfTime()) return true;
+  // The probe skips the incident read: at worst it dispatches a run that an undecided incident then holds.
   const consultant = await db.consultantEarnings.findFirst({
-    where: releasableEarningsWhere(now),
+    where: releasableEarningsWhere(now, []),
     select: { id: true },
   });
   if (consultant) return true;
   if (outOfTime()) return true;
   const org = await db.organizationEarnings.findFirst({
-    where: releasableOrgEarningsWhere(now),
+    where: releasableOrgEarningsWhere(now, []),
     select: { id: true },
   });
   return org !== null;
@@ -206,8 +284,9 @@ async function releaseEarningsFromHoldUnlocked(
     // matching row.
     const { earningsToRelease, releasedCount } = await prisma.$transaction(
       async (tx) => {
+        const incidents = await undecidedIncidents(tx);
         const rows = await tx.consultantEarnings.findMany({
-          where: releasableEarningsWhere(now),
+          where: releasableEarningsWhere(now, incidents),
           include: {
             consultantProfile: {
               include: {
@@ -219,11 +298,11 @@ async function releaseEarningsFromHoldUnlocked(
           take: opts.limit,
         });
 
+        // The whole gate again, date included: a void that cleared a tranche's date since the read keeps the row.
         const updated = await tx.consultantEarnings.updateMany({
           where: {
             id: { in: rows.map((r) => r.id) },
-            status: EarningStatus.PENDING,
-            ...NO_OPEN_REFUND,
+            ...releasableEarningsWhere(now, incidents),
           },
           data: {
             status: EarningStatus.READY,
@@ -258,8 +337,9 @@ async function releaseEarningsFromHoldUnlocked(
     const { orgEarningsToRelease, orgReleasedCount } =
       await prisma.$transaction(
         async (tx) => {
+          const incidents = await undecidedIncidents(tx);
           const rows = await tx.organizationEarnings.findMany({
-            where: releasableOrgEarningsWhere(now),
+            where: releasableOrgEarningsWhere(now, incidents),
             select: {
               id: true,
               orgSharePaise: true,
@@ -276,7 +356,8 @@ async function releaseEarningsFromHoldUnlocked(
             where: {
               id: { in: rows.map((r) => r.id) },
               status: EarningStatus.PENDING,
-              ...NO_OPEN_REFUND_ORG,
+              ...RELEASABLE_ORG_EARNING,
+              ...clearOfIncidents(incidents),
             },
             data: {
               status: EarningStatus.READY,

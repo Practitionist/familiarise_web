@@ -83,6 +83,134 @@ it("throws LOCK_LOST when the grant passed to another writer before a renewal", 
   expect(await client.get(KEY)).toBe("another-writer");
 });
 
+describe("a sweep's bounded acquire", () => {
+  const { checkRedisHealth } = jest.requireMock("../../lib/redis") as {
+    checkRedisHealth: jest.Mock;
+  };
+  const SWEEP = {
+    retryCount: 2,
+    retryDelay: 200,
+    retryJitter: 0,
+    driftFactor: 0.01,
+    exponentialBackoff: true,
+  };
+
+  it("gives up on a stalled health PING within its call bound and never SETs", async () => {
+    checkRedisHealth.mockImplementationOnce(() => new Promise(() => undefined));
+    const set = jest.spyOn(client, "set");
+    const startedAt = Date.now();
+
+    const outcome = await lockAppointment("appt-1", 60_000, {
+      ...SWEEP,
+      callTimeoutMs: 100,
+    }).catch((e: unknown) => e);
+
+    expect({
+      outcome: (outcome as Error).name,
+      sets: set.mock.calls.length,
+      bounded: Date.now() - startedAt < 1_000,
+    }).toEqual({
+      outcome: "BookingLockUnavailableError",
+      sets: 0,
+      bounded: true,
+    });
+  });
+
+  it("makes no Redis call once the run's deadline has passed", async () => {
+    const set = jest.spyOn(client, "set");
+    checkRedisHealth.mockClear();
+
+    const outcome = await lockAppointment("appt-1", 60_000, {
+      ...SWEEP,
+      callTimeoutMs: 1_500,
+      deadlineAt: Date.now() - 1,
+    }).catch((e: unknown) => e);
+
+    expect({
+      outcome: (outcome as Error).name,
+      probes: checkRedisHealth.mock.calls.length,
+      sets: set.mock.calls.length,
+    }).toEqual({ outcome: "AppointmentBusyError", probes: 0, sets: 0 });
+  });
+
+  it("reads a SET cut short by the deadline as out of time, not as Redis down", async () => {
+    jest
+      .spyOn(client, "set")
+      .mockImplementation(() => new Promise<never>(() => undefined));
+
+    const outcome = await lockAppointment("appt-1", 60_000, {
+      ...SWEEP,
+      callTimeoutMs: 1_500,
+      deadlineAt: Date.now() + 100,
+    }).catch((e: unknown) => e);
+
+    expect((outcome as Error).name).toBe("AppointmentBusyError");
+  });
+
+  it("reads a SET cut short at the deadline as out of time when the per-call bound was sized to the time left", async () => {
+    jest
+      .spyOn(client, "set")
+      .mockImplementation(() => new Promise<never>(() => undefined));
+    // One instant for every clock read, so the per-call bound and the time left tie exactly.
+    const t0 = Date.now();
+    jest.spyOn(Date, "now").mockReturnValue(t0);
+
+    const outcome = await lockAppointment("appt-1", 60_000, {
+      ...SWEEP,
+      callTimeoutMs: 50,
+      deadlineAt: t0 + 50,
+    }).catch((e: unknown) => e);
+
+    expect((outcome as Error).name).toBe("AppointmentBusyError");
+  });
+
+  it("starts no cleanup call once the deadline has passed: the TTL frees a key the cut-short SET may have written", async () => {
+    jest
+      .spyOn(client, "set")
+      .mockImplementation(() => new Promise<never>(() => undefined));
+    const cleanup = jest
+      .spyOn(client, "eval")
+      .mockImplementation(() => new Promise<never>(() => undefined));
+    const startedAt = Date.now();
+
+    const outcome = await lockAppointment("appt-1", 60_000, {
+      ...SWEEP,
+      callTimeoutMs: 1_500,
+      deadlineAt: startedAt + 100,
+    }).catch((e: unknown) => e);
+
+    expect({
+      outcome: (outcome as Error).name,
+      cleanups: cleanup.mock.calls.length,
+      bounded: Date.now() - startedAt < 400,
+    }).toEqual({ outcome: "AppointmentBusyError", cleanups: 0, bounded: true });
+  });
+
+  it("stops retrying a contended key rather than wait past the deadline", async () => {
+    await client.set(KEY, "someone-else", { px: 60_000 });
+    const set = jest.spyOn(client, "set");
+    const startedAt = Date.now();
+
+    const outcome = await lockAppointment("appt-1", 60_000, {
+      ...SWEEP,
+      callTimeoutMs: 1_500,
+      deadlineAt: startedAt + 100,
+    }).catch((e: unknown) => e);
+
+    expect({
+      outcome: (outcome as Error).name,
+      sets: set.mock.calls.length,
+      bounded: Date.now() - startedAt < 150,
+      key: await client.get(KEY),
+    }).toEqual({
+      outcome: "AppointmentBusyError",
+      sets: 1,
+      bounded: true,
+      key: "someone-else",
+    });
+  });
+});
+
 it("renews a grant that is still ours, and treats no lock as nothing to renew", async () => {
   const lock = await lockAppointment("appt-1");
   await expect(renewAppointmentLock(lock)).resolves.toBeUndefined();

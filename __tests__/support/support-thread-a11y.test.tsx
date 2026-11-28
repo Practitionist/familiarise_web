@@ -108,6 +108,7 @@ describe("conversation logs", () => {
       turnPending: false,
       submitTurn: jest.fn(),
       failedTurns: {},
+      sessionReports: [],
       retryTurn: jest.fn(),
       lastActions: [],
       waitingLine: "",

@@ -157,6 +157,7 @@ export async function listRefunds(
   paymentIntentId: string,
   gateway: PaymentGateway,
   limit: number = 10,
+  skip: number = 0,
 ): Promise<RefundResult[]> {
   if (gateway !== "RAZORPAY") {
     throw new PaymentError(
@@ -165,5 +166,5 @@ export async function listRefunds(
       gateway,
     );
   }
-  return listRazorpayRefunds(paymentIntentId, limit);
+  return listRazorpayRefunds(paymentIntentId, limit, skip);
 }

@@ -1,8 +1,9 @@
 /**
- * The one status a booking or seat shows to every viewer: one of seven words
- * (Requested, Awaiting payment, Confirmed or Registered, Being moved,
- * Completed, Cancelled, Refunded) with one plain reason line. A host's own
- * webinar or class keeps its event words. Prisma-free: lists, the detail page
+ * The one status a booking or seat shows to every viewer: one of eight words
+ * (Requested, Awaiting payment, Confirmed or Registered, Being moved, Waiting
+ * on a decision, Completed, Cancelled, Refunded) with one plain reason line. A
+ * host's own webinar or class keeps its event words, except Waiting on a
+ * decision. Prisma-free: lists, the detail page
  * and the back office all call it. It names what the rows say; legality lives
  * in `lib/booking/transitions.ts`.
  */
@@ -22,19 +23,21 @@ export const BOOKING_STAGES = [
   "CONFIRMED",
   "AWAITING_ALLOCATION",
   "BEING_MOVED",
+  "AWAITING_DECISION",
   "COMPLETED",
   "CANCELLED",
   "DECLINED",
 ] as const;
 export type BookingStage = (typeof BOOKING_STAGES)[number];
 
-/** The seven words; "Registered" is how a seat says Confirmed. */
+/** The eight words; "Registered" is how a seat says Confirmed. */
 export const BOOKING_WORDS = [
   "Requested",
   "Awaiting payment",
   "Confirmed",
   "Registered",
   "Being moved",
+  "Waiting on a decision",
   "Completed",
   "Cancelled",
   "Refunded",
@@ -98,6 +101,8 @@ export interface BookingStatusFacts {
     /** Every session's time has passed with no outcome recorded yet. */
     awaitingOutcome?: boolean;
   };
+  /** Sessions parked for ops (`AWAITING_HUMAN`); the booking settles only once they decide. */
+  parkedSessions?: number;
   /** A plan's end has passed; until then held sessions never complete the plan. */
   planEnded?: boolean;
   /** A paid plan waiting for its first or its next placement. */
@@ -130,6 +135,7 @@ const WORD_TONE: Record<BookingWord, Tone> = {
   Confirmed: "success",
   Registered: "success",
   "Being moved": "info",
+  "Waiting on a decision": "caution",
   Completed: "success",
   Cancelled: "neutral",
   Refunded: "neutral",
@@ -143,6 +149,7 @@ const EVENT_TONE: Record<string, Tone> = {
 };
 
 const GROUP_KINDS = new Set(["WEBINAR", "CLASS"]);
+const ONE_SESSION_KINDS = new Set(["CONSULTATION", "TRIAL", "WEBINAR"]);
 const UNPAID_OPEN = new Set([
   "PENDING",
   "APPROVED_PENDING_PAYMENT",
@@ -256,6 +263,11 @@ function stageOf(
       ? { stage: "PAYMENT_LAPSED", cause }
       : { stage: "CANCELLED", cause };
   }
+  // A parked session outranks a stored COMPLETED: nothing settles until ops decide.
+  const parked = (f.parkedSessions ?? 0) > 0;
+  if (status === "COMPLETED" && parked) {
+    return { stage: "AWAITING_DECISION" };
+  }
   if (COMPLETED_FAMILY.has(status)) return { stage: "COMPLETED" };
   if (f.reschedule) return { stage: "BEING_MOVED" };
   if (f.planWait) return { stage: "AWAITING_ALLOCATION" };
@@ -273,9 +285,21 @@ function stageOf(
       return { stage: f.paid ? "CONFIRMED" : "AWAITING_PAYMENT" };
     }
     // A plan completes at its stored end or its plan end, not when the placed sessions are held.
-    if (sessions.done && (kind !== "SUBSCRIPTION" || f.planEnded)) {
-      return { stage: "COMPLETED" };
+    const finished = kind !== "SUBSCRIPTION" || f.planEnded;
+    const over = sessions.done || sessions.awaitingOutcome;
+    if (finished && over && parked) {
+      return { stage: "AWAITING_DECISION" };
     }
+    if (sessions.done && finished) return { stage: "COMPLETED" };
+  }
+  // A read without sessions still knows a one-session booking, or a plan past its end, with a parked session is over.
+  if (
+    !sessions &&
+    parked &&
+    CONFIRMED_FAMILY.has(status) &&
+    (ONE_SESSION_KINDS.has(kind) || (kind === "SUBSCRIPTION" && f.planEnded))
+  ) {
+    return { stage: "AWAITING_DECISION" };
   }
   return { stage: "CONFIRMED" };
 }
@@ -292,6 +316,8 @@ function wordOf(
       return "Awaiting payment";
     case "BEING_MOVED":
       return "Being moved";
+    case "AWAITING_DECISION":
+      return "Waiting on a decision";
     case "COMPLETED":
       return "Completed";
     case "CONFIRMED":
@@ -302,6 +328,33 @@ function wordOf(
     default:
       return (f.refunded?.paise ?? 0) > 0 ? "Refunded" : "Cancelled";
   }
+}
+
+const APPENDS_PARKED_LINE = new Set<BookingStage>([
+  "AWAITING_ALLOCATION",
+  "BEING_MOVED",
+]);
+
+/** A booking waiting on a decision, counted: staff are pointed at the queue, others are told what happens. */
+function waitingLine(parked: number, viewer: StatusViewer): string {
+  const one = parked <= 1;
+  if (viewer === "STAFF") {
+    return one
+      ? "A session is in Sessions that need a decision; settlement waits for it."
+      : `${parked} sessions are in Sessions that need a decision; settlement waits for them.`;
+  }
+  return one
+    ? "Our team is checking what happened in a session. This booking settles once they decide."
+    : `Our team is checking what happened in ${parked} sessions. This booking settles once they decide.`;
+}
+
+/** A live booking keeps its word; its parked sessions are named under it. */
+function parkedLine(f: BookingStatusFacts): string {
+  const n = f.parkedSessions ?? 0;
+  if (n === 0) return "";
+  return n === 1
+    ? "1 session is waiting on a decision."
+    : `${n} sessions are waiting on a decision.`;
 }
 
 function reasonOf(
@@ -401,9 +454,12 @@ function reasonOf(
       if (f.paid && f.sessions?.allTentative) {
         return "Payment received; the session is being locked in.";
       }
+      if (parkedLine(f)) return parkedLine(f);
       return f.sessions?.awaitingOutcome
         ? "This session's time has passed. We're confirming what happened."
         : "";
+    case "AWAITING_DECISION":
+      return waitingLine(f.parkedSessions ?? 1, viewer);
     case "COMPLETED":
       return f.completedNote ?? "";
     case "PAYMENT_LAPSED":
@@ -486,20 +542,29 @@ export function bookingStatus(
   const zone = zoneOf(options.zone);
   const { stage, cause } = stageOf(f, now);
   const status = upper(f.status);
-  if (isHostEvent(f, viewer) && status in EVENT_TONE) {
+  if (
+    isHostEvent(f, viewer) &&
+    status in EVENT_TONE &&
+    stage !== "AWAITING_DECISION"
+  ) {
     return {
       stage,
       label: eventStatusBadge(status).label,
       tone: EVENT_TONE[status],
-      line: "",
+      line: parkedLine(f),
     };
   }
   const word = wordOf(stage, f, viewer);
+  const line = reasonOf(stage, cause, word, f, viewer, zone, now);
   return {
     stage,
     label: word,
     tone: WORD_TONE[word],
-    line: reasonOf(stage, cause, word, f, viewer, zone, now),
+    // A placement or move prompt stays first; the parked sessions are named after it.
+    line:
+      APPENDS_PARKED_LINE.has(stage) && parkedLine(f)
+        ? [line, parkedLine(f)].filter(Boolean).join(" ")
+        : line,
   };
 }
 

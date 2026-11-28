@@ -89,6 +89,7 @@ describe("leaving a class while a session is under way", () => {
       "cls-1",
       seat,
       payment,
+      "u-1",
       NOW,
     );
     expect(plan).toEqual({ amountPaise: 700_000, sessions: 7 });
@@ -102,6 +103,7 @@ describe("leaving a class while a session is under way", () => {
       "cls-1",
       seat,
       payment,
+      "u-1",
       NOW,
     );
     expect(plan).toEqual({ amountPaise: 300_000, sessions: 3 });
@@ -121,6 +123,7 @@ describe("a next session the host moved inside the window", () => {
       "cls-1",
       seat,
       payment,
+      "u-1",
       NOW,
     );
 

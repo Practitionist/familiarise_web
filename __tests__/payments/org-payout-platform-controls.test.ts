@@ -136,6 +136,7 @@ const db = {
     updateMany: jest.fn(async (_a: { where: Where }) => ({ count: 1 })),
   },
   consultantPayout: { findMany: jest.fn(async () => []) },
+  platformIncident: { findMany: jest.fn(async () => []) },
   organization: {
     findUnique: jest.fn(),
     findUniqueOrThrow: jest.fn(),

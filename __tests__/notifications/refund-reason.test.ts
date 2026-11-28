@@ -11,6 +11,7 @@
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
 import { refundReasonLabel } from "@/lib/novu/humanize";
+import { STAFF_CANCEL_REFUND_REASON } from "@/lib/payments/operations/refund-cause";
 
 describe("refundReasonLabel", () => {
   it("is absent when there is nothing to say, so the template drops its clause", () => {
@@ -96,7 +97,7 @@ describe("refundReasonLabel", () => {
   it("passes already-human copy through verbatim", () => {
     const human = [
       "subscription not scheduled within 48 h — automatic full refund",
-      "moderation (100% — platform-initiated cancellation)",
+      STAFF_CANCEL_REFUND_REASON.MODERATION,
       "trial cancellation (100% per booking-time policy, consultant-initiated)",
       "cancellation (50% per booking-time policy, consultee-initiated)",
       "consultant no-show (#471)",
@@ -106,6 +107,12 @@ describe("refundReasonLabel", () => {
     for (const reason of human) {
       expect(refundReasonLabel(reason)).toBe(reason);
     }
+  });
+
+  it("a ban's reason names undelivered sessions, never a 100% refund of the booking", () => {
+    expect(STAFF_CANCEL_REFUND_REASON.MODERATION).toBe(
+      "moderation (undelivered sessions in full — platform-initiated cancellation)",
+    );
   });
 
   it("scrubs ids from builders not yet mapped instead of printing them", () => {

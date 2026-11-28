@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
 import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
+import { isUnknownIdAnswer } from "@/lib/payments/core/razorpay-unknown-id";
 import Razorpay from "razorpay";
 import { createHash } from "node:crypto";
 import {
@@ -580,23 +581,13 @@ const LIVE_ORDER_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
   "captured",
 ]);
 
-/**
- * An order id Razorpay has no record of (a 400 naming the id, or a 404) — the
- * same reading reconcile-payment-status uses for `unknown_id` (#1708).
- */
+/** An SDK error for an order id Razorpay has no record of. */
 function isUnknownOrderId(error: unknown): boolean {
   const err = error as
     | { statusCode?: unknown; error?: { description?: unknown } }
     | null
     | undefined;
-  const status = err?.statusCode;
-  const description = err?.error?.description;
-  if (status === 404) return true;
-  return (
-    status === 400 &&
-    typeof description === "string" &&
-    /does not exist|not found|invalid id/i.test(description)
-  );
+  return isUnknownIdAnswer(err?.statusCode, err?.error?.description);
 }
 
 /**
@@ -1019,9 +1010,12 @@ export async function getRazorpayRefund(
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
     const refundError = handleRazorpayRefundError(error);
-    // FAMILIARISE_WEB-3V — an id the gateway has no record of is a modelled
-    // outcome the reconciler reports once as a warning, not a fault per poll.
-    if (!isRazorpayUnknownRefundIdError(refundError)) {
+    // An id the gateway has no record of, by either answer, is a modelled
+    // outcome the reconciler reports once per run, not a fault per poll.
+    if (
+      !isRazorpayUnknownRefundIdError(refundError) &&
+      !isRazorpayUnknownOrderError(refundError)
+    ) {
       reportSentryError(error, {
         subsystem: "payments",
         tags: { provider: "razorpay" },
@@ -1079,12 +1073,13 @@ async function firstPaymentIdOfOrder(
 }
 
 /**
- * List all refunds for a payment: an order id, or the `pay_…` id of one
- * capture when a Payment row records a single duplicate capture.
+ * One page of the refunds of a payment: an order id, or the `pay_…` id of one
+ * capture. A page shorter than `limit` is the last one.
  */
 export async function listRazorpayRefunds(
   orderId: string,
   limit: number = 10,
+  skip: number = 0,
 ): Promise<RefundResult[]> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
@@ -1109,6 +1104,7 @@ export async function listRazorpayRefunds(
       () =>
         razorpayClient.payments.fetchMultipleRefund(paymentId, {
           count: limit,
+          skip,
         }),
     );
 
@@ -1122,8 +1118,11 @@ export async function listRazorpayRefunds(
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
     const refundError = handleRazorpayRefundError(error);
-    // The reconciler reports an unknown order once per run, not per row.
-    if (!isRazorpayUnknownOrderError(refundError)) {
+    // The reconciler reports an unknown id once per run, not per row.
+    if (
+      !isRazorpayUnknownOrderError(refundError) &&
+      !isRazorpayUnknownRefundIdError(refundError)
+    ) {
       reportSentryError(error, {
         subsystem: "payments",
         tags: { provider: "razorpay" },

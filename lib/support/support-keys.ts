@@ -16,8 +16,11 @@ export const supportKeys = {
       evidenceRequestId ?? "case",
     ] as const,
   threads: () => ["support", "thread"] as const,
-  thread: (appointmentId: string) =>
-    [...supportKeys.threads(), appointmentId] as const,
+  /** A session's page has its own entry, so one session's thread never answers on another's page. */
+  thread: (appointmentId: string, occurrenceId?: string) =>
+    occurrenceId
+      ? ([...supportKeys.threads(), appointmentId, { occurrenceId }] as const)
+      : ([...supportKeys.threads(), appointmentId] as const),
   requests: () => ["support", "requests"] as const,
   requestList: (
     userId: string | undefined,

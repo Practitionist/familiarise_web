@@ -79,3 +79,13 @@ it.each([
     data: { attendanceSettledAt: NOW, attendanceCorroboratedSessionIds: ids },
   });
 });
+
+it("a read Stream refused for rate keeps that signal when another settler's snapshot answers instead", async () => {
+  mockRead.mockResolvedValue({ kind: "unavailable", throttled: true });
+  expect(await settleOccurrenceAttendance(target, { now: NOW })).toEqual({
+    kind: "settled",
+    intervals: [],
+    throttled: true,
+  });
+  expect(mockStamp).not.toHaveBeenCalled();
+});

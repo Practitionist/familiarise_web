@@ -16,12 +16,18 @@ import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
 import { CaseConflictError } from "@/lib/support/case-transitions";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
-import { AppointmentIdParams } from "@/schemas/support";
-import { SupportThreadCategoryEnum } from "@/schemas/enums";
+import {
+  AppointmentIdParams,
+  SupportThreadQuerySchema,
+  SupportTurnSchema,
+} from "@/schemas/support";
+import {
+  readOpenSessionReports,
+  readShownThread,
+} from "@/lib/support/shown-thread";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { stripCallbackTags } from "@/lib/validation/phone";
 import { applyRateLimit, supportTurnLimiter } from "@/lib/rate-limit";
 import {
   authorizeAppointment,
@@ -30,8 +36,6 @@ import {
 import { isPresenterAuthoredMessage } from "@/lib/support/case-message-actor";
 
 const SUPPORT_ROUTE = "appointments.support";
-
-const CATEGORY = SupportThreadCategoryEnum;
 
 const FlowMessageMetadataSchema = z.object({
   nodeId: z.string().optional(),
@@ -46,30 +50,8 @@ const FlowMessageMetadataSchema = z.object({
     .optional(),
 });
 
-const turnSchema = z
-  .object({
-    clientTurnId: z.string().min(1).max(128).optional(),
-    category: CATEGORY.optional(),
-    chosenOptionId: z.string().max(200).optional(),
-    userMessage: z
-      .string()
-      .transform((s) => stripCallbackTags(s).trim())
-      .pipe(z.string().max(2000))
-      .optional(),
-    urgent: z.boolean().optional(),
-    /** "This didn't fix it" on a resolved human conversation; carries a message. */
-    reopen: z.boolean().optional(),
-  })
-  .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
-    message: "A turn needs a category, a chosen option, or a message",
-  })
-  .refine((v) => !v.reopen || v.userMessage, {
-    message: "Tell us what still isn't fixed",
-    path: ["userMessage"],
-  });
-
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   const id = await parseRouteParams(AppointmentIdParams, params, {
@@ -88,46 +70,25 @@ export async function GET(
         appointmentId,
       });
 
-    const thread = await prisma.supportCase.findFirst({
-      where: {
-        appointmentId,
-        requesterUserId: auth.userId,
-        submitterUserId: auth.userId,
-        deletedAt: null,
-      },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        referenceNumber: true,
-        status: true,
-        activeChannel: true,
-        category: true,
-        flowKey: true,
-        currentNodeId: true,
-        requesterUserId: true,
-        ackDueAt: true,
-        acknowledgedAt: true,
-        resolvedAt: true,
-        csatRating: true,
-        csatAt: true,
-        lastMessageAt: true,
-        createdAt: true,
-        updatedAt: true,
-        messages: {
-          where: { isInternal: false },
-          orderBy: { seq: "asc" },
-          take: -201,
-          select: {
-            id: true,
-            seq: true,
-            sender: true,
-            body: true,
-            metadata: true,
-            createdAt: true,
-          },
-        },
-      },
+    const view = SupportThreadQuerySchema.safeParse(
+      Object.fromEntries(req.nextUrl.searchParams),
+    );
+    if (!view.success) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: view.error.flatten(),
+        context: { route: SUPPORT_ROUTE, action: "get", appointmentId },
+      });
+    }
+    const thread = await readShownThread(appointmentId, auth.userId, {
+      caseId: view.data.caseId,
+      occurrenceId: view.data.occurrence,
     });
+    // The booking's page never shows a session's report, so it links the open ones.
+    const sessionReports = view.data.occurrence
+      ? []
+      : await readOpenSessionReports(appointmentId, auth.userId);
 
     let intents: { category: string; title: string; escalates?: boolean }[] =
       [];
@@ -137,13 +98,19 @@ export async function GET(
       startsAt: Date | null;
       organizationId: string | null;
     } | null = null;
+    // The ended sessions a report can be about; the page asks which one when there are several.
+    let reportSessions: { id: string; startsAt: Date; endsAt: Date }[] = [];
     try {
+      // Upcoming actions keep the next session; the report follows the session the page names.
       const ctx = await buildSupportContext(
         thread?.id ?? "unstarted",
         appointmentId,
         auth.userId,
+        undefined,
+        view.data.occurrence,
       );
       if (ctx) {
+        reportSessions = ctx.reportSessions;
         booking = {
           title: ctx.planTitle,
           kind: ctx.appointmentType,
@@ -203,6 +170,8 @@ export async function GET(
         : null,
       intents,
       booking,
+      reportSessions,
+      sessionReports,
     });
   } catch (cause) {
     return supportError({
@@ -243,7 +212,9 @@ export async function POST(
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;
 
-    const parsed = turnSchema.safeParse(await req.json().catch(() => ({})));
+    const parsed = SupportTurnSchema.safeParse(
+      await req.json().catch(() => ({})),
+    );
     if (!parsed.success) {
       return supportError({
         status: 400,
@@ -270,6 +241,38 @@ export async function POST(
           action: "turn",
           appointmentId,
           attemptedCategory: parsed.data.category,
+        },
+      });
+    }
+
+    // A new intent starts a report on an ended session of this booking; a reply naming its case is checked by the turn.
+    const occurrenceId = parsed.data.appointmentOccurrenceId;
+    const startsReport = Boolean(parsed.data.category);
+    if (
+      occurrenceId &&
+      (startsReport || !parsed.data.caseId) &&
+      !(await prisma.appointmentOccurrence.findFirst({
+        where: {
+          id: occurrenceId,
+          appointmentId,
+          deletedAt: null,
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+          ...(startsReport ? { endsAt: { lte: new Date() } } : {}),
+        },
+        select: { id: true },
+      }))
+    ) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        message: startsReport
+          ? "That session isn't one of this booking's finished sessions."
+          : "That session isn't one of this booking's sessions.",
+        context: {
+          route: "appointments.support",
+          action: "turn",
+          appointmentId,
+          occurrenceId,
         },
       });
     }

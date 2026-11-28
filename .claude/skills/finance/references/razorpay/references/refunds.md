@@ -98,8 +98,11 @@ From [Official Razorpay Refund Entity Docs](https://razorpay.com/docs/api/refund
 
 ### 3-Pass Reconciler (`scripts/refunds/reconcile-pending-refunds.ts`)
 
-1. **Pass 1 (`pending_<uuid>` Placeholders > 1h old)**: Matches via `gr.metadata?.reservationId === refund.id`, binds `rfnd_...` (or deletes the placeholder on `P2002` if a concurrent webhook already bound it), and expires unmatched placeholders after 24h.
-2. **Pass 2 (Real `rfnd_...` `PENDING` Rows > 1h old)**: Polls `getRazorpayRefund(refund.refundId)` without artificial local aging while bank rails report `"pending"`; marks `FAILED` only on gateway `"failed"` or `isRazorpayUnknownRefundIdError`.
+1. **Pass 1 (`pending_<uuid>` Placeholders > 1h old)**: Pages through the refunds of the captured gateway payment (`count: 100`, `skip`, at most 5 pages) and binds only on `gr.metadata?.reservationId === refund.id` (or deletes the placeholder on `P2002` if a concurrent webhook already bound it). A placeholder is marked `FAILED` only when it is over 24h old, the listing ended on a short page with no match and no same-amount refund without a note, and `payments.fetch` of the captured payment under the same keys returns it as `captured`.
+2. **Pass 2 (Real `rfnd_...` `PENDING` Rows > 1h old)**: Polls `getRazorpayRefund(refund.refundId)` without artificial local aging while bank rails report `"pending"`; marks `FAILED` only on gateway `"failed"`.
+
+An unknown-id or 404 answer (`isRazorpayUnknownRefundIdError`, `isRazorpayUnknownOrderError`) never fails a row in either pass, because an id of the other key mode gets the same answer: the row stays `PENDING` and the run raises one standing finding.
+
 3. **Pass 3 (`redriveStrandedRefunds`)**: Replays `SUCCEEDED` rows with `cascadedAt: null` (>10 min old) through `applyRefundCascade`.
 
 ---

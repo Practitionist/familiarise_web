@@ -89,6 +89,39 @@ describe("the FAILED -> retry path", () => {
     expect(data.receivedAt).toBeUndefined();
   });
 
+  it("hands back when the row was first stored, with the claim", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "r1",
+      processed: false,
+      error: "schema mismatch: payment.captured",
+      receivedAt: SIX_MINUTES_AGO,
+      claimedAt: null,
+    });
+
+    const res = await logWebhookEvent(
+      "razorpay",
+      "evt",
+      "payment.captured",
+      {},
+    );
+
+    expect(res).toMatchObject({ isNew: true, receivedAt: SIX_MINUTES_AGO });
+  });
+
+  it("names no earlier receipt for a delivery it stores for the first time", async () => {
+    mockFindUnique.mockResolvedValue(null);
+
+    const res = await logWebhookEvent(
+      "razorpay",
+      "evt",
+      "payment.captured",
+      {},
+    );
+
+    expect(res.isNew).toBe(true);
+    expect(res.receivedAt).toBeUndefined();
+  });
+
   it("claims conditionally, so a racing worker loses", async () => {
     mockFindUnique.mockResolvedValue({
       id: "r1",

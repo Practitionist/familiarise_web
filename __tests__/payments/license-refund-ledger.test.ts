@@ -61,8 +61,15 @@ jest.mock("../../lib/enterprise/system-events", () => {
   return {
     recordSystemError,
     recordSystemErrorSafe: recordSystemError,
+    recordSystemEventSafe: jest.fn().mockResolvedValue(undefined),
   };
 });
+
+// The clawback notice has its own suite; the journal is what this file pins.
+jest.mock("../../lib/payments/payouts/clawback-notifications", () => ({
+  stageClawbackNotice: jest.fn(),
+  stageRaisedClawback: jest.fn(),
+}));
 
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
@@ -155,15 +162,19 @@ function txStub() {
     // CAS `updateMany` (source status in WHERE, `refundedShareAmount` pinned to
     // the pre-read). Keep the surface complete so this suite fails on an
     // assertion rather than on `updateMany is not a function`.
+    // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
     consultantEarnings: {
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     organizationEarnings: {
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     organizationPayout: { update: jest.fn().mockResolvedValue({}) },
+    consultantPayout: { update: jest.fn().mockResolvedValue({}) },
     organizationInvoice: { findUnique: jest.fn().mockResolvedValue(null) },
     creditNote: { findUnique: jest.fn().mockResolvedValue(null) },
     // #1365 — the B2C sibling mint probes both of these and no-ops when the
@@ -291,6 +302,84 @@ describe("a full refund of a LICENSE-funded booking", () => {
       expect.anything(),
       expect.objectContaining({ paymentId: PAYMENT_ID }),
     );
+  });
+});
+
+describe("a refund of a LICENSE-funded booking whose consultant was already paid", () => {
+  it("raises the consultant's receivable for the paid share, net of TDS, and keeps the organisation's refund audit entry", async () => {
+    // The ₹7,000 share left in a COMPLETED payout that withheld ₹700.
+    payment = paymentRow({
+      earnings: [
+        {
+          id: "earn-1",
+          consultantProfileId: CONSULTANT,
+          consultantSharePaise: CONSULTANT_SHARE,
+          refundedShareAmount: 0,
+          status: "PAID",
+          payoutId: "cpo-1",
+          payout: {
+            status: "COMPLETED",
+            amount: CONSULTANT_SHARE,
+            tdsDeducted: 70_000,
+            clawbackInitiatedAt: null,
+          },
+        },
+      ],
+    });
+
+    const tx = txStub();
+    const result = await applyRefundCascade(tx as never, {
+      paymentId: PAYMENT_ID,
+      refundId: REFUND_ID,
+      amountPaise: GROSS,
+      reason: "cancellation",
+    });
+
+    expect(result.clawbackInitiated).toBe(true);
+    // The organisation's own earning was unpaid, so no payout clawback row
+    // stands in for its refund entry in the organisation's audit feed.
+    expect(tx.orgAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.orgAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: ORG,
+        action: "INVOICE_REFUNDED",
+        details: expect.objectContaining({ refundId: REFUND_ID }),
+      }),
+    });
+    // The payout's own counter moves with the journal, by the same net figure.
+    expect(tx.consultantPayout.update).toHaveBeenCalledTimes(1);
+    expect(tx.consultantPayout.update).toHaveBeenCalledWith({
+      where: { id: "cpo-1" },
+      data: {
+        clawbackAmountPaise: { increment: 630_000 },
+        clawbackInitiatedAt: expect.any(Date),
+      },
+    });
+    const clawback = mockPostLedgerTxn.mock.calls
+      .map((call) => call[1])
+      .find((input) => input.idempotencyKey.startsWith("clawback:"));
+    expect(clawback).toMatchObject({
+      idempotencyKey: `clawback:${REFUND_ID}:cpo-1`,
+      payoutId: "cpo-1",
+      postings: [
+        {
+          account: {
+            kind: "CONSULTANT_RECEIVABLE",
+            consultantProfileId: CONSULTANT,
+          },
+          direction: "DEBIT",
+          amountPaise: 630_000,
+        },
+        {
+          account: {
+            kind: "CONSULTANT_PAYABLE",
+            consultantProfileId: CONSULTANT,
+          },
+          direction: "CREDIT",
+          amountPaise: 630_000,
+        },
+      ],
+    });
   });
 });
 

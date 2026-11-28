@@ -102,6 +102,9 @@ jest.mock("../../lib/prisma", () => {
     systemEvent: { create: jest.fn(async () => ({})) },
     // The claim stamps the owed refund; the drive clears it by CAS.
     payment: { updateMany: async () => ({ count: 1 }) },
+    // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+    consultantEarnings: { findMany: async () => [] },
+    organizationEarnings: { findMany: async () => [] },
     refund: { findUnique: async () => null },
     $disconnect: jest.fn(),
   };
@@ -229,7 +232,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     expect(db.consultation.updateMany).not.toHaveBeenCalled();
   });
 
-  it("the detector then cancels and refunds it once it is past the grace window", async () => {
+  it("the detector then proposes it, parked UNVERIFIED, once it is past the grace window", async () => {
     db.consultation.findMany.mockResolvedValue([
       consultation(NO_SHOW_GRACE_MINUTES + 30, [CONSULTEE]),
     ]);
@@ -237,20 +240,20 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     const result = await detectConsultantNoShows();
 
     expect(result.detected).toBe(1);
-    expect(result.refunded).toBe(1);
-    expect(refundBookingPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ paymentId: "pay-1" }),
-    );
-    expect(db.consultation.updateMany).toHaveBeenCalledWith(
+    expect(db.appointmentOccurrence.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: "CANCELLED" }),
+        data: expect.objectContaining({
+          completionStatus: "UNVERIFIED",
+          outcome: "HOST_ABSENT",
+        }),
       }),
     );
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expect(db.consultation.updateMany).not.toHaveBeenCalled();
   });
 
-  it("the detector rolls the claim back when no live occurrence is left to take", async () => {
-    // A concurrent writer took the sessions first: the occurrence CAS moves
-    // zero rows, the parent cancel must not commit, and no refund is issued.
+  it("the detector proposes nothing when no live occurrence is left to take", async () => {
+    // A concurrent writer took the session first: the proposal's CAS moves zero rows.
     db.consultation.findMany.mockResolvedValue([
       consultation(NO_SHOW_GRACE_MINUTES + 30, [CONSULTEE]),
     ]);
@@ -258,7 +261,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
 
     const result = await detectConsultantNoShows();
 
-    expect(result.refunded).toBe(0);
+    expect(result.detected).toBe(0);
     expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
@@ -342,17 +345,22 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     ).toBeGreaterThanOrEqual(HOURLY_MINUTES);
   });
 
-  it.each(["not-final", "unavailable", "expired", "too-early"] as const)(
-    "the detector neither refunds nor strikes while Stream's record is %s",
-    async (kind) => {
+  it.each([
+    { kind: "not-final" },
+    { kind: "unavailable", throttled: false },
+    { kind: "expired" },
+    { kind: "too-early" },
+  ] as const)(
+    "the detector neither refunds nor strikes while Stream's record is $kind",
+    async (unsettled) => {
       db.consultation.findMany.mockResolvedValue([
         consultation(NO_SHOW_GRACE_MINUTES + 30, [CONSULTEE]),
       ]);
-      settlement.current = { kind };
+      settlement.current = unsettled;
 
       const result = await detectConsultantNoShows();
 
-      expect(result).toMatchObject({ detected: 0, refunded: 0, unsettled: 1 });
+      expect(result).toMatchObject({ detected: 0, unsettled: 1 });
       expect(refundBookingPayment).not.toHaveBeenCalled();
       expect(db.consultation.updateMany).not.toHaveBeenCalled();
       expect(db.systemEvent.create).not.toHaveBeenCalled();

@@ -2,7 +2,7 @@
  * The outcome written from a settled record on real Postgres: it is classified
  * with the room's end as it stands after the settle, an end that commits while
  * the write waits leaves the session for a fresh decision, and a consultant
- * no-show settled late still reaches the detector before the sweep parks it.
+ * no-show settled late still reaches the detector, which proposes it.
  */
 import prisma from "../../../lib/prisma";
 import { decideSlotOutcome } from "../../../lib/booking/session-outcome-sweep";
@@ -11,6 +11,7 @@ import { recordMeetingEndedSynchronously } from "../../../lib/stream/session-han
 import { detectConsultantNoShows } from "../../../scripts/appointments/detect-consultant-no-shows";
 import { ATTENDANCE_SETTLE_DELAY_MS } from "../../../lib/meetings/settle-attendance";
 import { fakeStream } from "./harness-stream";
+import { withAppointmentLock } from "../../../utils/appointmentlock";
 import {
   HOUR,
   loadSlot,
@@ -95,6 +96,30 @@ const storedOutcome = (occurrenceId: string) =>
 
 beforeEach(() => fakeStream.reset());
 
+/** The detector's proposal: the session parked UNVERIFIED as HOST_ABSENT, unconfirmed, the booking still live. */
+async function expectProposed(room: Room) {
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: room.occurrenceId },
+      select: {
+        completionStatus: true,
+        outcome: true,
+        outcomeConfirmedAt: true,
+      },
+    }),
+  ).toEqual({
+    completionStatus: "UNVERIFIED",
+    outcome: "HOST_ABSENT",
+    outcomeConfirmedAt: null,
+  });
+  expect(
+    await prisma.consultation.findUniqueOrThrow({
+      where: { id: room.consultationId! },
+      select: { status: true },
+    }),
+  ).toEqual({ status: "APPROVED" });
+}
+
 it("a host's deliberate end that lands after the sweep loaded the room stamps nothing that run; the next run judges with it", async () => {
   const room = await seedPaidConsultation(3);
   await stageHalfHourTimeout(room);
@@ -127,7 +152,50 @@ it("a host's deliberate end that lands after the sweep loaded the room stamps no
   });
 });
 
-it("a consultant no-show whose record settles only at the six-hour fallback is left to the detector, which refunds it", async () => {
+it("a void that would land while a door holds the booking's lock waits: the door's cancel commits first and the void then writes nothing", async () => {
+  const room = await seedPaidConsultation(3);
+  await stageHalfHourTimeout(room);
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { endedReason: "call_ended" },
+  });
+  const now = new Date(room.endsAt.getTime() + READ_AT);
+
+  // A door holds the booking's lock (a cancel between its pending-void check and its refund stamp).
+  await withAppointmentLock(room.appointmentId, async () => {
+    // The pass settles the record and would write the CUT_SHORT void.
+    expect(
+      await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+        now,
+        outages: [],
+        settleDeadlineAt: Date.now() + 5_000,
+      }),
+    ).toEqual({ kind: "deferred", reason: "appointment-busy" });
+    expect(await storedOutcome(room.occurrenceId)).toMatchObject({
+      completionStatus: "SCHEDULED",
+      outcome: null,
+    });
+    // The door commits: the session is cancelled and tombstoned.
+    await prisma.appointmentOccurrence.update({
+      where: { id: room.occurrenceId },
+      data: { completionStatus: "CANCELLED", deletedAt: new Date() },
+    });
+  });
+
+  // The next run takes the lock and finds nothing left to void.
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now,
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", moved: false });
+  expect(await storedOutcome(room.occurrenceId)).toMatchObject({
+    completionStatus: "CANCELLED",
+    outcome: null,
+  });
+});
+
+it("a consultant no-show whose record settles only at the six-hour fallback is left to the detector, which proposes it", async () => {
   const room = await seedPaidConsultation(7);
   // The learner waited the hour; the consultant never came. No report was announced.
   fakeStream.calls.set(room.streamCallId, {
@@ -152,12 +220,7 @@ it("a consultant no-show whose record settles only at the six-hour fallback is l
   expect(decision).toEqual({ kind: "deferred", reason: "no-show-detector" });
 
   await detectConsultantNoShows();
-  expect(
-    await prisma.consultation.findUniqueOrThrow({
-      where: { id: room.consultationId! },
-      select: { status: true },
-    }),
-  ).toEqual({ status: "CANCELLED" });
+  await expectProposed(room);
 });
 
 it("a host's deliberate end that commits while the outcome write waits on the session leaves it SCHEDULED for a fresh decision", async () => {
@@ -192,7 +255,7 @@ it("a host's deliberate end that commits while the outcome write waits on the se
   ).toEqual({ completionStatus: "SCHEDULED", outcome: null });
 });
 
-it("a learner's announced device check never settles a consultant no-show early; at the six-hour fallback the detector refunds it", async () => {
+it("a learner's announced device check never settles a consultant no-show early; at the six-hour fallback the detector proposes it", async () => {
   const room = await seedPaidConsultation(7);
   // A: the learner's device check before the start, announced. B: the hour the learner waited, not yet in stats.
   const sessionB = {
@@ -233,12 +296,7 @@ it("a learner's announced device check never settles a consultant no-show early;
   ).toEqual({ kind: "deferred", reason: "no-show-detector" });
 
   await detectConsultantNoShows();
-  expect(
-    await prisma.consultation.findUniqueOrThrow({
-      where: { id: room.consultationId! },
-      select: { status: true },
-    }),
-  ).toEqual({ status: "CANCELLED" });
+  await expectProposed(room);
 });
 
 it("an ops re-read during which a host's end commits stores nothing; asked again, it names the verdict with that end", async () => {

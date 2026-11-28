@@ -93,6 +93,8 @@ export interface ApprovalLock {
   ttl: number;
   acquiredAt: number;
   client: Redis;
+  /** The acquire's per-call bound, kept for the release. */
+  callTimeoutMs?: number;
 }
 
 interface LockRetryConfig {
@@ -101,6 +103,10 @@ interface LockRetryConfig {
   retryJitter: number;
   exponentialBackoff: boolean;
   driftFactor: number;
+  /** Bounds each Redis call; a stalled call fails the acquire at once, never retried. */
+  callTimeoutMs?: number;
+  /** Epoch ms past which the acquire makes no Redis call and no retry wait; out of time reads as contention. */
+  deadlineAt?: number;
 }
 
 const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
@@ -125,6 +131,14 @@ export const ALLOCATOR_LOCK_RETRY_CONFIG: LockRetryConfig = {
   retryCount: 2,
   retryJitter: 150,
 };
+
+/** A sweep's wait for one booking's lock: ~0.9 s of backoff and 1.5 s per Redis call, then the booking waits for the next run. */
+export const SWEEP_LOCK_RETRY_CONFIG = {
+  ...DEFAULT_RETRY_CONFIG,
+  retryCount: 2,
+  retryJitter: 150,
+  callTimeoutMs: 1_500,
+} satisfies LockRetryConfig;
 
 const DEFAULT_LOCK_TTL = 60000;
 
@@ -155,6 +169,50 @@ function calculateRetryDelay(attempt: number, config: LockRetryConfig): number {
   return baseDelay + jitter;
 }
 
+/** A Redis call that outlived its bound; the TTL frees any key it set later. */
+class RedisCallTimeout extends Error {
+  constructor(ms: number) {
+    super(`Redis call timed out after ${ms} ms`);
+    this.name = "RedisCallTimeout";
+  }
+}
+
+/** `pending`, or a RedisCallTimeout after `ms`; unbounded when `ms` is undefined. */
+async function withCallTimeout<T>(
+  pending: Promise<T>,
+  ms: number | undefined,
+): Promise<T> {
+  if (ms === undefined) return pending;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new RedisCallTimeout(ms)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * The next Redis call's bound: the smaller of the per-call bound and the time
+ * left before `deadlineAt`, and whether the deadline is what limits it. A tie is
+ * the deadline's, since a caller may size the per-call bound to the time left.
+ */
+function callBound(config: LockRetryConfig): {
+  ms: number | undefined;
+  byDeadline: boolean;
+} {
+  if (config.deadlineAt === undefined) {
+    return { ms: config.callTimeoutMs, byDeadline: false };
+  }
+  const left = config.deadlineAt - Date.now();
+  const perCall = config.callTimeoutMs ?? Infinity;
+  return { ms: Math.min(perCall, left), byDeadline: left <= perCall };
+}
+
 async function acquireLockWithRetry(
   key: string,
   ttl: number,
@@ -166,11 +224,15 @@ async function acquireLockWithRetry(
   const startTime = Date.now();
 
   for (let attempt = 0; attempt <= config.retryCount; attempt++) {
+    const { ms: bound, byDeadline } = callBound(config);
+    if (bound !== undefined && bound <= 0) {
+      throw new LockContentionError(key, attempt);
+    }
     try {
-      const result = await client.set(key, value, {
-        nx: true,
-        px: effectiveTTL,
-      });
+      const result = await withCallTimeout(
+        client.set(key, value, { nx: true, px: effectiveTTL }),
+        bound,
+      );
 
       if (result === "OK") {
         const duration = Date.now() - startTime;
@@ -191,11 +253,18 @@ async function acquireLockWithRetry(
           ttl: effectiveTTL,
           acquiredAt: Date.now(),
           client,
+          callTimeoutMs: config.callTimeoutMs,
         };
       }
 
       if (attempt < config.retryCount) {
         const delay = calculateRetryDelay(attempt, config);
+        if (
+          config.deadlineAt !== undefined &&
+          Date.now() + delay >= config.deadlineAt
+        ) {
+          throw new LockContentionError(key, attempt + 1);
+        }
         console.log(
           JSON.stringify({
             event: "lock_retry",
@@ -208,6 +277,8 @@ async function acquireLockWithRetry(
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     } catch (error: unknown) {
+      // Out of time after a refused SET: no key of ours to clean up.
+      if (error instanceof LockContentionError) throw error;
       console.error(
         JSON.stringify({
           event: "lock_error",
@@ -219,9 +290,13 @@ async function acquireLockWithRetry(
       );
       // The SET may have landed before the error: delete it only if it is ours,
       // so neither the retry nor the next caller meets our own key as contention.
-      await releaseIfOurs(client, key, value);
+      await releaseIfOurs(client, key, value, config.deadlineAt);
 
-      if (attempt === config.retryCount) {
+      // A call cut short by the deadline, not by its own bound, is out of time: no breaker failure.
+      if (error instanceof RedisCallTimeout && byDeadline) {
+        throw new LockContentionError(key, attempt + 1);
+      }
+      if (attempt === config.retryCount || error instanceof RedisCallTimeout) {
         throw error;
       }
     }
@@ -246,7 +321,15 @@ async function acquireGuarded(
   context: string,
   config: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
-  if (!(await checkRedisHealth())) {
+  const { ms: probeBound } = callBound(config);
+  if (probeBound !== undefined && probeBound <= 0) {
+    throw new LockContentionError(key, 0);
+  }
+  // A stalled PING reads as Redis unavailable for this caller only; it is not cached as unhealthy.
+  const healthy = await withCallTimeout(checkRedisHealth(), probeBound).catch(
+    () => false,
+  );
+  if (!healthy) {
     throw new BookingLockUnavailableError(context);
   }
 
@@ -288,9 +371,19 @@ async function releaseIfOurs(
   client: Redis,
   key: string,
   value: string,
+  deadlineAt?: number,
 ): Promise<void> {
+  const left =
+    deadlineAt === undefined
+      ? SLOT_BATCH_REDIS_TIMEOUT_MS
+      : deadlineAt - Date.now();
+  // Past the caller's deadline no further call starts; the TTL frees the key.
+  if (left <= 0) return;
   try {
-    await withRedisTimeout(client.eval(RELEASE_LOCK_SCRIPT, [key], [value]));
+    await withCallTimeout(
+      client.eval(RELEASE_LOCK_SCRIPT, [key], [value]),
+      Math.min(SLOT_BATCH_REDIS_TIMEOUT_MS, left),
+    );
   } catch {
     // The TTL still frees the key; the caller's own error is the one to report.
   }
@@ -298,10 +391,9 @@ async function releaseIfOurs(
 
 async function releaseLock(lock: ApprovalLock): Promise<void> {
   try {
-    const result = await lock.client.eval(
-      RELEASE_LOCK_SCRIPT,
-      [lock.key],
-      [lock.value],
+    const result = await withCallTimeout(
+      lock.client.eval(RELEASE_LOCK_SCRIPT, [lock.key], [lock.value]),
+      lock.callTimeoutMs,
     );
 
     const heldDuration = Date.now() - lock.acquiredAt;

@@ -84,6 +84,8 @@ const txStub = {
     findMany: jest.fn().mockResolvedValue([]),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
+  // The owed-refund stamp cancels the unsent payouts that batched the payment's earnings; none here.
+  organizationEarnings: { findMany: jest.fn().mockResolvedValue([]) },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // No session of the subscription was refunded on its own.
   refund: { findMany: jest.fn().mockResolvedValue([]) },
@@ -97,6 +99,8 @@ const txStub = {
     updateManyAndReturn: jest
       .fn()
       .mockResolvedValue([{ id: "slot-1" }, { id: "slot-2" }]),
+    // The settled stamp on a voided session the cancel refunds.
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   // The cancel route reads the open proposals, then CASes each by id.
   rescheduleRequest: {
@@ -197,6 +201,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { GET as previewHandler } from "@/app/api/appointments/[appointmentId]/cancel/preview/route";
 import type { RefundTier } from "@/lib/payments/operations/cancellation-policy";
+import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
 import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
 
 const HOUR = 3_600_000;
@@ -310,6 +315,12 @@ type Case = {
   grossPaise: number;
   priorRefundPaise?: number;
   actor: "consultee" | "consultant" | "operator";
+  /** A session that ended this many hours ago and was voided: cut short, confirmed, not settled. */
+  voidedHoursAgo?: number;
+  /** The void's cut-short verdict is still waiting for its confirmation. */
+  voidUnconfirmed?: boolean;
+  /** The plan price before discounts and credits; zero on a booking that cost nothing. */
+  listPricePaise?: number;
 };
 
 /** The booking as the database answers it, before and after the cancel tx. */
@@ -334,6 +345,9 @@ function bookingRows(c: Case) {
         {
           id: "pay-1",
           amount: c.grossPaise,
+          ...(c.listPricePaise !== undefined && {
+            originalAmount: c.listPricePaise,
+          }),
           paymentIntent: c.paymentIntent ?? "pi_gateway_1",
           refunds: c.priorRefundPaise
             ? [{ amountPaise: c.priorRefundPaise, status: "SUCCEEDED" }]
@@ -341,14 +355,36 @@ function bookingRows(c: Case) {
           disputes: [],
         },
       ],
-      occurrences: [...done, ...live],
+      occurrences: [
+        ...done,
+        ...live,
+        ...(c.voidedHoursAgo
+          ? [
+              {
+                id: "occ-void",
+                startsAt: new Date(Date.now() - c.voidedHoursAgo * HOUR),
+                endsAt: new Date(Date.now() - (c.voidedHoursAgo - 1) * HOUR),
+                ordinal: 1,
+                completionStatus: "VOIDED",
+                outcome: "CUT_SHORT",
+                outcomeAt: new Date(Date.now() - 2 * HOUR),
+                outcomeConfirmedAt: c.voidUnconfirmed
+                  ? null
+                  : new Date(Date.now() - HOUR),
+                deletedAt: null,
+                seatsSettledAt: null,
+              },
+            ]
+          : []),
+      ],
       // #1766 — the plan entitlement; every fixture's plan is exactly the
       // sessions it holds, so the unused-session quote and the old
       // allocated-slot proration agree on the base.
       subscription:
         c.kind === "subscription"
           ? {
-              sessionsTotal: done.length + live.length,
+              sessionsTotal:
+                done.length + live.length + (c.voidedHoursAgo ? 1 : 0),
               subscriptionPlan: { totalSessions: 0 },
             }
           : null,
@@ -718,6 +754,254 @@ describe("the quote's own numbers hold up", () => {
     expect(preview.refundPct).toBe(100);
     expect(preview.estimatedRefundPaise).toBe(500_000);
     expect(cancelled.refund.amountRefundedPaise).toBe(500_000);
+  });
+});
+
+describe("a consultation whose only session was voided and is not settled", () => {
+  const voided = (actor: Case["actor"]): Case => ({
+    name: "cut short and voided",
+    kind: "consultation",
+    policy: DEFAULT_POLICY,
+    liveSlotHours: [],
+    voidedHoursAgo: 30,
+    grossPaise: 100_000,
+    actor,
+  });
+
+  it.each(["consultee", "consultant"] as const)(
+    "is quoted and refunded in full when the %s cancels, once, and the cancel settles the session",
+    async (actor) => {
+      const { preview, cancelRes, cancelled } = await quoteThenCancel(
+        voided(actor),
+      );
+
+      expect(preview).toMatchObject({
+        refundPct: 100,
+        estimatedRefundPaise: 100_000,
+      });
+      expect(cancelRes.status).toBe(200);
+      expect(cancelled.refund).toMatchObject({
+        amountRefundedPaise: 100_000,
+        status: "REFUNDED",
+      });
+      expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
+      // The stamp the day-14 sweep's cohort requires null, in the cancel's transaction.
+      expect(txStub.appointmentOccurrence.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["occ-void"] },
+          completionStatus: "VOIDED",
+          seatsSettledAt: null,
+          deletedAt: null,
+        },
+        data: { seatsSettledAt: expect.any(Date) },
+      });
+    },
+  );
+
+  it("refuses with nothing refunded when the session was settled under the cancel", async () => {
+    txStub.appointmentOccurrence.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const { cancelRes, cancelled } = await quoteThenCancel(voided("consultee"));
+
+    expect(cancelRes.status).toBe(409);
+    expect(cancelled.code).toBe("BOOKING_CHANGED");
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+const prismaOccurrences = (
+  jest.requireMock("../../lib/prisma").default as {
+    appointmentOccurrence: { findMany: jest.Mock };
+  }
+).appointmentOccurrence;
+/** The pending-void gate's own read, on whichever client the door uses. */
+const gateRead =
+  (c: Case) => async (args: { where?: { completionStatus?: unknown } }) =>
+    args.where?.completionStatus === "VOIDED"
+      ? bookingRows(c)[0].occurrences.filter(
+          (o) => o.completionStatus === "VOIDED",
+        )
+      : [];
+const armGate = (c: Case) => {
+  txStub.appointmentOccurrence.findMany.mockImplementation(gateRead(c));
+  prismaOccurrences.findMany.mockImplementation(gateRead(c));
+};
+/** Platform staff, not a party, through the audited door: the preview, then the cancel. */
+async function staffQuoteThenCancel(c: Case) {
+  mockGetSession.mockResolvedValue({
+    user: {
+      id: "admin-1",
+      name: "Ops",
+      role: "ADMIN",
+      twoFactorEnabled: true,
+      consultantProfileId: null,
+      consulteeProfileId: null,
+    },
+  });
+  mockAppointmentFindUnique.mockResolvedValue(appointmentRow(c.kind));
+  mockAppointmentFindMany.mockImplementation(async () => bookingRows(c));
+  const previewRes = await previewHandler(
+    new Request(`http://localhost/api/appointments/${APPT}/cancel/preview`),
+    makeParams(APPT),
+  );
+  const request = new Request(
+    `http://localhost/api/appointments/${APPT}/cancel`,
+    { method: "POST" },
+  );
+  grantPlatformCancel(request, "ops-1");
+  const cancelRes = await cancelHandler(request as never, makeParams(APPT));
+  return { previewRes, cancelRes };
+}
+
+describe("a plan with a voided session that still waits for its verdict", () => {
+  // Four sessions for ₹4,000: one held, one cut short and unconfirmed, two ahead.
+  const waiting = (actor: Case["actor"], over: Partial<Case> = {}): Case => ({
+    name: "plan with an unconfirmed void",
+    kind: "subscription",
+    policy: DEFAULT_POLICY,
+    liveSlotHours: [120, 300],
+    completedSlotHours: [-60],
+    voidedHoursAgo: 30,
+    voidUnconfirmed: true,
+    grossPaise: 400_000,
+    actor,
+    ...over,
+  });
+  afterEach(() => {
+    prismaOccurrences.findMany.mockReset().mockResolvedValue([]);
+  });
+
+  it.each(["consultee", "consultant"] as const)(
+    "refuses the %s at the preview and at the cancel with one sentence, and commits nothing",
+    async (actor) => {
+      const c = waiting(actor);
+      armGate(c);
+
+      const { previewRes, preview, cancelRes, cancelled } =
+        await quoteThenCancel(c);
+
+      expect(previewRes.status).toBe(409);
+      expect(cancelRes.status).toBe(409);
+      expect(preview.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.error).toBe(preview.error);
+      expect(cancelled.error).toContain(
+        "You can cancel this plan once that's confirmed, so the refund counts that session correctly",
+      );
+      expect(txStub.subscription.updateMany).not.toHaveBeenCalled();
+      expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses platform staff the same way", async () => {
+    const c = waiting("consultee");
+    armGate(c);
+
+    const { previewRes, cancelRes } = await staffQuoteThenCancel(c);
+
+    expect(previewRes.status).toBe(409);
+    expect((await previewRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(cancelRes.status).toBe(409);
+    expect((await cancelRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(txStub.subscription.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("refunds the void's unit with the two sessions ahead once its verdict is confirmed", async () => {
+    const c = waiting("consultee", { voidUnconfirmed: false });
+    armGate(c);
+
+    const { preview, cancelRes, cancelled } = await quoteThenCancel(c);
+
+    expect(preview.estimatedRefundPaise).toBe(300_000);
+    expect(cancelRes.status).toBe(200);
+    expect(cancelled.refund.amountRefundedPaise).toBe(300_000);
+  });
+
+  it("lets a plan that cost nothing be cancelled: no refund waits on the verdict", async () => {
+    const c = waiting("consultee", {
+      completedSlotHours: [],
+      grossPaise: 0,
+      listPricePaise: 0,
+      paymentIntent: "free_1730000000_sub",
+    });
+    armGate(c);
+
+    const { previewRes, cancelRes } = await quoteThenCancel(c);
+
+    expect(previewRes.status).toBe(200);
+    expect(cancelRes.status).toBe(200);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("a consultation whose voided session still waits for its verdict", () => {
+  const waiting = (actor: Case["actor"], over: Partial<Case> = {}): Case => ({
+    name: "cut short, unconfirmed",
+    kind: "consultation",
+    policy: DEFAULT_POLICY,
+    liveSlotHours: [],
+    voidedHoursAgo: 30,
+    voidUnconfirmed: true,
+    grossPaise: 100_000,
+    actor,
+    ...over,
+  });
+  const arm = armGate;
+  afterEach(() => {
+    prismaOccurrences.findMany.mockReset().mockResolvedValue([]);
+  });
+
+  it.each(["consultee", "consultant"] as const)(
+    "refuses the %s at the preview and at the cancel with one sentence, and commits nothing",
+    async (actor) => {
+      const c = waiting(actor);
+      arm(c);
+
+      const { previewRes, preview, cancelRes, cancelled } =
+        await quoteThenCancel(c);
+
+      expect(previewRes.status).toBe(409);
+      expect(cancelRes.status).toBe(409);
+      expect(preview.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.code).toBe("CANCEL_WAITS_FOR_VERDICT");
+      expect(cancelled.error).toBe(preview.error);
+      expect(cancelled.error).toContain(
+        "You can cancel this booking once that's confirmed, with the session then refunded in full",
+      );
+      expect(txStub.consultation.updateMany).not.toHaveBeenCalled();
+      expect(txStub.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
+      expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses platform staff the same way", async () => {
+    const c = waiting("consultee");
+    arm(c);
+
+    const { previewRes, cancelRes } = await staffQuoteThenCancel(c);
+
+    expect(previewRes.status).toBe(409);
+    expect((await previewRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(cancelRes.status).toBe(409);
+    expect((await cancelRes.json()).code).toBe("CANCEL_WAITS_FOR_VERDICT");
+    expect(txStub.consultation.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("lets a booking that cost nothing be cancelled: no refund waits on the verdict", async () => {
+    const c = waiting("consultee", {
+      grossPaise: 0,
+      listPricePaise: 0,
+      paymentIntent: "free_1730000000_cons",
+    });
+    arm(c);
+
+    const { previewRes, cancelRes } = await quoteThenCancel(c);
+
+    expect(previewRes.status).toBe(200);
+    expect(cancelRes.status).toBe(200);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 });
 

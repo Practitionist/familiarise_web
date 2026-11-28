@@ -4,7 +4,7 @@ type: explanation
 band: index
 audience: sde1
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-24
 ---
 
 # Support system design
@@ -86,7 +86,7 @@ flowchart LR
 
 A customer reaches support in one of five ways. **Booking help** walks a short guided tree for one booking (no-show, cancel and refund, reschedule, payment, recording, quality, technical, documents, sponsorship billing, org disputes and, with the chat-intervention change, a safety concern). The **help centre** runs stateless platform flows for problems not tied to a booking: payments and billing, account access, platform technical issues, org operator billing, expert tax, and general questions. Dashboard **requests** let an organisation owner or maintainer file on behalf of a member. The public **contact form** files an anonymous grievance with an email that must be confirmed. Staff can also open a case from a **moderation report**.
 
-Most problems end inside the tree. Booking help keeps one self-serve thread per booking and person, which is a `SupportCase` on the `SELF_SERVE` channel with no SLA and no staff notification; help-centre flows are stateless and write nothing until they escalate. When a tree answers the question, the turn writes a `SupportFlowOutcome` row with outcome `RESOLVED`, which is how the deflection rate is measured, and the customer can rate whether it helped. A turn hands off to a person when the tree reaches an escalating answer, when the customer types words such as "human", "complaint", "chargeback" or "fraud", when the refund at stake is ₹500 (50,000 paise) or more, or after two unrecognised replies in a row (`decideEscalation()` in `lib/support/escalation.ts`, plus the extra reasons in `runSupportTurn()`).
+Most problems end inside the tree. Booking help keeps one self-serve thread per booking and person, which is a `SupportCase` on the `SELF_SERVE` channel with no SLA and no staff notification (one exception: a no-show report is its own case on the session it is about, so the platform can read it when it judges that session's verdict; see [a no-show report](../support/01-intake-and-flows.md#a-no-show-report)); help-centre flows are stateless and write nothing until they escalate. When a tree answers the question, the turn writes a `SupportFlowOutcome` row with outcome `RESOLVED`, which is how the deflection rate is measured, and the customer can rate whether it helped. A turn hands off to a person when the tree reaches an escalating answer, when the customer types words such as "human", "complaint", "chargeback" or "fraud", when the refund at stake is ₹500 (50,000 paise) or more, or after two unrecognised replies in a row (`decideEscalation()` in `lib/support/escalation.ts`, plus the extra reasons in `runSupportTurn()`).
 
 ```mermaid
 flowchart TD

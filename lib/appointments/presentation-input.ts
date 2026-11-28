@@ -5,6 +5,7 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
+import { pendingVoidVerdict } from "@/lib/booking/pending-void-verdict";
 import {
   sessionsTotalOf,
   soldTermsOf,
@@ -241,6 +242,7 @@ export function toPresentationInput(
     sponsorOrgName: sponsored ? args.sponsorOrgName : null,
     holdExpiresAt,
     history: a.statusHistory,
+    parkedSessions: a.parkedSessions,
     source,
     reschedule: openReschedule(a, args.viewerId),
     seatStatus:
@@ -294,6 +296,9 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
         // #1569 — a voided session is a miss too.
         voidedAt: o.voidedAt ? new Date(o.voidedAt) : null,
         outcome: o.outcome,
+        outcomeConfirmedAt: o.outcomeConfirmedAt
+          ? new Date(o.outcomeConfirmedAt)
+          : null,
       })),
     now: new Date(),
   });
@@ -302,6 +307,7 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
     N,
     exitRight: ledger.exitRight,
     undelivered: ledger.remaining + ledger.neverScheduled,
+    exitWait: pendingVoidVerdict(normalizeOccurrences(a.occurrences)),
   };
 }
 

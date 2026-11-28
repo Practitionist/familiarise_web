@@ -32,6 +32,7 @@ const rzp = {
   ordersCreate: jest.fn(),
   paymentsRefund: jest.fn(),
   paymentsFetchMultipleRefund: jest.fn(),
+  refundsFetch: jest.fn(),
 };
 
 jest.mock("razorpay", () => {
@@ -46,12 +47,19 @@ jest.mock("razorpay", () => {
       fetchMultipleRefund: (...a: unknown[]) =>
         rzp.paymentsFetchMultipleRefund(...a),
     },
+    refunds: { fetch: (...a: unknown[]) => rzp.refundsFetch(...a) },
   }));
 });
+jest.mock("../../lib/observability/report", () => ({
+  ...jest.requireActual("../../lib/observability/report"),
+  reportSentryError: jest.fn(),
+}));
 
 import { PaymentGateway } from "@prisma/client";
+import { reportSentryError } from "@/lib/observability/report";
 import {
   createRazorpayRefund,
+  getRazorpayRefund,
   listRazorpayRefunds,
   createRazorpayOrder,
   fetchRazorpayOrder,
@@ -185,6 +193,32 @@ describe("PM-12 — listRazorpayRefunds resolves the captured payment id", () =>
 
     expect(paymentsFetchMultipleRefund).toHaveBeenCalledTimes(1);
     expect(paymentsFetchMultipleRefund.mock.calls[0][0]).toBe("pay_captured");
+  });
+});
+
+describe("getRazorpayRefund leaves an id the gateway does not know to the reconciler's one report", () => {
+  it.each([
+    ["a 404", { statusCode: 404, error: { description: "not found" } }, false],
+    [
+      "a 400 naming the id",
+      {
+        statusCode: 400,
+        error: {
+          code: "BAD_REQUEST_ERROR",
+          description: "The id provided does not exist",
+          reason: "input_validation_failed",
+        },
+      },
+      false,
+    ],
+    ["a 502", { statusCode: 502, error: { code: "GATEWAY_ERROR" } }, true],
+  ])("%s", async (_label, gatewayError, reported) => {
+    jest.mocked(reportSentryError).mockClear();
+    rzp.refundsFetch.mockRejectedValue(gatewayError);
+
+    await expect(getRazorpayRefund("rfnd_1")).rejects.toBeDefined();
+
+    expect(jest.mocked(reportSentryError).mock.calls.length > 0).toBe(reported);
   });
 });
 

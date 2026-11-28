@@ -349,6 +349,8 @@ export async function transitionWebinarEvent(
     to: WebinarStatus;
     data?: Omit<Prisma.WebinarUncheckedUpdateManyInput, "status">;
     fromIn?: WebinarStatus[];
+    /** Extra predicates for the CAS UPDATE only, as on `transitionTrial`. */
+    whereAnd?: Prisma.WebinarWhereInput;
   },
 ): Promise<void> {
   const before = await tx.webinar.findUnique({
@@ -358,6 +360,7 @@ export async function transitionWebinarEvent(
   const res = await tx.webinar.updateMany({
     where: {
       ...args.where,
+      ...(args.whereAnd ? { AND: [args.whereAnd] } : {}),
       status: { in: args.fromIn ?? EVENT_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
@@ -382,6 +385,8 @@ export async function transitionClassEvent(
     to: ClassStatus;
     data?: Omit<Prisma.ClassUncheckedUpdateManyInput, "status">;
     fromIn?: ClassStatus[];
+    /** Extra predicates for the CAS UPDATE only, as on `transitionTrial`. */
+    whereAnd?: Prisma.ClassWhereInput;
   },
 ): Promise<void> {
   // #1554 — a class is one wrapper with N occurrences, so its id is the
@@ -396,6 +401,7 @@ export async function transitionClassEvent(
   const res = await tx.class.updateMany({
     where: {
       ...args.where,
+      ...(args.whereAnd ? { AND: [args.whereAnd] } : {}),
       status: { in: args.fromIn ?? CLASS_EVENT_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },

@@ -98,6 +98,7 @@ import { ClassSeriesRetimeButton } from "./ClassSeriesRetimeButton";
 import { useClassSessionActions } from "./ClassSessionControls";
 import { useSubscriptionReturnActions } from "./SubscriptionReturnControls";
 import { SessionSchedule, type SessionRowAction } from "./SessionSchedule";
+import { sessionTakesRating } from "@/components/appointments/SessionTimeline";
 import { SessionAttendance } from "./SessionAttendance";
 import {
   RescheduleProposalCard,
@@ -109,6 +110,7 @@ import {
 } from "@/lib/appointments/reschedule-answer";
 import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
+import { sessionReportHref } from "@/lib/support/report-link";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
@@ -134,6 +136,7 @@ const POST_APPROVAL = new Set<BookingStateKind>([
   "CONFIRMED",
   "AWAITING_ALLOCATION",
   "BEING_MOVED",
+  "AWAITING_DECISION",
   "COMPLETED",
 ]);
 
@@ -414,6 +417,31 @@ export function AppointmentDetailClient({
   const supportHref = `${supportRequestsBase}/${caseKeyOf({ kind: "booking", id: appointmentId })}`;
   const openHelp = (intent?: string) =>
     router.push(intent ? `${supportHref}?intent=${intent}` : supportHref);
+  // Each ended session has its own report, opened on that session whatever else is open on the booking.
+  const reportRowAction = (session: {
+    occurrenceId: string;
+    appointmentId: string | null;
+    endsAt: Date | null;
+    isTentative: boolean;
+    completionStatus: string | null;
+  }): SessionRowAction[] => {
+    const href = sessionReportHref(
+      supportRequestsBase,
+      appointmentId,
+      session,
+      new Date(),
+    );
+    return href
+      ? [
+          {
+            key: `report-${session.occurrenceId}`,
+            label: "Report a problem with this session",
+            href,
+            onSelect: () => router.push(href),
+          },
+        ]
+      : [];
+  };
 
   if (isLoading && !detail) {
     return <AppointmentDetailSkeleton />;
@@ -896,6 +924,7 @@ export function AppointmentDetailClient({
             // A failing read leaves every row looking unrated; the notice
             // above explains instead.
             if (sessionFeedback.isError) return attendance;
+            if (!sessionTakesRating(session)) return attendance;
             if (role === "consultee" && !canRate && rating === null) {
               return attendance;
             }
@@ -928,6 +957,7 @@ export function AppointmentDetailClient({
               ? classActions.rowActions(session.occurrenceId)
               : []),
             ...returnActions.rowActions(session.occurrenceId),
+            ...reportRowAction(session),
           ]}
           sessionsPerWeek={sessionsPerWeek}
           footnote={returnActions.footnote}
@@ -1484,6 +1514,13 @@ export function AppointmentDetailClient({
               </Button>
             ))}
             {soleSession && scheduleItems.map(renderActionButton)}
+            {/* With the Sessions card folded away, the one session's report sits in the header. */}
+            {soleSession &&
+              reportRowAction(soleSession).map((report) => (
+                <Button key={report.key} variant="outline" size="sm" asChild>
+                  <Link href={report.href ?? "#"}>{report.label}</Link>
+                </Button>
+              ))}
             {renderExtraActions?.(vm, { openChat: setChatTarget })}
           </div>
 

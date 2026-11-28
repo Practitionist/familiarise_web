@@ -3,10 +3,9 @@
  */
 
 /**
- * #1580 C-P1-3 — `isProvider` used to equal "is the plan owner", so an
- * ACCEPTED co-host opening a support thread on their own webinar was offered
- * the attendee "the expert didn't join" flow. The seat predicate now reads
- * the owner plus every ACCEPTED collaborator.
+ * `isProvider` is the host identity reports are judged by (`sessionHostUserIds`):
+ * the plan's owner, every ACCEPTED collaborator, and a paid trial's expert. The
+ * report itself follows the ended session the page names.
  */
 
 jest.mock("../../lib/prisma", () => ({
@@ -51,17 +50,15 @@ beforeEach(() => {
     payment: [],
     consultation: null,
     subscription: null,
+    trial: null,
     webinar: {
       webinarPlan: {
-        consultantProfileId: "cp-owner",
         title: "W",
-        collaborators: [{ consultantProfileId: "cp-cohost" }],
+        consultantProfile: { userId: "u-owner" },
+        collaborators: [{ consultantProfile: { userId: "u-cohost" } }],
       },
     },
     class: null,
-  });
-  mockPrisma.user.findUnique.mockResolvedValue({
-    consultantProfileId: "cp-cohost",
   });
 });
 
@@ -86,4 +83,122 @@ it("reads only ACCEPTED collaborators whose profile is not soft-deleted", async 
   expect(select.class.select.classPlan.select.collaborators.where).toEqual(
     expected,
   );
+});
+
+const reasonsOffered = (
+  ctx: NonNullable<Awaited<ReturnType<typeof buildSupportContext>>>,
+) =>
+  flowsForContext(ctx)
+    .filter((f) => f.category === "NO_SHOW")
+    .flatMap((f) =>
+      Object.values(f.nodes).flatMap((n) =>
+        n.kind === "TERMINAL" && n.reason ? [n.reason] : [],
+      ),
+    );
+
+it("gives a paid trial's expert the host flow, so 'I was there' is the host's dispute", async () => {
+  mockPrisma.appointment.findUnique.mockResolvedValueOnce({
+    ...(await mockPrisma.appointment.findUnique.getMockImplementation()?.()),
+    appointmentType: "SUBSCRIPTION",
+    webinar: null,
+    trial: {
+      subscriptionPlan: { consultantProfile: { userId: "u-trial-expert" } },
+    },
+  });
+  const ctx = await buildSupportContext(
+    "t1",
+    "appt1",
+    "u-trial-expert",
+    "NO_SHOW",
+  );
+  expect(ctx?.isProvider).toBe(true);
+  // The read asks for the trial plan's author, as the report judgement does.
+  const select = mockPrisma.appointment.findUnique.mock.calls[0][0].select;
+  expect(select.trial).toEqual({
+    select: {
+      subscriptionPlan: {
+        select: { consultantProfile: { select: { userId: true } } },
+      },
+    },
+  });
+  expect(reasonsOffered(ctx!)).toContain("provider_attended");
+  expect(reasonsOffered(ctx!)).not.toContain("attendee_attended");
+});
+
+it("offers the report for the ended session the page names while upcoming actions keep the next session", async () => {
+  const future = new Date(Date.now() + 24 * 3_600_000);
+  mockPrisma.appointment.findUnique.mockResolvedValue({
+    ...(await mockPrisma.appointment.findUnique.getMockImplementation()?.()),
+    appointmentType: "SUBSCRIPTION",
+    webinar: null,
+    subscription: {
+      subscriptionPlan: { title: "S", consultantProfile: { userId: "u-host" } },
+    },
+    occurrences: [
+      {
+        id: "slot-a",
+        startsAt: PAST_START,
+        endsAt: PAST_END,
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+      {
+        id: "slot-b",
+        startsAt: future,
+        endsAt: new Date(future.getTime() + 3_600_000),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
+      },
+    ],
+  });
+  const onA = await buildSupportContext(
+    "t1",
+    "appt1",
+    "u-learner",
+    undefined,
+    "slot-a",
+  );
+  expect(onA).toMatchObject({
+    stage: "UPCOMING",
+    reportOccurrenceId: "slot-a",
+  });
+  expect(onA!.reportSessions.map((r) => r.id)).toEqual(["slot-a"]);
+  expect(reasonsOffered(onA!)).toContain("attendee_attended");
+
+  // The future session cannot be reported on, so its page offers no report.
+  const onB = await buildSupportContext(
+    "t1",
+    "appt1",
+    "u-learner",
+    undefined,
+    "slot-b",
+  );
+  expect(onB!.reportSessions).toEqual([]);
+  expect(reasonsOffered(onB!)).toEqual([]);
+});
+
+it("picks the only ended session for a report, and none when several ended and none is named", async () => {
+  const earlier = new Date(PAST_START.getTime() - 48 * 3_600_000);
+  mockPrisma.appointment.findUnique.mockResolvedValue({
+    ...(await mockPrisma.appointment.findUnique.getMockImplementation()?.()),
+    occurrences: [
+      {
+        id: "slot-old",
+        startsAt: earlier,
+        endsAt: new Date(earlier.getTime() + 3_600_000),
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+      {
+        id: "slot-a",
+        startsAt: PAST_START,
+        endsAt: PAST_END,
+        isTentative: false,
+        completionStatus: "COMPLETED",
+      },
+    ],
+  });
+  const ctx = await buildSupportContext("t1", "appt1", "u-learner", "NO_SHOW");
+  expect(ctx!.reportSessions.map((r) => r.id)).toEqual(["slot-a", "slot-old"]);
+  expect(ctx!.reportOccurrenceId).toBeNull();
 });

@@ -328,6 +328,7 @@ describe("Dashboard 30m rejoin grace & mid-slot ended_early reopen", () => {
           completionStatus: "COMPLETED",
           meetingEndedAt: null,
           meetingEndedReason: null,
+          parked: false,
         },
         { now },
       ),
@@ -664,6 +665,7 @@ describe("OverrunBanner state & Trial in-call chat guard", () => {
       meetingId: "mtg-1",
       meetingEndedAt: new Date(Date.now() - 60 * MINUTE),
       meetingEndedReason: "call_ended",
+      parked: false,
     };
 
     expect(slotStatus({ ...baseVm, outcome: "DELIVERED" }, 15 * MINUTE)).toBe(

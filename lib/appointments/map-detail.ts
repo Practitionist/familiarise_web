@@ -30,6 +30,7 @@ import {
   bucketFactsOf,
   listStatusFacts,
   paymentsLapsed,
+  planEndedOf,
   trialHoldFacts,
 } from "./list-status-facts";
 import {
@@ -147,7 +148,10 @@ export function mapAppointmentDetail(
   // #1554 — progress counts LIVE rows, exactly as map-consultee's
   // groupProgress does, so "2 of 10" reads the same on the list and here.
   const live = liveOccurrences(occurrences);
-  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
+  // A parked session is over but not done; a subscription's count is its entitlement below.
+  const completed = live.filter(
+    (s) => isOccurrenceOver(s, now) && !s.parked,
+  ).length;
   // #1766 — a subscription's programme is its frozen entitlement, so the
   // count reads "0 of T" before allocation instead of vanishing at 0 rows.
   const entitlement = detailEntitlement(appointment, now);
@@ -264,6 +268,8 @@ export function mapAppointmentDetail(
     refunded: listStatusFacts(appointment, occurrences).refunded,
     payDeadline: pendingDeadline ?? null,
     payLapsed: paymentsLapsed(appointment.payment),
+    parkedSessions: holdFacts.parkedSessions,
+    planEnded: planEndedOf(appointment.subscription, now),
     bookingSource:
       appointment.consultation?.bookingSource ??
       appointment.subscription?.bookingSource ??

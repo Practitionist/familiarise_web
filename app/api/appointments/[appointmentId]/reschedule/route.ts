@@ -820,9 +820,11 @@ async function requestReschedule(
             const rescheduledHoldUntil = new Date(
               anchorMs + holdHours * 60 * 60 * 1000,
             );
+            // A subscription tranche keeps the date its delivered cycle stamped.
             const pendingEarningsWhere = {
               status: "PENDING" as const,
               holdUntil: { not: null, lt: rescheduledHoldUntil },
+              cycleOrdinal: null,
               payment: { appointmentId },
             };
             await tx.consultantEarnings?.updateMany?.({

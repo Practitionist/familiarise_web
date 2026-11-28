@@ -51,6 +51,7 @@ function session(
     endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000).toISOString(),
     completionStatus,
     outcome: null,
+    parked: false,
   };
 }
 
