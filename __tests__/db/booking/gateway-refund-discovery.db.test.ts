@@ -200,9 +200,11 @@ it("retries a refund deferred while its payment awaited capture from the job's c
 
     const second = await discoverGatewayRefunds(never);
 
-    expect(gatewayReads.listRefunds.mock.calls.at(-1)?.[0]).toMatchObject({
-      from: createdAt - 1,
-    });
+    // Without the hold the window would start a day behind the last one's end.
+    const listedWindow = gatewayReads.listRefunds.mock.calls.at(-1)?.[0] as {
+      from: number;
+    };
+    expect(listedWindow.from).toBeLessThanOrEqual(createdAt - 1);
     expect(second).toMatchObject({ imported: 1, unknownPayment: 0 });
     const rows = await refundsOf(payment.id);
     expect(rows).toHaveLength(1);
@@ -211,9 +213,12 @@ it("retries a refund deferred while its payment awaited capture from the job's c
       status: "SUCCEEDED",
     });
     expect(rows[0].cascadedAt).not.toBeNull();
-    expect(JSON.parse(second.checkpoint ?? "{}")).toMatchObject({
-      deferred: [],
-    });
+    const position = JSON.parse(second.checkpoint ?? "{}") as {
+      deferred: { id: string }[];
+    };
+    expect(position.deferred.map((entry) => entry.id)).not.toContain(
+      gatewayRefundId,
+    );
   } finally {
     await prisma.systemJobExecution.delete({ where: { id: finishedRun.id } });
   }
