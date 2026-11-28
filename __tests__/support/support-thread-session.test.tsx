@@ -173,7 +173,7 @@ it("retries a failed answer on the case and session it was first sent for after 
   });
 });
 
-it("moves the page to the booking thread a fresh intent landed on, and keeps it there on the refetch", async () => {
+it("moves the page to the booking thread a fresh intent landed on, and names that case on the refetch", async () => {
   const reads: string[] = [];
   let threadReads = 0;
   global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
