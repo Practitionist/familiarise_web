@@ -39,6 +39,7 @@ const item: NeedsHumanItem = {
   aged: true,
   canRereadAttendance: true,
   canConfirm: false,
+  reports: [],
   booking: {
     type: "CONSULTATION",
     title: "Career chat",
@@ -131,6 +132,22 @@ it("sends whitelisted sorts and pages, names the people and the door, and opens 
 
   fireEvent.click(screen.getAllByText("Career chat")[0]);
   expect(onOpenBooking).toHaveBeenCalledWith("apt-1");
+});
+
+it("the Set outcome dialog says expert absent on a 1:1 consultation refunds in full now, a completed consultation included", async () => {
+  renderCard();
+  fireEvent.click(
+    (
+      await screen.findAllByRole("button", {
+        name: /^Set outcome for Career chat/,
+      })
+    )[0],
+  );
+  expect(
+    await screen.findByText(
+      /On a 1:1 consultation, "Host never joined" records a strike for the expert and refunds the booking in full now\..*A consultation that already completed, or whose session was already voided, is not cancelled: the session is voided and the booking is refunded in full now/,
+    ),
+  ).toBeTruthy();
 });
 
 it("takes the error path on a 200 whose body is not a queue page", async () => {
@@ -233,4 +250,30 @@ it("offers no Confirm on a row the reader did not mark confirmable", async () =>
   expect(
     screen.queryByRole("button", { name: /^Confirm outcome for/ }),
   ).not.toBeInTheDocument();
+});
+
+it("badges a reported verdict by what the report does, linking each badge to its case", async () => {
+  const reported: NeedsHumanItem = {
+    ...item,
+    completionStatus: "VOIDED",
+    outcome: "HOST_ABSENT",
+    reports: [
+      { caseId: "case-expert", side: "HOST", reason: "provider_attended" },
+      { caseId: "case-learner", side: "LEARNER", reason: "provider_no_show" },
+    ],
+  };
+  fetchMock.mockImplementation(async () => ({
+    ok: true,
+    json: async () => ({ items: [reported], total: 1, page: 1, pageSize: 20 }),
+  }));
+  renderCard();
+  const disputed = (await screen.findAllByText("Disputed by the expert"))[0];
+  expect(disputed.closest("a")).toHaveAttribute(
+    "href",
+    "/dashboard/admin/support/c_case-expert",
+  );
+  expect(screen.getAllByText("Learner agrees")[0].closest("a")).toHaveAttribute(
+    "href",
+    "/dashboard/admin/support/c_case-learner",
+  );
 });

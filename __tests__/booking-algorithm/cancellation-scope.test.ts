@@ -569,6 +569,80 @@ describe("resolveBookingRefundContext", () => {
     expect(cancelled.sessionsCompleted).toBe(0);
   });
 
+  describe("the voided sessions a cancel settles", () => {
+    const voidedRow = (
+      over: Record<string, unknown> = {},
+      siblings: Record<string, unknown>[] = [],
+      subscription: unknown = null,
+    ) => ({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      subscription,
+      occurrences: [
+        {
+          id: "occ-void",
+          startsAt: hoursFromNow(-30),
+          endsAt: hoursFromNow(-29),
+          ordinal: 1,
+          completionStatus: "VOIDED",
+          isTentative: false,
+          outcome: "CUT_SHORT",
+          outcomeConfirmedAt: hoursFromNow(-1),
+          seatsSettledAt: null,
+          ...over,
+        },
+        ...siblings,
+      ],
+    });
+    const makeUp = {
+      id: "occ-make-up",
+      startsAt: hoursFromNow(48),
+      endsAt: hoursFromNow(49),
+      ordinal: 1,
+      completionStatus: "SCHEDULED",
+      isTentative: false,
+      outcome: null,
+      outcomeConfirmedAt: null,
+      seatsSettledAt: null,
+    };
+
+    it.each([
+      ["a confirmed cut-short void", voidedRow(), ["occ-void"]],
+      [
+        "an outage void",
+        voidedRow({ outcome: "PLATFORM_OUTAGE", outcomeConfirmedAt: null }),
+        ["occ-void"],
+      ],
+      [
+        "a negative verdict nobody confirmed",
+        voidedRow({ outcomeConfirmedAt: null }),
+        [],
+      ],
+      [
+        "a void already settled",
+        voidedRow({ seatsSettledAt: hoursFromNow(-2) }),
+        [],
+      ],
+      ["a void with its make-up placed", voidedRow({}, [makeUp]), []],
+      [
+        "a plan's void, which settles with the plan",
+        voidedRow({}, [], {
+          sessionsTotal: 4,
+          sessionsRefunded: 0,
+          subscriptionPlan: { totalSessions: 4 },
+        }),
+        [],
+      ],
+    ])("%s", async (_label, row, expected) => {
+      mockAppointmentFindFirst.mockResolvedValue(row);
+
+      const ctx = await resolveBookingRefundContext({ appointmentId: WRAPPER });
+
+      expect(ctx.unsettledVoidIds).toEqual(expected);
+    });
+  });
+
   it("skips a soft-deleted wrapper", async () => {
     mockAppointmentFindFirst.mockResolvedValue(null);
 

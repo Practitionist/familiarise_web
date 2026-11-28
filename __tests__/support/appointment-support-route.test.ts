@@ -46,12 +46,22 @@ jest.mock("../../lib/api/appointment-access", () => ({
   authorizeAppointment: jest.fn(),
 }));
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    supportCase: { findFirst: jest.fn(), findUnique: jest.fn() },
-  },
-}));
+jest.mock("../../lib/prisma", () => {
+  const { memTable } = jest.requireActual("../fixtures/mem-db");
+  return {
+    __esModule: true,
+    default: {
+      supportCase: {
+        findFirst: jest.fn(),
+        findUnique: jest.fn(),
+        findMany: jest.fn(async () => []),
+      },
+      appointmentOccurrence: memTable([], "occ"),
+      // The thread readers apply the case read policy, which reads the viewer's memberships; none here.
+      membership: { findMany: jest.fn(async () => []) },
+    },
+  };
+});
 
 jest.mock("../../lib/support/service", () => ({
   __esModule: true,
@@ -76,6 +86,13 @@ import { applyRateLimit } from "../../lib/rate-limit";
 import prisma from "../../lib/prisma";
 import { buildSupportContext } from "../../lib/support/context";
 import { runSupportTurn } from "../../lib/support/service";
+import {
+  bindTurn,
+  supportTurnBody,
+  type TurnVars,
+} from "../../components/support/useSupportThread";
+import { SupportTurnSchema } from "../../schemas/support";
+import type { memTable } from "../fixtures/mem-db";
 import {
   GET,
   POST,
@@ -122,6 +139,163 @@ describe("GET /api/appointments/[appointmentId]/support", () => {
     const json = await res.json();
     expect(json.data).toBeNull();
     expect(json.intents).toEqual([]);
+  });
+
+  it("returns the session the thread is about, which the client names on its next turn", async () => {
+    mockedFindThread.mockResolvedValue({
+      id: "case-1",
+      requesterUserId: "u1",
+      activeChannel: "SELF_SERVE",
+      appointmentOccurrenceId: "occ-1",
+      messages: [],
+    });
+    const res = await GET(req("GET"), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(mockedFindThread.mock.calls[0][0].select).toMatchObject({
+      appointmentOccurrenceId: true,
+    });
+    expect((await res.json()).data.appointmentOccurrenceId).toBe("occ-1");
+  });
+
+  it("shows the booking-wide thread by default, and a session's case only when the page names it", async () => {
+    const { matchesWhere } = jest.requireActual("../fixtures/mem-db");
+    const own = {
+      appointmentId: SLUG,
+      requesterUserId: "u1",
+      submitterUserId: "u1",
+      deletedAt: null,
+      // A person's own case, as the read policy sees every real row.
+      ownershipScope: "PERSONAL",
+      externalRequesterEmail: null,
+      activeChannel: "SELF_SERVE",
+      messages: [],
+    };
+    const rows = [
+      {
+        ...own,
+        id: "case-pay",
+        appointmentOccurrenceId: null,
+        createdAt: new Date("2026-11-20T10:00:00Z"),
+      },
+      {
+        ...own,
+        id: "case-report",
+        category: "NO_SHOW",
+        appointmentOccurrenceId: "occ-a",
+        createdAt: new Date("2026-11-23T12:00:00Z"),
+      },
+      {
+        ...own,
+        id: "case-foreign",
+        requesterUserId: "u2",
+        submitterUserId: "u2",
+        appointmentOccurrenceId: null,
+        createdAt: new Date("2026-11-24T12:00:00Z"),
+      },
+    ];
+    mockedFindThread.mockImplementation(
+      async (args: { where: Record<string, unknown> }) =>
+        rows
+          .filter((r) => matchesWhere(r, args.where))
+          .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))[0] ?? null,
+    );
+    const shown = async (query = "") => {
+      const res = await GET(
+        new NextRequest(
+          `https://x.test/api/appointments/${SLUG}/support${query}`,
+        ),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      return (await res.json()).data?.id;
+    };
+    expect(await shown()).toBe("case-pay");
+    expect(await shown("?occurrence=occ-a")).toBe("case-report");
+    // A session's page never falls back to another thread: it starts that session's report.
+    expect(await shown("?occurrence=occ-b")).toBeUndefined();
+    // It keeps the caller's own booking-wide case when the page names it, as a page moved there does.
+    expect(await shown("?occurrence=occ-b&caseId=case-pay")).toBe("case-pay");
+    // Another session's case, or another person's booking-wide case, is not shown there by name.
+    expect(await shown("?occurrence=occ-b&caseId=case-report")).toBeUndefined();
+    expect(
+      await shown("?occurrence=occ-b&caseId=case-foreign"),
+    ).toBeUndefined();
+    expect(await shown("?caseId=case-report")).toBe("case-report");
+    // Another person's case is never shown; the default stands.
+    expect(await shown("?caseId=case-foreign")).toBe("case-pay");
+    rows.splice(0, 1);
+    // With no booking-wide thread the booking's page starts fresh, and links the open report instead.
+    (prisma.supportCase.findMany as jest.Mock).mockImplementation(
+      async (args: { where: Record<string, unknown> }) =>
+        rows
+          .filter((r) =>
+            matchesWhere(
+              { ...r, category: "NO_SHOW", status: "OPEN" },
+              args.where,
+            ),
+          )
+          .map((r) => ({
+            id: r.id,
+            appointmentOccurrenceId: r.appointmentOccurrenceId,
+            occurrence: { startsAt: new Date("2026-11-14T11:30:00Z") },
+          })),
+    );
+    const res = await GET(
+      new NextRequest(`https://x.test/api/appointments/${SLUG}/support`),
+      { params: Promise.resolve({ appointmentId: SLUG }) },
+    );
+    const body = await res.json();
+    expect(body.data).toBeNull();
+    expect(body.sessionReports).toEqual([
+      {
+        caseId: "case-report",
+        occurrenceId: "occ-a",
+        startsAt: "2026-11-14T11:30:00.000Z",
+      },
+    ]);
+    expect(await shown("?occurrence=occ-a")).toBe("case-report");
+  });
+
+  it("offers the report from the session the page names, and lists the ended sessions", async () => {
+    const endedA = {
+      id: "occ-a",
+      startsAt: new Date("2026-11-23T10:00:00Z"),
+      endsAt: new Date("2026-11-23T11:00:00Z"),
+    };
+    mockedBuildContext.mockResolvedValue({
+      planTitle: "Plan",
+      appointmentType: "SUBSCRIPTION",
+      startsAt: new Date("2026-11-30T10:00:00Z"),
+      organizationId: null,
+      stage: "UPCOMING",
+      isProvider: false,
+      reportSessions: [endedA],
+      reportOccurrenceId: "occ-a",
+    });
+    const res = await GET(
+      new NextRequest(
+        `https://x.test/api/appointments/${SLUG}/support?occurrence=occ-a`,
+      ),
+      { params: Promise.resolve({ appointmentId: SLUG }) },
+    );
+    expect(mockedBuildContext).toHaveBeenCalledWith(
+      expect.any(String),
+      SLUG,
+      "u1",
+      undefined,
+      "occ-a",
+    );
+    const body = await res.json();
+    expect(body.intents.map((i: { category: string }) => i.category)).toEqual(
+      expect.arrayContaining(["NO_SHOW", "RESCHEDULE"]),
+    );
+    expect(body.reportSessions).toEqual([
+      {
+        id: "occ-a",
+        startsAt: "2026-11-23T10:00:00.000Z",
+        endsAt: "2026-11-23T11:00:00.000Z",
+      },
+    ]);
   });
 
   it("accepts uuid ids identically", async () => {
@@ -249,6 +423,18 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     );
   });
 
+  it("forwards the case a follow-up names to the turn, which checks it is the caller's own", async () => {
+    mockedRunTurn.mockResolvedValue({ messages: [], actions: [] });
+    await POST(req("POST", { chosenOptionId: "expert", caseId: "case-a" }), {
+      params: Promise.resolve({ appointmentId: SLUG }),
+    });
+    expect(mockedRunTurn).toHaveBeenCalledWith(
+      SLUG,
+      "u1",
+      expect.objectContaining({ chosenOptionId: "expert", caseId: "case-a" }),
+    );
+  });
+
   it("VALIDATION_FAILED envelope when the turn has nothing actionable", async () => {
     const res = await POST(req("POST", {}), {
       params: Promise.resolve({ appointmentId: SLUG }),
@@ -257,6 +443,147 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     const json = await res.json();
     expect(json.code).toBe("VALIDATION_FAILED");
     expect(mockedRunTurn).not.toHaveBeenCalled();
+  });
+
+  describe("the session a report is about", () => {
+    const occurrences = prisma.appointmentOccurrence as unknown as ReturnType<
+      typeof memTable
+    >;
+    const hourFromNow = (h: number) => new Date(Date.now() + h * 3_600_000);
+    beforeEach(() => {
+      occurrences.rows.splice(0, occurrences.rows.length);
+      occurrences.rows.push(
+        ...[
+          ["occ-ended", SLUG, hourFromNow(-2)],
+          ["occ-foreign", "other-appt", hourFromNow(-2)],
+          ["occ-future", SLUG, hourFromNow(2)],
+        ].map(([id, appointmentId, endsAt]) => ({
+          id,
+          appointmentId,
+          endsAt,
+          deletedAt: null,
+          completionStatus: "COMPLETED",
+        })),
+      );
+      mockedRunTurn.mockResolvedValue({ messages: [], actions: [] });
+    });
+
+    it("every turn the thread sends names what it answers and parses through the route's schema", () => {
+      const threadA = {
+        id: "case-a",
+        activeChannel: "SELF_SERVE",
+        appointmentOccurrenceId: "occ-ended",
+      };
+      const sent = (vars: TurnVars, page?: string) =>
+        SupportTurnSchema.parse(
+          supportTurnBody({ ...vars, binding: bindTurn(vars, threadA, page) }),
+        );
+      // A new intent names only the page's session, never the shown thread's.
+      expect(
+        sent({ category: "NO_SHOW", clientTurnId: "t-1" }, "occ-other"),
+      ).toEqual({
+        category: "NO_SHOW",
+        clientTurnId: "t-1",
+        appointmentOccurrenceId: "occ-other",
+      });
+      expect(sent({ category: "NO_SHOW", chosenLabel: "No-show" })).toEqual({
+        category: "NO_SHOW",
+      });
+      // An answer names the case and session it answers, whatever the page says.
+      expect(
+        sent(
+          { chosenOptionId: "expert", chosenLabel: "The expert" },
+          "occ-other",
+        ),
+      ).toEqual({
+        chosenOptionId: "expert",
+        caseId: "case-a",
+        appointmentOccurrenceId: "occ-ended",
+      });
+      // A thread not yet stored names nothing.
+      expect(
+        supportTurnBody({
+          userMessage: "Hello",
+          binding: bindTurn(
+            { userMessage: "Hello" },
+            { ...threadA, id: "local" },
+            undefined,
+          ),
+        }),
+      ).toEqual({ userMessage: "Hello" });
+    });
+
+    it("passes an ended session of this booking through to the turn", async () => {
+      const res = await POST(
+        req("POST", {
+          category: "NO_SHOW",
+          appointmentOccurrenceId: "occ-ended",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(200);
+      expect(mockedRunTurn).toHaveBeenCalledWith(
+        SLUG,
+        "u1",
+        expect.objectContaining({ appointmentOccurrenceId: "occ-ended" }),
+      );
+    });
+
+    it.each(["occ-foreign", "occ-future", "occ-missing"])(
+      "refuses %s with 400 without running the turn",
+      async (appointmentOccurrenceId) => {
+        const res = await POST(
+          req("POST", { category: "NO_SHOW", appointmentOccurrenceId }),
+          { params: Promise.resolve({ appointmentId: SLUG }) },
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()).code).toBe("VALIDATION_FAILED");
+        expect(mockedRunTurn).not.toHaveBeenCalled();
+      },
+    );
+
+    it("lets a reply on an upcoming session's case through, leaving the case check to the turn", async () => {
+      const res = await POST(
+        req("POST", {
+          userMessage: "Can we move it to Friday?",
+          caseId: "case-upcoming",
+          appointmentOccurrenceId: "occ-future",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(200);
+      expect(mockedRunTurn).toHaveBeenCalledWith(
+        SLUG,
+        "u1",
+        expect.objectContaining({
+          caseId: "case-upcoming",
+          appointmentOccurrenceId: "occ-future",
+        }),
+      );
+    });
+
+    it("lets a reply naming only an upcoming session of this booking through", async () => {
+      const res = await POST(
+        req("POST", {
+          userMessage: "Is it still on?",
+          appointmentOccurrenceId: "occ-future",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("still refuses a reply naming no case on another booking's session", async () => {
+      const res = await POST(
+        req("POST", {
+          userMessage: "Hello",
+          appointmentOccurrenceId: "occ-foreign",
+        }),
+        { params: Promise.resolve({ appointmentId: SLUG }) },
+      );
+      expect(res.status).toBe(400);
+      expect(mockedRunTurn).not.toHaveBeenCalled();
+    });
   });
 
   it("NOT_FOUND envelope when the resolver cannot find the appointment", async () => {

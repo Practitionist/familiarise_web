@@ -556,6 +556,49 @@ describe("EXIT_SERIES (#1780 E-5)", () => {
   });
 });
 
+describe("a class exit waiting for a verdict", () => {
+  const waiting = (settlesBy: Date) =>
+    base({
+      appointmentType: "CLASS",
+      request: { status: "SCHEDULED", kind: "CLASS" },
+      occurrences: confirmed,
+      payments: paid,
+      holdExpiresAt: null,
+      series: {
+        misses: 3,
+        N: 12,
+        exitRight: true,
+        undelivered: 6,
+        // 12 Nov 10:00 IST; its verdict's report window closes at `settlesBy`.
+        exitWait: {
+          sessionStartsAt: new Date("2026-11-12T04:30:00Z"),
+          settlesBy,
+        },
+      },
+    });
+  const nextFor = (settlesBy: Date) =>
+    deriveBookingPresentation(waiting(settlesBy), "CONSULTEE", {
+      viewerZone: "Asia/Kolkata",
+      now: NOW,
+    }).nextAction;
+
+  it("names the report window's close in the viewer's zone, never a settle date, in place of the exit", () => {
+    // NOW is 20 Sep 14:42 IST; the window closes two days later at the same time.
+    const next = nextFor(new Date(NOW.getTime() + 48 * 3_600_000));
+    expect(next).toEqual({
+      kind: "EXIT_SERIES_WAITS",
+      label:
+        "We're confirming what happened in your 12 Nov session. You can leave the series once it's settled; the report window closes 22 Sept, 2:42 pm IST, and if it needs a review our team will decide.",
+    });
+  });
+
+  it("drops the date once the window has passed and says our team is reviewing it", () => {
+    expect(nextFor(new Date(NOW.getTime() - 3_600_000)).label).toBe(
+      "We're confirming what happened in your 12 Nov session. Our team is reviewing it, and you can leave the series once it's settled.",
+    );
+  });
+});
+
 describe("the refund timeline (#1780)", () => {
   const refund = (status: string, amountPaise: number, refundId: string) => ({
     status,

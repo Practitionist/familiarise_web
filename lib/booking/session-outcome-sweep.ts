@@ -35,7 +35,10 @@ import {
   SETTLE_MEETING_SELECT,
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
-import type { RunFailureReporter } from "@/lib/observability/run-failures";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import { isPastNoShowHandoff, NO_SHOW_GRACE_MINUTES } from "./attendance";
 import {
   classifySessionOutcome,
@@ -47,20 +50,45 @@ import {
 } from "./session-outcome";
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
-import { liveParticipant, transitionParticipant } from "./participants";
 import {
+  liveLearnerSeat,
+  liveParticipant,
+  transitionParticipant,
+} from "./participants";
+import {
+  AGREED_VERDICT,
   agedNeedsHumanWhere,
+  confirmableNoShowWhere,
   isNegativeMoneyOutcome,
   needsHumanWhere,
   NEEDS_HUMAN_ESCALATE_DAYS,
+  OUTCOME_REPORT_WINDOW_HOURS,
+  reportWindowClosesAt,
   unconfirmedClosedVerdictWhere,
   type NegativeMoneyOutcome,
 } from "./misses";
 import { judgeOutcomeEvidence } from "./outcome-evidence";
+import {
+  CLASSIFIED_REPORT_REASONS,
+  judgeReports,
+  REPORT_EFFECT,
+} from "./outcome-reports";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { onClassSessionVoided } from "./class-sessions";
+import { onClassSessionVoided, onClassVoidConfirmed } from "./class-sessions";
+import {
+  OUTAGE_SELECTS,
+  readOverlappingOutages,
+  toOutageWindows,
+} from "./outage-windows";
+import { confirmConsultantNoShow } from "./consultant-no-show";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+  SWEEP_LOCK_RETRY_CONFIG,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 
 export const OUTCOME_SLOT_SELECT = {
   id: true,
@@ -102,14 +130,19 @@ export interface OutcomeContext {
   onUnreadable?: (occurrenceId: string) => void;
   /** The run's Stream failure reporter, flushed once per run. */
   failures?: RunFailureReporter;
-  /** Epoch ms by which every Stream request of a settle must answer, so in-flight work fits the run. */
+  /** Epoch ms by which every Stream request of a settle, and every lock call of a void's write, must answer, so in-flight work fits the run. */
   settleDeadlineAt?: number;
 }
 
 export type SlotDecision =
   | {
       kind: "deferred";
-      reason: "live-overrun" | "no-show-detector" | "attendance-unsettled";
+      reason:
+        | "live-overrun"
+        | "no-show-detector"
+        | "attendance-unsettled"
+        /** A void whose booking's lock could not be had in the run's time left. */
+        | "appointment-busy";
     }
   | {
       kind: "written";
@@ -118,18 +151,8 @@ export type SlotDecision =
       moved: boolean;
     };
 
-/** Rows read per outage source; a read that returns this many may be incomplete. */
-export const OUTAGE_READ_CAP = 200;
-
-/** True when either outage source filled its cap, so an overlapping window may be missing. */
-export function outageReadCapped(outages: readonly OutageWindow[]): boolean {
-  const count = (source: OutageWindow["source"]) =>
-    outages.filter((o) => o.source === source).length;
-  return (
-    count("maintenance") >= OUTAGE_READ_CAP ||
-    count("incident") >= OUTAGE_READ_CAP
-  );
-}
+/** Rows read per outage source by the recent-window read. */
+const OUTAGE_READ_CAP = 200;
 
 /** Platform-wide DEGRADED/OFFLINE windows and declared incidents that overlap [from, now]. */
 export async function readOutageWindows(
@@ -147,32 +170,17 @@ export async function readOutageWindows(
           { endedAt: { gt: from } },
         ],
       },
-      select: { startedAt: true, endedAt: true },
+      select: OUTAGE_SELECTS.maintenance,
       take: OUTAGE_READ_CAP,
     }),
     db.platformIncident.findMany({
       where: { endsAt: { gt: from } },
-      select: { startsAt: true, endsAt: true },
+      select: OUTAGE_SELECTS.incident,
       orderBy: { startsAt: "asc" },
       take: OUTAGE_READ_CAP,
     }),
   ]);
-  return [
-    ...rows
-      .filter((r): r is { startedAt: Date; endedAt: Date | null } =>
-        Boolean(r.startedAt),
-      )
-      .map((r) => ({
-        startsAt: r.startedAt,
-        endsAt: r.endedAt,
-        source: "maintenance" as const,
-      })),
-    ...incidents.map((i) => ({
-      startsAt: i.startsAt,
-      endsAt: i.endsAt,
-      source: "incident" as const,
-    })),
-  ];
+  return toOutageWindows(rows, incidents);
 }
 
 type RoomEnd = {
@@ -522,8 +530,8 @@ export async function decideSlotOutcome(
         });
   let to: OccurrenceCompletionStatus = verdict.completionStatus;
   if (verdict.outcome === "HOST_ABSENT" && slot.appointment.consultationId) {
-    // D5 — the detector cancels and refunds a consultation host no-show; one it
-    // declined parks UNVERIFIED for ops after the handoff instead of voiding.
+    // D5 — the detector proposes a consultation host no-show; past the handoff
+    // this pass parks the same proposal, UNVERIFIED, instead of voiding.
     if (
       !isPastNoShowHandoff(
         noShowHandoffAnchor(slot.endsAt, room?.attendanceSettledAt ?? null),
@@ -536,22 +544,60 @@ export async function decideSlotOutcome(
     to = OccurrenceCompletionStatus.UNVERIFIED;
   }
 
-  const moved = await writeSlotOutcomeTransaction(
-    slot,
-    presences,
-    to,
-    verdict,
-    ctx.now,
-    {
+  const write = () =>
+    writeSlotOutcomeTransaction(slot, presences, to, verdict, ctx.now, {
       room:
         meeting && room
           ? { end: room, settledCallId: meeting.streamCallId }
           : null,
       requireUnsettled: evidence.kind === "unreadable",
-    },
-  );
+    });
+  // A void is a miss the booking's doors price or wait on, so it takes turns with them.
+  const written =
+    to === OccurrenceCompletionStatus.VOIDED
+      ? await underAppointmentLock(
+          slot.appointmentId,
+          ctx.settleDeadlineAt,
+          write,
+        )
+      : { moved: await write() };
+  if (!written) return { kind: "deferred", reason: "appointment-busy" };
+  const { moved } = written;
   if (moved && evidence.kind === "unreadable") ctx.onUnreadable?.(slot.id);
   return { kind: "written", to, verdict, moved };
+}
+
+/**
+ * Runs the void's write under the appointment lock the cancel, leave and ops doors hold, so a
+ * door's check for a pending void and its refund never straddle the write. Each lock call gets
+ * the smaller of its own bound and the run's time left; null when the lock is busy, stalled or
+ * unreachable, and the session waits for the next run.
+ */
+async function underAppointmentLock(
+  appointmentId: string,
+  deadlineAt: number | undefined,
+  write: () => Promise<boolean>,
+): Promise<{ moved: boolean } | null> {
+  const left = (deadlineAt ?? Infinity) - Date.now();
+  const callTimeoutMs = Math.min(SWEEP_LOCK_RETRY_CONFIG.callTimeoutMs, left);
+  if (callTimeoutMs <= 0) return null;
+  try {
+    return {
+      moved: await withAppointmentLock(appointmentId, write, {
+        ...SWEEP_LOCK_RETRY_CONFIG,
+        callTimeoutMs,
+        deadlineAt,
+      }),
+    };
+  } catch (error) {
+    if (
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 const PLAN_BELL = { select: { title: true, recordingEnabled: true } } as const;
@@ -860,10 +906,56 @@ export async function readOutcomeQueueAge(
 /** Closed unconfirmed verdicts judged per page; the pass pages by keyset until its deadline, so weak rows cannot hide older ones. */
 const OUTCOME_CONFIRM_PAGE = 100;
 
+/** The window-close pass's candidates: a closed unconfirmed verdict, or one an agreeing report may apply early. */
+export function confirmableVerdictWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    OR: [
+      unconfirmedClosedVerdictWhere(now),
+      AGREED_VERDICT,
+      confirmableNoShowWhere(now),
+    ],
+  };
+}
+
+/** Select on `Appointment`: who may report on each side of its sessions. */
+export const REPORT_PARTIES_SELECT = {
+  ...SESSION_HOSTS_SELECT,
+  participants: { where: liveLearnerSeat(), select: { userId: true } },
+} satisfies Prisma.AppointmentSelect;
+
+type ReportPartiesRow = Prisma.AppointmentGetPayload<{
+  select: typeof REPORT_PARTIES_SELECT;
+}>;
+
+/** The host side, and the learner seat holders who are not hosts. */
+export function reportParties(row: ReportPartiesRow) {
+  const hostUserIds = sessionHostUserIds(row);
+  return {
+    hostUserIds,
+    learnerUserIds: row.participants
+      .map((p) => p.userId)
+      .filter((id) => !hostUserIds.includes(id)),
+  };
+}
+
+/** The fields of a linked support case that `judgeReports` reads. */
+export const OUTCOME_REPORT_FIELDS = {
+  id: true,
+  flowReason: true,
+  requesterUserId: true,
+  ownershipScope: true,
+  flowReasonAt: true,
+  deletedAt: true,
+} satisfies Prisma.SupportCaseSelect;
+
 const CONFIRM_SELECT = {
   id: true,
+  appointmentId: true,
   startsAt: true,
   endsAt: true,
+  completionStatus: true,
   outcome: true,
   outcomeAt: true,
   meeting: {
@@ -875,7 +967,13 @@ const CONFIRM_SELECT = {
       presences: { select: { userId: true, joinedAt: true, leftAt: true } },
     },
   },
-  appointment: { select: SESSION_HOSTS_SELECT },
+  supportCases: {
+    where: { deletedAt: null, flowReason: { in: CLASSIFIED_REPORT_REASONS } },
+    select: OUTCOME_REPORT_FIELDS,
+  },
+  appointment: {
+    select: { ...REPORT_PARTIES_SELECT, consultationId: true, classId: true },
+  },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
 type ConfirmRow = Prisma.AppointmentOccurrenceGetPayload<{
@@ -909,9 +1007,16 @@ function isStrongVerdict(
 }
 
 export interface OutcomeConfirmRun {
+  /** Stamped confirmed this run, the consultant no-shows claimed among them. */
   confirmed: number;
+  /** Consultant no-shows confirmed and claimed: cancelled, refund owed and driven, strike written. */
+  claimed: number;
+  /** Strong no-show proposals whose booking no longer meets the detector's rules: left for ops. */
+  declined: number;
   /** Judged weak this run: left unconfirmed on the needs-human list for ops. */
   weak: number;
+  /** Disputed by the accused party: left unconfirmed on the needs-human list for ops. */
+  disputed: number;
   errors: string[];
   /** Where the next run resumes, null once the scan reached the end and wraps, or absent when the pass was skipped and the stored cursor stands. */
   checkpoint?: string | null;
@@ -958,59 +1063,227 @@ function afterKeyset(
   };
 }
 
-/** Judges one page and stamps its strong verdicts; false when the page's outage read was capped. */
+/** Whether the participants' reports block this verdict, apply it now, or leave it to the window. */
+function judgeRowReports(
+  row: ConfirmRow,
+  outcome: NegativeMoneyOutcome,
+  outcomeAt: Date,
+) {
+  return judgeReports(row.supportCases, {
+    outcome,
+    endsAt: row.endsAt,
+    windowClosesAt: reportWindowClosesAt(outcomeAt),
+    ...reportParties(row.appointment),
+  });
+}
+
+/**
+ * A dispute that may count against this verdict: its outcome's reason, outside an org operator's case, answered in its window.
+ * Whether the reporter is on the reason's side stays with the per-row judgement, so the recheck only errs toward ops.
+ */
+function disputeSinceReadWhere(
+  outcome: NegativeMoneyOutcome,
+  row: { endsAt: Date; outcomeAt: Date },
+): Prisma.SupportCaseWhereInput {
+  return {
+    deletedAt: null,
+    ownershipScope: { not: "ORG_OPERATIONS" },
+    flowReason: { in: [...REPORT_EFFECT[outcome].dispute] },
+    flowReasonAt: { gte: row.endsAt, lte: reportWindowClosesAt(row.outcomeAt) },
+  };
+}
+
+/** The CAS that confirms one judged row: still a candidate, the verdict it judged (outcome and time), and no dispute in that verdict's window. */
+function confirmGuard(
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  row: {
+    id: string;
+    outcome: NegativeMoneyOutcome;
+    endsAt: Date;
+    outcomeAt: Date;
+  },
+): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    AND: [
+      where,
+      { id: row.id, outcome: row.outcome, outcomeAt: row.outcomeAt },
+      { supportCases: { none: disputeSinceReadWhere(row.outcome, row) } },
+    ],
+  };
+}
+
+/** A consultation's proposed host no-show: confirming it runs the no-show claim, not a bare stamp. */
+const isNoShowProposal = (row: ConfirmRow) =>
+  row.completionStatus === "UNVERIFIED" &&
+  row.outcome === "HOST_ABSENT" &&
+  !!row.appointment.consultationId;
+
+/** A class void: confirming it lets the miss count toward the exit right and the reliability flag. */
+const isClassVoid = (row: ConfirmRow) =>
+  row.completionStatus === "VOIDED" && !!row.appointment.classId;
+
+/** Stamps a class void and re-checks its series in the same transaction; the notices go after the commit. */
+async function confirmClassVoid(
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  row: Parameters<typeof confirmGuard>[1] & { appointmentId: string },
+  now: Date,
+): Promise<boolean> {
+  const voided = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.appointmentOccurrence.updateMany({
+      where: confirmGuard(where, row),
+      data: { outcomeConfirmedAt: now },
+    });
+    if (count === 0) return null;
+    return onClassVoidConfirmed(tx, {
+      appointmentId: row.appointmentId,
+      occurrenceId: row.id,
+      confirmedAt: now,
+    });
+  });
+  if (!voided) return false;
+  await flushClassVoidNotices(voided);
+  return true;
+}
+
+/** A page judged to its end, or cut by the deadline: `resumeAfter` is the last row before the first one not tried (null when that is the page's first row). */
+type PageResult = "judged" | { resumeAfter: Keyset | null };
+
+/** The keyset of the row just before `id` on the page. */
+function keysetBefore(rows: ConfirmRow[], id: string): Keyset | null {
+  const prior = rows[rows.findIndex((r) => r.id === id) - 1];
+  return prior?.outcomeAt ? { outcomeAt: prior.outcomeAt, id: prior.id } : null;
+}
+
+/** Judges one page and confirms its strong verdicts that are closed or agreed and not disputed. */
 async function confirmPage(
   rows: ConfirmRow[],
   where: Prisma.AppointmentOccurrenceWhereInput,
   now: Date,
   run: OutcomeConfirmRun,
-): Promise<boolean> {
-  const outages = await readOutageWindows(
-    prisma,
-    new Date(Math.min(...rows.map((r) => r.startsAt.getTime()))),
-  );
-  // A capped outage read may have dropped an overlapping window, so nothing is confirmed on it.
-  if (outageReadCapped(outages)) {
-    run.weak += rows.length;
-    run.errors.push(
-      `Outage read hit its ${OUTAGE_READ_CAP}-row cap; closed verdicts left unconfirmed`,
-    );
-    return false;
-  }
-  const strong = new Map<NegativeMoneyOutcome, string[]>();
+  ctx: {
+    pastDeadline: () => boolean;
+    failures: RunFailureReporter;
+    /** Rows whose confirmation threw this run, reported once when the run ends. */
+    failed: string[];
+  },
+): Promise<PageResult> {
+  // Every window overlapping a row's booked time, however many the history holds.
+  const outages = await readOverlappingOutages(prisma, rows);
+  const closedBefore = now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000;
+  const strong: {
+    id: string;
+    appointmentId: string;
+    outcome: NegativeMoneyOutcome;
+    endsAt: Date;
+    outcomeAt: Date;
+    claim: boolean;
+    classVoid: boolean;
+  }[] = [];
   for (const row of rows) {
-    if (!isNegativeMoneyOutcome(row.outcome)) continue;
+    if (!isNegativeMoneyOutcome(row.outcome) || !row.outcomeAt) continue;
+    const reports = judgeRowReports(row, row.outcome, row.outcomeAt);
+    if (reports === "disputed") {
+      run.disputed++;
+      continue;
+    }
+    // An open window applies early only on an agreeing report.
+    if (row.outcomeAt.getTime() >= closedBefore && reports !== "agreed") {
+      continue;
+    }
     if (isStrongVerdict(row, row.outcome, outages)) {
-      strong.set(row.outcome, [...(strong.get(row.outcome) ?? []), row.id]);
+      strong.push({
+        id: row.id,
+        appointmentId: row.appointmentId,
+        outcome: row.outcome,
+        endsAt: row.endsAt,
+        outcomeAt: row.outcomeAt,
+        claim: isNoShowProposal(row),
+        classVoid: isClassVoid(row),
+      });
     } else {
       run.weak++;
     }
   }
-  // A relabel or confirm since the read changes the outcome or the stamp, so the CAS skips it.
-  const counts = await Promise.all(
-    [...strong].map(([outcome, ids]) =>
+  // One CAS per row, so each is held only by a dispute in its own window; a relabel or confirm since the read skips it too.
+  const stamped = strong.filter((row) => !row.claim && !row.classVoid);
+  const stamps = await Promise.allSettled(
+    stamped.map((row) =>
       prisma.appointmentOccurrence.updateMany({
-        where: { AND: [where, { id: { in: ids }, outcome }] },
+        where: confirmGuard(where, row),
         data: { outcomeConfirmedAt: now },
       }),
     ),
   );
-  run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
-  return true;
+  // A stamp that throws is that row's alone: the others stand, and the page goes on to its voids and claims.
+  stamps.forEach((stamp, i) => {
+    if (stamp.status === "fulfilled") {
+      run.confirmed += stamp.value.count;
+      return;
+    }
+    ctx.failed.push(stamped[i].id);
+    run.errors.push(
+      `Failed to confirm the verdict on ${stamped[i].id}: ${stamp.reason instanceof Error ? stamp.reason.message : String(stamp.reason)}`,
+    );
+  });
+  // A class void (its own transaction, with notices) and a no-show claim (it drives a refund) run one
+  // at a time inside the pass's share, in page order, so a cut names how far the page got.
+  for (const row of strong.filter((r) => r.classVoid || r.claim)) {
+    if (ctx.pastDeadline()) return { resumeAfter: keysetBefore(rows, row.id) };
+    try {
+      if (row.classVoid) {
+        if (await confirmClassVoid(where, row, now)) run.confirmed++;
+        continue;
+      }
+      const result = await confirmConsultantNoShow(row.id, {
+        now,
+        guard: confirmGuard(where, row),
+        // Another proposed session of the booking is cancelled with this one only when this page judged it strong, closed or agreed, and undisputed too.
+        siblingGuard: (id) => {
+          const sibling = strong.find((r) => r.id === id);
+          return sibling ? confirmGuard(where, sibling) : null;
+        },
+        errors: run.errors,
+        failures: ctx.failures,
+      });
+      if (result.kind === "claimed") {
+        run.confirmed++;
+        run.claimed++;
+      } else if (result.kind === "declined") {
+        run.declined++;
+      } else if (result.kind === "outage") {
+        // An outage declared since this page's read; the next pass reads it and leaves the row weak.
+        run.weak++;
+      }
+    } catch (error) {
+      ctx.failed.push(row.id);
+      run.errors.push(
+        `Failed to ${row.classVoid ? "confirm the class void" : "claim the consultant no-show"} on ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return "judged";
 }
 
 /**
- * Confirms each negative verdict whose report window closed on strong evidence,
- * newest first, by CAS from an unconfirmed stamp; a weak one stays for ops.
+ * Confirms each negative verdict on strong evidence once its report window
+ * closed or the harmed party agreed, newest first, by CAS from an unconfirmed
+ * stamp; a weak or disputed one stays for ops.
  */
 export async function confirmClosedOutcomes(
   now: Date,
   pastDeadline: () => boolean,
 ): Promise<OutcomeConfirmRun> {
-  const run: OutcomeConfirmRun = { confirmed: 0, weak: 0, errors: [] };
+  const run: OutcomeConfirmRun = {
+    confirmed: 0,
+    claimed: 0,
+    declined: 0,
+    weak: 0,
+    disputed: 0,
+    errors: [],
+  };
   // Past its share before it starts, the pass reads nothing and leaves the stored cursor in place.
   if (pastDeadline()) return run;
-  const where = unconfirmedClosedVerdictWhere(now);
+  const where = confirmableVerdictWhere(now);
   // Resumes where the last run stopped, so a weak backlog cannot hide older verdicts run after run.
   let after: Keyset | null;
   try {
@@ -1022,6 +1295,8 @@ export async function confirmClosedOutcomes(
     );
     return run;
   }
+  const failures = createRunFailureReporter("bookings");
+  const failed: string[] = [];
   try {
     while (!pastDeadline()) {
       // "query", not a join: a join reads nested timestamps in the session zone.
@@ -1037,19 +1312,39 @@ export async function confirmClosedOutcomes(
         after = null;
         break;
       }
-      const judged = await confirmPage(rows, where, now, run);
-      // A capped page stays unconfirmed, but the cursor moves past it so it cannot stall the scan.
+      const page = await confirmPage(rows, where, now, run, {
+        pastDeadline,
+        failures,
+        failed,
+      });
+      // A page the deadline cut resumes at its first row not tried, so a row that fails slowly on every run is passed, not retried first.
+      if (page !== "judged") {
+        after = page.resumeAfter ?? after;
+        break;
+      }
       after =
         rows.length < OUTCOME_CONFIRM_PAGE
           ? null
           : { outcomeAt: last.outcomeAt, id: last.id };
-      if (!judged || !after) break;
+      if (!after) break;
     }
   } catch (error) {
     run.errors.push(
       `Failed to confirm closed session outcomes: ${error instanceof Error ? error.message : String(error)}`,
     );
+  } finally {
+    failures.flush();
   }
+  // One console finding per run for the rows whose confirmation threw; the pass tries them again when the scan wraps.
+  await reportStandingFinding({
+    key: "session-outcome-sweep:confirm-failed",
+    ids: failed,
+    message: `${failed.length} negative verdict(s) could not be confirmed this run and were passed over until the scan wraps`,
+  }).catch((error: unknown) => {
+    run.errors.push(
+      `Failed to report unconfirmed verdicts: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
   run.checkpoint = after ? encodeCursor(after) : null;
   return run;
 }

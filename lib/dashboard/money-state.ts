@@ -14,6 +14,10 @@
  */
 
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
+import {
+  pendingVerdictMessage,
+  type PendingVoidVerdict,
+} from "@/lib/booking/pending-void-verdict";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import {
@@ -81,6 +85,8 @@ export type NextActionKind =
   | "ALLOCATE"
   /** #1780 row 6 — the host's misses give the learner a full-refund exit. */
   | "EXIT_SERIES"
+  /** The exit waits for an unconfirmed void's verdict; the label is the learner's sentence. */
+  | "EXIT_SERIES_WAITS"
   /** The other side's proposed new times wait on this viewer. */
   | "RESPOND_TO_MOVE"
   | "PAY"
@@ -237,6 +243,8 @@ export interface BookingPresentationInput {
     N: number;
     exitRight: boolean;
     undelivered: number;
+    /** A void's verdict still being confirmed: the exit waits for it. */
+    exitWait?: PendingVoidVerdict | null;
   } | null;
 }
 
@@ -760,6 +768,7 @@ function deriveNext(
   holdExpiresAt: Date | null,
   now: Date,
   joinWindowMs: number,
+  zone: string,
 ): NextAction {
   const none: NextAction = { kind: "NONE", label: "" };
   const deadline = holdExpiresAt ?? undefined;
@@ -834,6 +843,18 @@ function deriveNext(
       normalizeStatus(input.appointmentType) === "CLASS" &&
       input.series?.exitRight
     ) {
+      // The door refuses the exit with the same sentence while a verdict is confirmed.
+      if (input.series.exitWait) {
+        return {
+          kind: "EXIT_SERIES_WAITS",
+          label: pendingVerdictMessage(
+            input.series.exitWait,
+            zone,
+            now,
+            "leave",
+          ),
+        };
+      }
       return {
         kind: "EXIT_SERIES",
         label: `Leave the series with a full refund of the remaining ${input.series.undelivered} sessions`,
@@ -1147,6 +1168,7 @@ export function deriveBookingPresentation(
     holdExpiresAt,
     now,
     joinWindowMs,
+    zone,
   );
   const timeline = deriveTimeline(
     input,

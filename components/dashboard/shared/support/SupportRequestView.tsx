@@ -67,6 +67,8 @@ export interface SupportRequestViewProps {
   paymentsBase?: string;
   /** A thread category to start the flow on ("Problem with this charge"). */
   intent?: string;
+  /** The session a retrospective report is about (`?occurrence=`). */
+  occurrence?: string;
   articles: Record<CaseTopic, ArticleLink[]>;
 }
 
@@ -176,9 +178,18 @@ function SessionRequest({
   appointmentId,
   props,
 }: Readonly<{ appointmentId: string; props: SupportRequestViewProps }>) {
-  const t = useSupportThread(appointmentId, { seedCategory: props.intent });
+  const t = useSupportThread(appointmentId, {
+    seedCategory: props.intent,
+    occurrenceId: props.occurrence,
+  });
   const day = useDay();
+  const clock = useZoneClock();
   const booking = t.data?.booking ?? null;
+  // A report is about one session: the card names it, not the booking's next session.
+  const reportedId = props.occurrence ?? t.thread?.appointmentOccurrenceId;
+  const reported = reportedId
+    ? t.reportSessions.find((s) => s.id === reportedId)
+    : undefined;
   const category = t.thread?.category ?? props.intent;
   const topic: CaseTopic = category ? threadTopic(category) : "session";
   const title = `Help with ${booking?.title ?? "your session"}`;
@@ -218,9 +229,13 @@ function SessionRequest({
             <ContextCard
               icon={CalendarDays}
               title={booking.title ?? "Session"}
-              detail={[humanizeEnum(booking.kind), day(booking.startsAt)]
-                .filter(Boolean)
-                .join(" · ")}
+              detail={
+                reported
+                  ? `Report about your ${clock.dateTime(reported.startsAt)} session`
+                  : [humanizeEnum(booking.kind), day(booking.startsAt)]
+                      .filter(Boolean)
+                      .join(" · ")
+              }
               href={
                 props.appointmentsBase
                   ? `${props.appointmentsBase}/${appointmentId}`

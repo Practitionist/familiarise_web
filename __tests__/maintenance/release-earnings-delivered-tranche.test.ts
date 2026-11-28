@@ -162,6 +162,28 @@ it.each<[string, () => Row]>([
   expect(statusOf("delivered")).toBe("PENDING");
 });
 
+it.each<[string, Date | null, string]>([
+  ["is held while that verdict is unconfirmed", null, "PENDING"],
+  ["is released once that verdict is confirmed", PAST, "READY"],
+])(
+  "a dated tranche whose delivered session was a learner absence, with a later session still scheduled, %s",
+  async (_label, outcomeConfirmedAt, status) => {
+    const payment = planPayment();
+    const appointment = payment.appointment as Row;
+    Object.assign((appointment.occurrences as Row[])[0], {
+      outcome: "LEARNER_ABSENT",
+      outcomeConfirmedAt,
+    });
+    seed(payment);
+
+    await releaseEarningsFromHold();
+
+    // The later session never holds the dated tranche; only the unconfirmed verdict does.
+    expect(statusOf("delivered")).toBe(status);
+    expect(statusOf("undelivered")).toBe("PENDING");
+  },
+);
+
 it("the claim keeps a tranche whose stamp a void cleared after the read", async () => {
   seed(planPayment());
   consultantEarnings.findMany.mockImplementationOnce(async () => {

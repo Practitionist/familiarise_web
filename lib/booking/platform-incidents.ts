@@ -28,7 +28,10 @@ import {
   subscriptionIsOver,
   subscriptionPlanEnd,
 } from "./entitlement";
-import { incidentRefundKey } from "./incident-keys";
+import {
+  INCIDENT_NO_SHOW_CLAIM_PREFIX,
+  incidentRefundKey,
+} from "./incident-keys";
 import { onClassSessionVoided } from "./class-sessions";
 import { LIVE_PARTICIPANT_STATUSES } from "./participants";
 import { flushClassVoidNotices } from "./session-outcome-sweep";
@@ -519,6 +522,150 @@ export async function enumerateIncident(
     cursor = page.at(-1)?.id ?? cursor;
     if (page.length < opts.limit) return complete;
   }
+}
+
+/** How long after an incident ends its claimed no-shows are still looked for: the review period of the ops list. */
+export const CLAIM_REVIEW_DAYS = 30;
+
+/** Consultation sessions a confirmed no-show claim cancelled inside the incident; `incidentsWithUnreportedClaims` is its SQL twin. */
+const claimedInside = (incident: IncidentRow) =>
+  ({
+    startsAt: { lt: incident.endsAt },
+    endsAt: { gt: incident.startsAt },
+    isTentative: false,
+    deletedAt: { not: null },
+    completionStatus: "CANCELLED",
+    outcome: "HOST_ABSENT",
+    outcomeConfirmedAt: { not: null },
+    appointment: { consultationId: { not: null } },
+  }) satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** The sessions of this incident already reported, read from their ops items. */
+async function reportedClaims(
+  db: Pick<Tx, "systemEvent">,
+  incidentId: string,
+): Promise<string[]> {
+  const prefix = `${INCIDENT_NO_SHOW_CLAIM_PREFIX}${incidentId}:`;
+  const rows = await db.systemEvent.findMany({
+    where: { correlationId: { startsWith: prefix } },
+    select: { correlationId: true },
+  });
+  return rows.flatMap((r) =>
+    r.correlationId ? [r.correlationId.slice(prefix.length)] : [],
+  );
+}
+
+/** The claims of this incident not reported yet, at most `take`, so a reported page never hides the rest. */
+async function unreportedClaims(
+  db: Pick<Tx, "systemEvent" | "appointmentOccurrence">,
+  incident: IncidentRow,
+  take: number,
+) {
+  const reported = await reportedClaims(db, incident.id);
+  return db.appointmentOccurrence.findMany({
+    where: {
+      ...claimedInside(incident),
+      ...(reported.length > 0 ? { id: { notIn: reported } } : {}),
+    },
+    select: {
+      id: true,
+      appointmentId: true,
+      appointment: {
+        select: {
+          payment: {
+            where: { paymentStatus: "SUCCEEDED", deletedAt: null },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+    orderBy: { id: "asc" },
+    take,
+  });
+}
+
+/**
+ * Incidents ended inside the review period that still hold a claimed no-show
+ * with no ops item, newest end first, so an older one is reached once the newer
+ * are reported. The SQL twin of `claimedInside`; change both together.
+ */
+export function incidentsWithUnreportedClaims(
+  db: Pick<Tx, "$queryRaw">,
+  now: Date,
+  take: number,
+  incidentId: string | null = null,
+): Promise<IncidentRow[]> {
+  const since = new Date(now.getTime() - CLAIM_REVIEW_DAYS * 86_400_000);
+  const only = incidentId ? Prisma.sql`AND i.id = ${incidentId}` : Prisma.empty;
+  return db.$queryRaw<IncidentRow[]>`
+    SELECT i.id, i."startsAt", i."endsAt"
+    FROM "PlatformIncident" i
+    WHERE i."endsAt" > ${since} ${only}
+      AND EXISTS (
+        SELECT 1
+        FROM "AppointmentOccurrence" o
+        JOIN "Appointment" a ON a.id = o."appointmentId"
+        WHERE o."startsAt" < i."endsAt"
+          AND o."endsAt" > i."startsAt"
+          AND o."isTentative" = false
+          AND o."deletedAt" IS NOT NULL
+          AND o."completionStatus" = 'CANCELLED'
+          AND o.outcome = 'HOST_ABSENT'
+          AND o."outcomeConfirmedAt" IS NOT NULL
+          AND a."consultationId" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM system_events e
+            WHERE e."correlationId" = ${INCIDENT_NO_SHOW_CLAIM_PREFIX} || i.id || ':' || o.id
+          )
+      )
+    ORDER BY i."endsAt" DESC, i.id
+    LIMIT ${take}`;
+}
+
+/** Whether any recent incident has a claimed no-show nobody reported: the ticker's idle probe, one statement. */
+export async function hasUnreportedClaims(
+  db: Pick<Tx, "$queryRaw">,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  return (await incidentsWithUnreportedClaims(db, now, 1)).length > 0;
+}
+
+/**
+ * The incident's own record of a no-show claim that won the race against it.
+ * Re-run on every pass while the incident is recent, so a claim committed after
+ * one pass's read is reported by the next; one ops item per session.
+ */
+export async function reportClaimedNoShows(
+  incident: IncidentRow,
+): Promise<string[]> {
+  const claimed = await unreportedClaims(prisma, incident, 200);
+  const reported: string[] = [];
+  for (const occ of claimed) {
+    const correlationId = `${INCIDENT_NO_SHOW_CLAIM_PREFIX}${incident.id}:${occ.id}`;
+    const seen = await prisma.systemEvent.findFirst({
+      where: { correlationId },
+      select: { id: true },
+    });
+    if (seen) continue;
+    await recordSystemEvent({
+      strict: true,
+      category: "BOOKING",
+      severity: "WARN",
+      message: `A consultant no-show was claimed inside incident ${incident.id}; check its refund, the strike and the expert's earnings`,
+      context: {
+        incidentId: incident.id,
+        occurrenceId: occ.id,
+        appointmentId: occ.appointmentId,
+        paymentId: occ.appointment.payment[0]?.id ?? null,
+      },
+      correlationId,
+    });
+    reported.push(occ.id);
+  }
+  return reported;
 }
 
 /** One page of the walk: "deadline" stops the run, "pending" leaves work for a later one. */

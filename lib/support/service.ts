@@ -16,6 +16,7 @@ import type {
 } from "@prisma/client";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { CLASSIFIED_REPORT_REASONS } from "@/lib/booking/outcome-reports";
 import { seatOrganizationId } from "@/lib/booking/participants";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import { buildSupportContext } from "./context";
@@ -32,12 +33,16 @@ import { escalationPriority, issueTypeForReason } from "./priority";
 import {
   appendSupportCaseTurn,
   createOrReuseSupportCase,
+  type CreateSupportCaseInput,
   latestCaseDecisionTx,
   openCaseConflict,
   stageSupportCaseIntakeTx,
 } from "./case-service";
 import { assertCaseTransition, CaseConflictError } from "./case-transitions";
-import { SupportThreadCategoryEnum } from "@/schemas/enums";
+import {
+  SupportFlowReasonEnum,
+  SupportThreadCategoryEnum,
+} from "@/schemas/enums";
 import { z } from "zod";
 import { recordFlowOutcome } from "./deflection";
 import { slaDeadlinesFor, userRepliedPatch } from "./sla";
@@ -55,6 +60,13 @@ export interface RunTurnInput {
   urgent?: boolean;
   /** "This didn't fix it" on a resolved human conversation. */
   reopen?: boolean;
+  /**
+   * The ended session the turn is about; the route has checked it. A NO_SHOW intent defaults to the last ended
+   * session, and any other turn with a session answers on that session's open case.
+   */
+  appointmentOccurrenceId?: string;
+  /** The case a follow-up answers; refused unless it is the caller's own open case on this booking. */
+  caseId?: string;
   /**
    * Caller reached this appointment only via the org-operator party branch.
    * Restricted to org-party categories while permitting human escalation inside them.
@@ -86,6 +98,8 @@ export interface RunTurnResult {
   outcomeId?: string | null;
   /** Committed acknowledgement SLA timestamp in ISO format, when escalated. */
   replyByAt?: string | null;
+  /** The session the thread is about; the client names it on every later turn. */
+  appointmentOccurrenceId?: string | null;
 }
 
 function isUnrecognizedBotMessage(m: {
@@ -143,48 +157,69 @@ export async function runSupportTurn(
     ? appt.organizationId
     : await seatOrganizationId(prisma, appt, userId);
 
+  const ownershipScope = input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL";
+  // The intake key is scoped to this booking and scope, so one token cannot replay another booking's case.
   const intakeId = input.clientTurnId
-    ? `appointment-${createHash("sha256").update(input.clientTurnId).digest("hex")}`
+    ? `appointment-${createHash("sha256")
+        .update(
+          [
+            appointmentId,
+            ownershipScope,
+            threadOrgId ?? "",
+            input.clientTurnId,
+          ].join("|"),
+        )
+        .digest("hex")}`
     : `appointment-${crypto.randomUUID()}`;
-  const previous = await prisma.supportCase.findFirst({
-    where: {
-      appointmentId,
-      requesterUserId: userId,
-      submitterUserId: userId,
-      organizationId: threadOrgId,
-      ownershipScope: input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL",
-      closedAt: null,
-      deletedAt: null,
-    },
-    orderBy: { createdAt: "desc" },
-  });
-  // A new intent on a resolved human conversation starts its own request.
-  const reusable =
-    previous &&
-    !(
-      input.category &&
-      previous.activeChannel === "HUMAN" &&
-      previous.status === "RESOLVED"
-    )
-      ? previous
-      : null;
-  const thread =
-    reusable ??
-    (
-      await createOrReuseSupportCase({
-        clientIntakeId: intakeId,
-        requesterUserId: userId,
-        submitterUserId: userId,
+  const intake = {
+    clientIntakeId: intakeId,
+    requesterUserId: userId,
+    submitterUserId: userId,
+    appointmentId,
+    organizationId: threadOrgId,
+    ownershipScope,
+    title: "Appointment support",
+    description: "Appointment help requested",
+    initialSender: "SYSTEM" as const,
+    activeChannel: "SELF_SERVE" as const,
+  } satisfies CreateSupportCaseInput;
+  // A no-show report is its session's own case, never another open thread on the booking.
+  const noShow = input.category === "NO_SHOW" && !input.isOrgParty;
+  const noShowCtx = noShow
+    ? await buildSupportContext(
+        "pending",
         appointmentId,
-        organizationId: threadOrgId,
-        ownershipScope: input.isOrgParty ? "ORG_OPERATIONS" : "PERSONAL",
-        category: input.category ?? "OTHER",
-        title: "Appointment support",
-        description: "Appointment help requested",
-        initialSender: "SYSTEM",
-        activeChannel: "SELF_SERVE",
-      })
-    ).supportCase;
+        userId,
+        "NO_SHOW",
+        input.appointmentOccurrenceId,
+      )
+    : null;
+  if (noShow && !noShowCtx) return null;
+  const thread = await resolveThread(intake, input, noShowCtx);
+  const result = await advanceThread(
+    appointmentId,
+    userId,
+    input,
+    thread,
+    noShowCtx,
+  );
+  // The client sends this session with its next turn, so the answer lands on this case.
+  return (
+    result && {
+      ...result,
+      appointmentOccurrenceId: thread.appointmentOccurrenceId,
+    }
+  );
+}
+
+/** One turn on the thread its caller resolved. */
+async function advanceThread(
+  appointmentId: string,
+  userId: string,
+  input: RunTurnInput,
+  thread: SupportCase,
+  noShowCtx: SupportContext | null,
+): Promise<RunTurnResult | null> {
   if (
     input.clientTurnId &&
     (await prisma.supportCaseMessage.findUnique({
@@ -203,12 +238,14 @@ export async function runSupportTurn(
   );
 
   // Explicit intent selection re-scopes the thread to that category's entry node.
-  const ctx = await buildSupportContext(
-    thread.id,
-    appointmentId,
-    userId,
-    input.category ?? storedCategory,
-  );
+  const ctx = noShowCtx
+    ? { ...noShowCtx, threadId: thread.id }
+    : await buildSupportContext(
+        thread.id,
+        appointmentId,
+        userId,
+        input.category ?? storedCategory,
+      );
   if (!ctx) return null;
 
   // Switching intent restarts the flow at its entry node.
@@ -224,6 +261,13 @@ export async function runSupportTurn(
   }
 
   if (thread.activeChannel === "HUMAN") {
+    // A guided choice means nothing to a person-handled case, so it is refused rather than dropped.
+    if (input.chosenOptionId && !input.userMessage)
+      throw new CaseConflictError({
+        code: "OPTION_NOT_AVAILABLE",
+        error:
+          "Our team has this conversation now, so that choice no longer applies. Write your message instead.",
+      });
     return persistHumanTurn(
       thread,
       input.userMessage,
@@ -420,6 +464,7 @@ export async function runSupportTurn(
         },
       });
       if (moved.count === 0) return false;
+      await recordFlowReasonTx(tx, thread.id, category, turn.reason);
       const userSaid = input.userMessage ?? turn.chosenLabel;
       const outgoing = [
         ...(userSaid
@@ -504,6 +549,193 @@ export async function runSupportTurn(
     reason: turn.reason,
     outcomeId: recorded,
   };
+}
+
+/** A NO_SHOW intent files on its session; a later turn naming a session answers there; anything else is booking-wide. */
+async function resolveThread(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  input: RunTurnInput,
+  noShowCtx: SupportContext | null,
+): Promise<SupportCase> {
+  if (noShowCtx) {
+    // A retry finds its committed turn first, open or closed, before any session is chosen.
+    const replayed = input.clientTurnId
+      ? await caseHoldingTurn(intake, input.clientTurnId)
+      : null;
+    if (replayed) {
+      if (
+        input.appointmentOccurrenceId &&
+        replayed.appointmentOccurrenceId !== input.appointmentOccurrenceId
+      )
+        throw new CaseConflictError({
+          code: "IDEMPOTENCY_KEY_REUSED",
+          error:
+            "This request was already sent for another session. Refresh and try again.",
+        });
+      return replayed;
+    }
+    // A report is about one ended session: the one named, or the only one; otherwise the person picks.
+    const occurrenceId = noShowCtx.reportOccurrenceId;
+    if (!occurrenceId)
+      throw new CaseConflictError(
+        {
+          code: "SESSION_REQUIRED",
+          error:
+            noShowCtx.reportSessions.length > 1
+              ? "Choose which session this is about."
+              : "There is no finished session to report on yet.",
+        },
+        400,
+      );
+    const { supportCase } = await createOrReuseSupportCase({
+      ...intake,
+      category: "NO_SHOW",
+      appointmentOccurrenceId: occurrenceId,
+    });
+    return supportCase;
+  }
+  if (!input.category && input.caseId) return openNamedCase(intake, input);
+  if (!input.category && input.appointmentOccurrenceId)
+    return openSessionThread(intake, input.appointmentOccurrenceId);
+  return openBookingThread(intake, input.category);
+}
+
+/** The caller's case in this booking and scope that already holds this turn, whatever its status. */
+function caseHoldingTurn(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  clientTurnId: string,
+): Promise<SupportCase | null> {
+  return prisma.supportCase.findFirst({
+    where: {
+      appointmentId: intake.appointmentId,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
+      deletedAt: null,
+      messages: { some: { clientTurnId } },
+    },
+  });
+}
+
+/** The case a follow-up names, only when it is the caller's own open case in this scope, booking and session. */
+async function openNamedCase(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  input: RunTurnInput,
+): Promise<SupportCase> {
+  const named = await prisma.supportCase.findFirst({
+    where: {
+      id: input.caseId,
+      appointmentId: intake.appointmentId,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
+      closedAt: null,
+      deletedAt: null,
+      ...(input.appointmentOccurrenceId
+        ? { appointmentOccurrenceId: input.appointmentOccurrenceId }
+        : {}),
+    },
+  });
+  if (!named)
+    throw new CaseConflictError(
+      {
+        code: "CASE_UNAVAILABLE",
+        error:
+          "This conversation is no longer open. Start a new support request.",
+      },
+      404,
+    );
+  return named;
+}
+
+/** The requester's newest open case on one session of the booking, else a new one there. */
+async function openSessionThread(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  occurrenceId: string,
+): Promise<SupportCase> {
+  const open = await prisma.supportCase.findFirst({
+    where: {
+      appointmentId: intake.appointmentId,
+      scopeKey: `OCCURRENCE:${occurrenceId}`,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
+      closedAt: null,
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (open) return open;
+  const { supportCase } = await createOrReuseSupportCase({
+    ...intake,
+    category: "OTHER",
+    appointmentOccurrenceId: occurrenceId,
+  });
+  return supportCase;
+}
+
+/** The newest open booking-wide thread, else a new one; a session's own case is reached only through its session. */
+async function openBookingThread(
+  intake: CreateSupportCaseInput & { appointmentId: string },
+  category: SupportThreadCategory | undefined,
+): Promise<SupportCase> {
+  const previous = await prisma.supportCase.findFirst({
+    where: {
+      appointmentId: intake.appointmentId,
+      requesterUserId: intake.requesterUserId,
+      submitterUserId: intake.submitterUserId,
+      organizationId: intake.organizationId,
+      ownershipScope: intake.ownershipScope,
+      appointmentOccurrenceId: null,
+      closedAt: null,
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  // A new intent on a resolved human conversation starts its own request.
+  if (
+    previous &&
+    !(
+      category &&
+      previous.activeChannel === "HUMAN" &&
+      previous.status === "RESOLVED"
+    )
+  )
+    return previous;
+  const { supportCase } = await createOrReuseSupportCase({
+    ...intake,
+    category: category ?? "OTHER",
+  });
+  return supportCase;
+}
+
+/**
+ * A NO_SHOW terminal's reason and when it was answered, by CAS: only on a case linked to a session that has ended.
+ * It fills an empty reason or replaces one that counts for no verdict; a counted reason keeps both.
+ */
+async function recordFlowReasonTx(
+  tx: Tx,
+  caseId: string,
+  category: SupportThreadCategory,
+  reason: string | undefined,
+): Promise<void> {
+  const parsed = SupportFlowReasonEnum.safeParse(reason);
+  if (category !== "NO_SHOW" || !parsed.success) return;
+  const now = new Date();
+  await tx.supportCase.updateMany({
+    where: {
+      id: caseId,
+      occurrence: { is: { deletedAt: null, endsAt: { lte: now } } },
+      OR: [
+        { flowReason: null },
+        { flowReason: { notIn: CLASSIFIED_REPORT_REASONS } },
+      ],
+    },
+    data: { flowReason: parsed.data, flowReasonAt: now },
+  });
 }
 
 /** Only a resolved case can carry a decision; open statuses skip the read. */
@@ -777,6 +1009,7 @@ async function escalate(
         },
       });
       if (!moved.count) return null;
+      await recordFlowReasonTx(tx, threadId, category, turn.reason);
       const outgoing = [
         ...[turn.chosenLabel, userMessage]
           .filter((body): body is string => Boolean(body))

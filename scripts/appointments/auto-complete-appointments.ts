@@ -64,6 +64,7 @@ import {
 } from "@/lib/booking/entitlement";
 import {
   alertStaleNeedsHuman,
+  confirmableVerdictWhere,
   confirmClosedOutcomes,
   escalateAgedNeedsHuman,
   decideSlotOutcome,
@@ -81,11 +82,7 @@ import {
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
-import {
-  AWAITING_HUMAN,
-  UNSETTLED_MISS,
-  unconfirmedClosedVerdictWhere,
-} from "@/lib/booking/misses";
+import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
 import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
@@ -264,7 +261,7 @@ export async function hasAutoCompleteWork(
       OR: [
         undecidedSlotWhere(bufferTime),
         staleNeedsHumanWhere(now),
-        unconfirmedClosedVerdictWhere(now),
+        confirmableVerdictWhere(now),
       ],
     },
     select: { id: true },
@@ -1477,7 +1474,7 @@ async function autoCompleteAppointmentsUnlocked(
     checkpoint = confirms.checkpoint;
     allErrors.push(...confirms.errors);
     console.log(
-      `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
+      `   Negative verdicts: ${confirms.confirmed} confirmed (${confirms.claimed} consultant no-shows claimed), ${confirms.weak} weak, ${confirms.disputed} disputed and ${confirms.declined} declined no-shows left for ops`,
     );
     rounds = await drainRounds(
       { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline },

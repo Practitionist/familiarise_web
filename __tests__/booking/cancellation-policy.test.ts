@@ -167,6 +167,41 @@ describe("quoteBookingRefund — #1500 credit-funded bookings", () => {
   });
 });
 
+describe("quoteBookingRefund: a voided session not yet settled", () => {
+  // ₹1,000, its one session ended yesterday and was voided; nothing is ahead.
+  const voided = {
+    policy: terms({ tiers: [{ hoursBefore: 0, refundPct: 10 }] }),
+    hoursUntilNextSession: null,
+    slotsTotal: 1,
+    sessionsRefunded: 0,
+    sessionsRemaining: 0,
+    isSubscription: false,
+    isFreeCreditFunded: false,
+    grossPaise: 100_000,
+    refundablePaise: 100_000,
+  };
+
+  it.each([false, true])(
+    "comes back in full whoever cancels, whatever the ladder (consultant-initiated: %s)",
+    (isConsultantInitiated) => {
+      const quote = quoteBookingRefund({
+        ...voided,
+        isConsultantInitiated,
+        unsettledVoid: true,
+      });
+      expect(quote).toMatchObject({ refundPct: 100, refundPaise: 100_000 });
+    },
+  );
+
+  it("stays on the ladder when no void is the cancel's to settle", () => {
+    const quote = quoteBookingRefund({
+      ...voided,
+      isConsultantInitiated: false,
+    });
+    expect(quote).toMatchObject({ refundPct: 0, refundPaise: 0 });
+  });
+});
+
 describe("quoteBookingRefund — #1766 unused sessions against the plan", () => {
   const HOUR = 3_600_000;
   const NOW = Date.parse("2026-09-20T10:00:00Z");

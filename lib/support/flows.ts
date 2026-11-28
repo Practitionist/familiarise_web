@@ -20,13 +20,15 @@ import type { FlowDefinition, SupportContext } from "./types";
 
 const notUpcoming = (ctx: SupportContext) => ctx.stage !== "UPCOMING";
 const notCompleted = (ctx: SupportContext) => ctx.stage !== "COMPLETED";
+/** A no-show report is about one ended session, so none is offered before a session ends. */
+const hasEndedSession = (ctx: SupportContext) => ctx.reportSessions.length > 0;
 
 // --- Provider/expert no-show (attendee side) — the #1 marketplace complaint ---
 const noShowFlowAttendee: FlowDefinition = {
   category: "NO_SHOW",
   title: "The expert didn't join",
   entryNodeId: "start",
-  available: (ctx) => notUpcoming(ctx) && !ctx.isProvider,
+  available: (ctx) => hasEndedSession(ctx) && !ctx.isProvider,
   nodes: {
     start: {
       id: "start",
@@ -35,6 +37,7 @@ const noShowFlowAttendee: FlowDefinition = {
       options: [
         { id: "expert", label: "The expert never showed up", next: "expert" },
         { id: "me", label: "I couldn't get in", next: "tech" },
+        { id: "attended", label: "I was there", next: "attended" },
       ],
     },
     expert: {
@@ -58,6 +61,13 @@ const noShowFlowAttendee: FlowDefinition = {
       escalate: true,
       reason: "attendee_join_issue",
     },
+    attended: {
+      id: "attended",
+      kind: "TERMINAL",
+      body: "Thanks for telling us. We'll check the call record before anything is applied to this session, and our team will follow up here.",
+      escalate: true,
+      reason: "attendee_attended",
+    },
   },
 };
 
@@ -66,7 +76,7 @@ const noShowFlowProvider: FlowDefinition = {
   category: "NO_SHOW",
   title: "The participant didn't join",
   entryNodeId: "start",
-  available: (ctx) => notUpcoming(ctx) && ctx.isProvider,
+  available: (ctx) => hasEndedSession(ctx) && ctx.isProvider,
   nodes: {
     start: {
       id: "start",
@@ -79,6 +89,7 @@ const noShowFlowProvider: FlowDefinition = {
           next: "client",
         },
         { id: "me", label: "I couldn't get in", next: "tech" },
+        { id: "attended", label: "I was there", next: "attended" },
       ],
     },
     client: {
@@ -100,6 +111,13 @@ const noShowFlowProvider: FlowDefinition = {
       body: "Since the session has already happened, we can't offer a new time for it. Tell us what went wrong and our team will take a look.",
       escalate: true,
       reason: "provider_join_issue",
+    },
+    attended: {
+      id: "attended",
+      kind: "TERMINAL",
+      body: "Thanks for telling us. We'll check the call record before anything is applied to this session, and our team will follow up here.",
+      escalate: true,
+      reason: "provider_attended",
     },
   },
 };

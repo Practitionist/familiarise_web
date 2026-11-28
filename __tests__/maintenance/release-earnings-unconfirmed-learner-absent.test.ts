@@ -2,10 +2,10 @@
  * @jest-environment node
  */
 
-// Invariant: a consultation or trial earning whose session reads LEARNER_ABSENT
-// stays PENDING until that verdict is confirmed, on both arms, in the release
-// run, its idle probe and a sponsor's trust-park release; a subscription's
-// earning releases per tranche and is not held by it.
+// Invariant: an earning whose booking has a session reading LEARNER_ABSENT stays
+// PENDING until that verdict is confirmed, on both arms, in the release run, its
+// idle probe and a sponsor's trust-park release. A plan is held whole: every
+// dated tranche and the host organisation's earning wait for the one verdict.
 
 jest.mock("../../lib/cron/with-cron-lock", () =>
   jest.requireActual("../fixtures/earnings-release-world").cronLockModule(),
@@ -91,9 +91,118 @@ it("releases both arms once the verdict is confirmed", async () => {
   expect(consultantEarnings.rows[0].status).toBe("READY");
 });
 
-it("does not hold a subscription's earning", async () => {
-  seed("PENDING", { subscriptionId: "sub_1" });
-  expect(await releaseEarningsFromHold()).toMatchObject({ releasedCount: 1 });
+describe("a plan with two dated tranches and one learner-absent session", () => {
+  /** Cycle 0 held weeks ago; cycle 1 holds the learner-absent session, in `absent`'s state. */
+  function seedPlan(absent: Row, cycleOneHoldUntil: Date | null = PAST) {
+    const session = (id: string, over: Row = {}): Row => ({
+      id,
+      deletedAt: null,
+      isTentative: false,
+      completionStatus: "COMPLETED",
+      outcome: "HELD",
+      outcomeConfirmedAt: null,
+      hostCancelledAt: null,
+      voidedAt: null,
+      seatsSettledAt: null,
+      meeting: { endedReason: "session_timeout" },
+      appointment: { subscriptionId: "sub_1" },
+      ...over,
+    });
+    const payment: Row = {
+      id: "pay_plan",
+      amount: 400_000,
+      organizationId: null,
+      appointmentId: "apt_plan",
+      refunds: [],
+      refundOwedKey: null,
+      appointment: {
+        subscriptionId: "sub_1",
+        occurrences: [
+          session("c0_s1"),
+          session("c0_s2"),
+          session("c1_s1"),
+          session("c1_s2", absent),
+        ],
+      },
+    };
+    const tranche = (cycleOrdinal: number, holdUntil: Date | null): Row => ({
+      id: `ce_cycle_${cycleOrdinal}`,
+      status: "PENDING",
+      cycleOrdinal,
+      holdUntil,
+      consultantSharePaise: 80_000,
+      consultantProfile: { user: { name: "C", email: "c@x" } },
+      payment,
+    });
+    consultantEarnings.rows.splice(
+      0,
+      consultantEarnings.rows.length,
+      tranche(0, PAST),
+      tranche(1, cycleOneHoldUntil),
+    );
+    organizationEarnings.rows.splice(0, organizationEarnings.rows.length, {
+      id: "oe_plan",
+      status: "PENDING",
+      holdUntil: PAST,
+      orgSharePaise: 10_000,
+      organization: { name: "Host org" },
+      payment,
+    });
+  }
+  const statuses = () =>
+    Object.fromEntries(
+      [...consultantEarnings.rows, ...organizationEarnings.rows].map((r) => [
+        r.id,
+        r.status,
+      ]),
+    );
+
+  it("releases neither tranche nor the host organisation's earning while the verdict is unconfirmed", async () => {
+    seedPlan({ outcome: "LEARNER_ABSENT" });
+    expect(await hasReleasableEarningsWork(db(), new Date(), () => false)).toBe(
+      false,
+    );
+    await releaseEarningsFromHold();
+    expect(statuses()).toEqual({
+      ce_cycle_0: "PENDING",
+      ce_cycle_1: "PENDING",
+      oe_plan: "PENDING",
+    });
+  });
+
+  it.each([
+    [
+      "the verdict is confirmed",
+      { outcome: "LEARNER_ABSENT", outcomeConfirmedAt: PAST },
+    ],
+    ["ops overturn it to held", { outcome: "HELD" }],
+  ])("releases all three on the next run once %s", async (_label, absent) => {
+    seedPlan(absent);
+    await releaseEarningsFromHold();
+    expect(statuses()).toEqual({
+      ce_cycle_0: "READY",
+      ce_cycle_1: "READY",
+      oe_plan: "READY",
+    });
+  });
+
+  it("an overturn to a void no longer holds the plan: the tranche the void un-stamped waits for its cycle, the delivered one releases", async () => {
+    // The door's void of a delivered plan session clears the stamp of the tranche it un-delivers.
+    seedPlan(
+      {
+        completionStatus: "VOIDED",
+        outcome: "HOST_ABSENT",
+        outcomeConfirmedAt: PAST,
+        voidedAt: PAST,
+      },
+      null,
+    );
+    await releaseEarningsFromHold();
+    expect(statuses()).toMatchObject({
+      ce_cycle_0: "READY",
+      ce_cycle_1: "PENDING",
+    });
+  });
 });
 
 it("a sponsor's trust-park release parks an unconfirmed one as PENDING, not READY", async () => {

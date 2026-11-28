@@ -52,6 +52,7 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { notifySeatRemoved } from "./seat-removed-notice";
 import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { BookingRuleError } from "./booking-rule-error";
+import { pendingVoidRefusal, seatCarriesMoney } from "./pending-void-gate";
 import {
   occurrenceRefundsPaise,
   seatLedger,
@@ -198,12 +199,31 @@ export async function classSeatQuote(
 }
 
 /** The self-leave rule, inside the caller's transaction. Throws to refuse. */
+/** A class void whose verdict is unconfirmed may yet be held, so a paid leave or exit waits rather than price it; a free seat leaves at once. */
+async function refuseWhileVoidPending(
+  tx: Tx,
+  seat: Seat,
+  payment: SeatPayment | null,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  if (!seatCarriesMoney(payment)) return;
+  const message = await pendingVoidRefusal(tx, {
+    appointmentId: seat.appointmentId,
+    readerUserId: userId,
+    action: "leave",
+    now,
+  });
+  if (message) throw new BookingRuleError("EXIT_WAITS_FOR_VERDICT", message);
+}
+
 export async function planSelfLeave(
   tx: Tx,
   kind: EventKind,
   eventId: string,
   seat: Seat,
   payment: SeatPayment | null,
+  userId: string,
   now = new Date(),
 ): Promise<SeatRefundPlan> {
   const windowHours = eventRefundWindowHours(
@@ -233,6 +253,7 @@ export async function planSelfLeave(
     assertOutsideWindow(next, joinedAt, windowHours, now, !event?.retimeBy);
     return { mode: "full" };
   }
+  await refuseWhileVoidPending(tx, seat, payment, userId, now);
   if (!payment) return { mode: "full" };
   // A re-bought seat reuses its row, so the later of the two is the purchase.
   const joinedAt = new Date(
@@ -296,6 +317,7 @@ async function planSeriesExit(
   tx: Tx,
   seat: Seat,
   payment: SeatPayment | null,
+  userId: string,
   now = new Date(),
 ): Promise<SeatRefundPlan> {
   const series = await seriesLedger(tx, seat.appointmentId, now);
@@ -305,6 +327,7 @@ async function planSeriesExit(
       "This class has not missed enough sessions for a full-refund exit.",
     );
   }
+  await refuseWhileVoidPending(tx, seat, payment, userId, now);
   if (!payment) return { mode: "full" };
   const joinedAt = new Date(
     Math.max(payment.createdAt.getTime(), seat.createdAt.getTime()),
@@ -402,7 +425,14 @@ export async function quoteSeatLeave(
         }),
     };
     try {
-      const plan = await planSelfLeave(tx, kind, eventId, seat, payment);
+      const plan = await planSelfLeave(
+        tx,
+        kind,
+        eventId,
+        seat,
+        payment,
+        userId,
+      );
       return {
         ...base,
         refused: false,
@@ -476,7 +506,7 @@ export async function leaveEventSeat(args: {
           );
           let plan: SeatRefundPlan = { mode: "full" };
           if (args.exit) {
-            plan = await planSeriesExit(tx, seat, payment);
+            plan = await planSeriesExit(tx, seat, payment, args.userId);
           } else if (args.isSelfLeave) {
             plan = await planSelfLeave(
               tx,
@@ -484,6 +514,7 @@ export async function leaveEventSeat(args: {
               args.eventId,
               seat,
               payment,
+              args.userId,
             );
           }
           // The status read above pins the CAS, so the history needs no second read.
