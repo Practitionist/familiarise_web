@@ -129,6 +129,8 @@ describe("the discovery pass runs after the poll", () => {
       updated: 0,
       notAdopted: 0,
       unknownPayment: 0,
+      waiting: 0,
+      untried: 0,
       stoppedShort: { bound: "deadline", pagesHandled: 0 },
     });
     expect(result.checkpoint).toBe('{"skip":0,"cutRuns":1}');

@@ -11,10 +11,42 @@ export interface DiscoveryStoppedShort {
 /** A pass cut on this many runs in a row raises its standing finding. */
 export const CUT_RUNS_BEFORE_FINDING = 2;
 
+/** A remembered deferral is handed over again only this long after its last try. */
+export const DEFERRED_RETRY_SECONDS = 6 * 60 * 60;
+/** How long a deferral is kept: the webhook sweep gives a deferred event up after the same 168 hours. */
+export const DEFERRED_KEEP_SECONDS = 7 * 24 * 60 * 60;
+/** The most deferrals a pass remembers in its checkpoint. */
+export const MAX_REMEMBERED_DEFERRALS = 100;
+/** Hand-overs a run may start that each cost the handler a gateway read. */
+export const GATEWAY_READ_TRIES_PER_RUN = 5;
+
+/**
+ * Whether a hand-over that costs a gateway read may start now. A remembered
+ * deferral waits out its retry time, and one past the run's bound is
+ * remembered as `due` for the next run; "untried" means no room was left to
+ * remember it, so the caller reports it.
+ */
+export function gatewayReadTurn<T extends { triedAt: number }>(
+  remembered: Map<string, T>,
+  id: string,
+  due: T,
+  nowSeconds: number,
+  triesThisRun: number,
+): "try" | "wait" | "untried" {
+  const prior = remembered.get(id);
+  if (prior && nowSeconds - prior.triedAt < DEFERRED_RETRY_SECONDS) {
+    return "wait";
+  }
+  if (!prior && remembered.size >= MAX_REMEMBERED_DEFERRALS) return "untried";
+  if (triesThisRun < GATEWAY_READ_TRIES_PER_RUN) return "try";
+  if (!prior) remembered.set(id, due);
+  return "wait";
+}
+
 /** The job's stored discovery position; null when none is stored or it no longer parses. */
 export async function readDiscoveryState<T>(
   jobName: string,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
 ): Promise<T | null> {
   const stored = await readJobCheckpoint(jobName);
   if (!stored) return null;

@@ -15,7 +15,10 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { dispute: { findMany: jest.fn(), findUnique: jest.fn() } },
+  default: {
+    dispute: { findMany: jest.fn(), findUnique: jest.fn() },
+    payment: { findMany: jest.fn() },
+  },
 }));
 
 const mockList = jest.fn();
@@ -63,10 +66,28 @@ import { discoverGatewayDisputes } from "../../lib/payments/discovery/dispute-di
 
 interface DiscoveryPrismaMock {
   dispute: { findMany: jest.Mock; findUnique: jest.Mock };
+  payment: { findMany: jest.Mock };
 }
 const db = prisma as unknown as DiscoveryPrismaMock;
 
 const never = () => false;
+const NOW = new Date("2026-11-27T12:00:00.000Z");
+const NOW_S = Math.floor(NOW.getTime() / 1000);
+const HOUR_S = 60 * 60;
+const hoursLater = (hours: number) =>
+  new Date(NOW.getTime() + hours * HOUR_S * 1000);
+
+/** Every listed payment id is the capture id of a payment row, so no hand-over needs a gateway read. */
+const allPaymentsHeld = () =>
+  db.payment.findMany.mockImplementation(
+    async (args: { where: { gatewayPaymentId: { in: string[] } } }) =>
+      args.where.gatewayPaymentId.in.map((gatewayPaymentId) => ({
+        gatewayPaymentId,
+      })),
+  );
+
+const deferral = (id: string) =>
+  new MockDeferSignal(`dispute_before_payment:${id}`);
 
 const listed = (id: string, over: Record<string, unknown> = {}) => ({
   id,
@@ -104,7 +125,11 @@ const allKnownOpen = () =>
   );
 
 const positionOf = (run: { checkpoint?: string }) =>
-  JSON.parse(run.checkpoint ?? "null") as { skip: number; cutRuns: number };
+  JSON.parse(run.checkpoint ?? "null") as {
+    skip: number;
+    cutRuns: number;
+    deferred: { id: string; triedAt: number }[];
+  };
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -114,6 +139,7 @@ beforeEach(() => {
   mockList.mockResolvedValue([]);
   db.dispute.findMany.mockResolvedValue([]);
   db.dispute.findUnique.mockResolvedValue(null);
+  allPaymentsHeld();
   mockHandleDisputeCreated.mockResolvedValue(undefined);
   mockHandleDisputeUpdated.mockResolvedValue(undefined);
 });
@@ -252,13 +278,153 @@ describe("a dispute the database holds", () => {
   });
 });
 
+describe("a dispute on a payment the database does not hold", () => {
+  const unlinked = (id: string) => listed(id, { payment_id: `pay_of_${id}` });
+  const noPaymentHeld = () => db.payment.findMany.mockResolvedValue([]);
+  const resume = (run: { checkpoint?: string }) =>
+    mockReadCheckpoint.mockResolvedValue(run.checkpoint);
+
+  it("is remembered once deferred and passed over without a hand-over until six hours later", async () => {
+    noPaymentHeld();
+    mockList.mockResolvedValue([unlinked("disp_orphan")]);
+    mockHandleDisputeCreated.mockResolvedValue(deferral("disp_orphan"));
+
+    const first = await discoverGatewayDisputes(never, NOW);
+
+    expect(first).toMatchObject({ unknownPayment: 1, waiting: 0 });
+    expect(positionOf(first).deferred).toEqual([
+      { id: "disp_orphan", triedAt: NOW_S },
+    ]);
+
+    resume(first);
+    const soon = await discoverGatewayDisputes(never, hoursLater(1));
+
+    expect(mockHandleDisputeCreated).toHaveBeenCalledTimes(1);
+    expect(soon).toMatchObject({ unknownPayment: 0, waiting: 1, untried: 0 });
+    expect(mockStanding).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        key: "reconcile-disputes:discovery-unknown-payment",
+        ids: ["disp_orphan"],
+      }),
+    );
+
+    resume(soon);
+    const later = await discoverGatewayDisputes(never, hoursLater(6));
+
+    expect(mockHandleDisputeCreated).toHaveBeenCalledTimes(2);
+    expect(positionOf(later).deferred).toEqual([
+      { id: "disp_orphan", triedAt: NOW_S + 6 * HOUR_S },
+    ]);
+  });
+
+  it("starts at most five gateway-read hand-overs a run and still reaches the disputes behind them", async () => {
+    const orphans = Array.from({ length: 7 }, (_, i) => `disp_orphan_${i}`);
+    db.payment.findMany.mockResolvedValue([{ gatewayPaymentId: "pay_cap1" }]);
+    mockList.mockResolvedValue([...orphans.map(unlinked), listed("disp_held")]);
+    mockHandleDisputeCreated.mockImplementation(async (id: string) =>
+      id === "disp_held" ? undefined : deferral(id),
+    );
+
+    const first = await discoverGatewayDisputes(never, NOW);
+
+    expect(mockHandleDisputeCreated.mock.calls.map((c) => c[0])).toEqual([
+      ...orphans.slice(0, 5),
+      "disp_held",
+    ]);
+    expect(first).toMatchObject({
+      imported: 1,
+      unknownPayment: 5,
+      waiting: 2,
+      untried: 0,
+      stoppedShort: null,
+    });
+    expect(positionOf(first)).toMatchObject({ skip: 0, cutRuns: 0 });
+    expect(positionOf(first).deferred).toHaveLength(7);
+
+    // The two left over are first in the next run; the five just tried wait.
+    mockHandleDisputeCreated.mockClear();
+    db.dispute.findMany.mockResolvedValue([
+      { disputeId: "disp_held", status: "NEEDS_RESPONSE" },
+    ]);
+    resume(first);
+    const second = await discoverGatewayDisputes(never, hoursLater(1));
+
+    expect(mockHandleDisputeCreated.mock.calls.map((c) => c[0])).toEqual(
+      orphans.slice(5),
+    );
+    expect(second).toMatchObject({ unknownPayment: 2, waiting: 5 });
+  });
+
+  it("is tried every run and not remembered while its payment row only awaits its capture", async () => {
+    mockList.mockResolvedValue([listed("disp_pending")]);
+    mockHandleDisputeCreated.mockResolvedValue(deferral("disp_pending"));
+
+    const first = await discoverGatewayDisputes(never, NOW);
+    resume(first);
+    await discoverGatewayDisputes(never, hoursLater(1));
+
+    expect(mockHandleDisputeCreated).toHaveBeenCalledTimes(2);
+    expect(positionOf(first).deferred).toEqual([]);
+    expect(first).toMatchObject({ unknownPayment: 1 });
+  });
+
+  it("is passed over untried and reported when a hundred deferrals are already remembered", async () => {
+    noPaymentHeld();
+    mockReadCheckpoint.mockResolvedValue(
+      JSON.stringify({
+        skip: 0,
+        cutRuns: 0,
+        deferred: Array.from({ length: 100 }, (_, i) => ({
+          id: `disp_old_${i}`,
+          triedAt: NOW_S,
+        })),
+      }),
+    );
+    mockList.mockResolvedValue([unlinked("disp_extra")]);
+
+    const run = await discoverGatewayDisputes(never, hoursLater(1));
+
+    expect(mockHandleDisputeCreated).not.toHaveBeenCalled();
+    expect(run).toMatchObject({ untried: 1, unknownPayment: 0 });
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-disputes:discovery-untried",
+        ids: ["disp_extra"],
+      }),
+    );
+    expect(positionOf(run).deferred).toHaveLength(100);
+  });
+
+  it("is forgotten once it has a row, or after seven days without a try", async () => {
+    mockReadCheckpoint.mockResolvedValue(
+      JSON.stringify({
+        skip: 0,
+        cutRuns: 0,
+        deferred: [
+          { id: "disp_now_known", triedAt: NOW_S },
+          { id: "disp_gone", triedAt: NOW_S - 8 * 24 * HOUR_S },
+          { id: "disp_elsewhere", triedAt: NOW_S - 24 * HOUR_S },
+        ],
+      }),
+    );
+    mockList.mockResolvedValue([listed("disp_now_known")]);
+    held({ disp_now_known: "NEEDS_RESPONSE" });
+
+    const run = await discoverGatewayDisputes(never, NOW);
+
+    expect(positionOf(run).deferred).toEqual([
+      { id: "disp_elsewhere", triedAt: NOW_S - 24 * HOUR_S },
+    ]);
+  });
+});
+
 describe("the place in the list", () => {
   it("starts at the top with no stored position and returns to it at the last page", async () => {
     const run = await discoverGatewayDisputes(never);
 
     expect(mockReadCheckpoint).toHaveBeenCalledWith("reconcile-disputes");
     expect(mockList).toHaveBeenCalledWith(100, 0);
-    expect(positionOf(run)).toEqual({ skip: 0, cutRuns: 0 });
+    expect(positionOf(run)).toEqual({ skip: 0, cutRuns: 0, deferred: [] });
     expect(run.stoppedShort).toBeNull();
   });
 
@@ -272,7 +438,7 @@ describe("the place in the list", () => {
 
     expect(mockList).toHaveBeenCalledTimes(3);
     expect(first.stoppedShort).toEqual({ bound: "pages", pagesHandled: 3 });
-    expect(positionOf(first)).toEqual({ skip: 300, cutRuns: 1 });
+    expect(positionOf(first)).toEqual({ skip: 300, cutRuns: 1, deferred: [] });
 
     mockList.mockClear();
     mockList.mockResolvedValue([listed("disp_last")]);
@@ -280,7 +446,7 @@ describe("the place in the list", () => {
     const second = await discoverGatewayDisputes(never);
 
     expect(mockList).toHaveBeenCalledWith(100, 300);
-    expect(positionOf(second)).toEqual({ skip: 0, cutRuns: 0 });
+    expect(positionOf(second)).toEqual({ skip: 0, cutRuns: 0, deferred: [] });
   });
 
   it("stops at the run deadline inside a page without moving past that page", async () => {
@@ -294,7 +460,7 @@ describe("the place in the list", () => {
 
     expect(mockHandleDisputeCreated).toHaveBeenCalledTimes(1);
     expect(run.stoppedShort).toEqual({ bound: "deadline", pagesHandled: 0 });
-    expect(positionOf(run)).toEqual({ skip: 0, cutRuns: 1 });
+    expect(positionOf(run)).toEqual({ skip: 0, cutRuns: 1, deferred: [] });
   });
 
   it("keeps the page for the next run when a hand-over fails, and still hands over the rest of it", async () => {
@@ -313,7 +479,7 @@ describe("the place in the list", () => {
       "Dispute disp_bad: could not serialize access",
     ]);
     expect(run).toMatchObject({ imported: 1, stoppedShort: null });
-    expect(positionOf(run)).toEqual({ skip: 100, cutRuns: 0 });
+    expect(positionOf(run)).toEqual({ skip: 100, cutRuns: 0, deferred: [] });
   });
 
   it("raises the standing finding when a bound cuts the pass on a second run in a row", async () => {
@@ -327,7 +493,7 @@ describe("the place in the list", () => {
 
     const run = await discoverGatewayDisputes(never);
 
-    expect(positionOf(run)).toEqual({ skip: 600, cutRuns: 2 });
+    expect(positionOf(run)).toEqual({ skip: 600, cutRuns: 2, deferred: [] });
     expect(mockStanding).toHaveBeenCalledWith(
       expect.objectContaining({
         key: "reconcile-disputes:discovery-cut",

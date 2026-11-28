@@ -24,9 +24,11 @@ export const quietDisputeDiscovery = (): DisputeDiscoveryRun => ({
   updated: 0,
   notAdopted: 0,
   unknownPayment: 0,
+  waiting: 0,
+  untried: 0,
   errors: [],
   stoppedShort: null,
-  checkpoint: '{"skip":0,"cutRuns":0}',
+  checkpoint: '{"skip":0,"cutRuns":0,"deferred":[]}',
 });
 
 /** The `jest.mock` factory body for the dispute pass in a suite that never looks at it. */
