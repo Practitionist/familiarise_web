@@ -376,6 +376,9 @@ export async function refundLateCapture(input: {
   }
 }
 
+// Below pg's client query_timeout (PG_QUERY_TIMEOUT_MS in lib/prisma.ts), so a waiting door fails cleanly with 55P03.
+const CAPTURE_LOCK_TIMEOUT_MS = 4_000;
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
@@ -520,6 +523,9 @@ export async function handlePaymentSuccess(
     txResult = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx): Promise<PaymentSuccessTxResult | null> => {
+          // Doors confirming one order take turns; a wait past the timeout raises 55P03 (isLockTimeout).
+          await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(CAPTURE_LOCK_TIMEOUT_MS)}, true)`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-capture:${paymentIntentId}`}, 42))`;
           const readPayment = () =>
             tx.payment.findUnique({
               where: { paymentIntent: paymentIntentId },

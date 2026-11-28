@@ -45,6 +45,7 @@ const mockParityState = {
   trialUpdateMany: jest.fn(async (..._a: unknown[]) => ({ count: 1 })),
   trialFindUnique: jest.fn((..._a: unknown[]): unknown => undefined),
   occurrenceFindMany: jest.fn(),
+  txExecuteRaw: jest.fn(async (..._a: unknown[]) => 1),
   prismaPaymentUpdate: jest.fn(async (..._a: unknown[]) => ({})),
   createEarningsFromPayment: jest.fn(),
   refundPayment: jest.fn((..._a: unknown[]): Promise<unknown> =>
@@ -56,6 +57,7 @@ const mockParityState = {
 };
 
 const mockParityTx = {
+  $executeRaw: mockParityState.txExecuteRaw,
   payment: {
     findUnique: mockParityState.paymentFindUnique,
     updateMany: mockParityState.paymentUpdateMany,
@@ -189,6 +191,7 @@ jest.mock("../../app/api/webhooks/utils", () => {
 });
 
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
+import { expectCaptureLockFirst } from "../fixtures/capture-order-lock";
 
 const {
   captureException,
@@ -320,6 +323,7 @@ describe("a redelivery still re-validates the captured amount", () => {
       "evt_rzp_redeliver_1",
     );
 
+    expectCaptureLockFirst(mockParityState.txExecuteRaw, "order_1");
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(String(captureException.mock.calls[0][0])).toContain(
       "Capture amount mismatch",

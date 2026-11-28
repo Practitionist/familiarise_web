@@ -64,7 +64,9 @@ const occurrenceFindMany = jest.fn();
 // The started-hold probe for a trial capture; null means the held session
 // has not started, so the capture takes the normal trial branch.
 const occurrenceFindFirst = jest.fn(async () => null);
+const txExecuteRaw = jest.fn(async (..._a: unknown[]) => 1);
 const txStub = {
+  $executeRaw: txExecuteRaw,
   payment: {
     findUnique: paymentFindUnique,
     updateMany: paymentUpdateMany,
@@ -181,6 +183,7 @@ import {
 } from "../../lib/payments/webhooks/handlers";
 import { resolveMeetingAccess } from "../../lib/meetings/access";
 import { matchesWhere, type Row, type Where } from "../fixtures/mem-db";
+import { expectCaptureLockFirst } from "../fixtures/capture-order-lock";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -208,6 +211,7 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
       9999,
     );
 
+    expectCaptureLockFirst(txExecuteRaw, "order1");
     // Paged exactly once with the mismatch error (the fatal Phase-1 page). No
     // second page fires because the refund succeeds.
     expect(captureException).toHaveBeenCalledTimes(1);

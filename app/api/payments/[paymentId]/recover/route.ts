@@ -10,6 +10,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { isLockTimeout } from "@/lib/db/pg-errors";
 import { PaymentGateway, PaymentStatus, UserRole } from "@prisma/client";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { z, ZodError } from "zod";
@@ -161,6 +162,12 @@ const paymentReturned = () =>
     "This payment has a refund, an owed-refund marker or an open or lost dispute, so it cannot be booked.",
   );
 
+const captureInProgress = () =>
+  new OpsRefusal(
+    "CAPTURE_IN_PROGRESS",
+    "Another door is confirming this payment's capture right now. Retry in a few seconds.",
+  );
+
 const alreadyRecovered = () =>
   new OpsRefusal(
     "ALREADY_RECOVERED",
@@ -261,6 +268,7 @@ export const POST = withOpsAction(
             recoveryError.httpStatus,
           );
         }
+        if (isLockTimeout(recoveryError)) throw captureInProgress();
         throw recoveryError;
       }
       if (outcome === null) throw alreadyRecovered();

@@ -1,4 +1,8 @@
-import { isUniqueViolation, isExclusionViolation } from "@/lib/db/pg-errors";
+import {
+  isUniqueViolation,
+  isExclusionViolation,
+  isLockTimeout,
+} from "@/lib/db/pg-errors";
 
 // What Prisma 7 rethrows for an adapter-pg `kind: "postgres"` (unmapped) error.
 const driverAdapterError = (code: string, msg: string) =>
@@ -61,13 +65,39 @@ describe("pg-errors predicates", () => {
 
     it("does not confuse a unique violation for an exclusion one", () => {
       expect(isExclusionViolation({ code: "P2002" })).toBe(false);
-      expect(
-        isExclusionViolation(new Error("unique constraint failed")),
-      ).toBe(false);
+      expect(isExclusionViolation(new Error("unique constraint failed"))).toBe(
+        false,
+      );
       expect(isExclusionViolation(driverAdapterError("23505", "dup"))).toBe(
         false,
       );
       expect(isExclusionViolation(undefined)).toBe(false);
     });
+  });
+});
+
+describe("isLockTimeout", () => {
+  it("matches SQLSTATE 55P03 in a P2010 raw-query error's meta.code", () => {
+    expect(isLockTimeout({ code: "P2010", meta: { code: "55P03" } })).toBe(
+      true,
+    );
+  });
+
+  it("matches 55P03 on a raw DriverAdapterError cause", () => {
+    expect(
+      isLockTimeout(
+        driverAdapterError("55P03", "canceling statement due to lock timeout"),
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores other lock and conflict codes and non-objects", () => {
+    expect(isLockTimeout(driverAdapterError("40P01", "deadlock"))).toBe(false);
+    expect(isLockTimeout({ code: "P2034", meta: { code: "40001" } })).toBe(
+      false,
+    );
+    expect(isLockTimeout(new Error("Query read timeout"))).toBe(false);
+    expect(isLockTimeout({ message: "55P03" })).toBe(false);
+    expect(isLockTimeout(null)).toBe(false);
   });
 });

@@ -73,6 +73,12 @@ export function isDeadlock(error: unknown): boolean {
   return sqlState(error) === "40P01" || message(error).includes("40P01");
 }
 
+/** Postgres 55P03 — a lock wait passed the transaction's `lock_timeout`, which rolls it back. */
+export function isLockTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  return sqlState(error) === "55P03";
+}
+
 /**
  * Postgres rolled the transaction back on a write conflict (40001, or 40P01
  * once adapter-pg maps it), so replaying it is safe. A statement inside the

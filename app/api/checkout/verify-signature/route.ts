@@ -32,6 +32,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
+import { isLockTimeout } from "@/lib/db/pg-errors";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   getRazorpayClient,
@@ -280,16 +281,19 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         // Mirrors the webhook's posture: report and let the durable paths
         // recover. The `payment.captured` redelivery and the stuck-event
-        // sweeper both still own this payment.
-        Sentry.captureException(
-          err instanceof Error ? err : new Error(String(err)),
-          {
-            tags: { subsystem: "payments" },
-            contexts: {
-              payment: { paymentId: payment.id, orderId: razorpay_order_id },
+        // sweeper both still own this payment. A lock timeout means another
+        // door is confirming the order, which is not a failure.
+        if (!isLockTimeout(err)) {
+          Sentry.captureException(
+            err instanceof Error ? err : new Error(String(err)),
+            {
+              tags: { subsystem: "payments" },
+              contexts: {
+                payment: { paymentId: payment.id, orderId: razorpay_order_id },
+              },
             },
-          },
-        );
+          );
+        }
         console.error(
           `verify-signature: pipeline failed for ${razorpay_order_id}`,
           err,

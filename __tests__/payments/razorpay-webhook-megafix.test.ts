@@ -3,6 +3,7 @@
  */
 
 import { createEarningsHoldStore } from "../fixtures/earnings-hold-store";
+import { expectCaptureLockFirst } from "../fixtures/capture-order-lock";
 import { PaymentGateway, Prisma } from "@prisma/client";
 import {
   disputeUpdateEntitySchema,
@@ -378,6 +379,8 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
         findUnique: jest.fn(async () => succeededRow),
         updateMany: jest.fn(async () => ({ count: 0 })),
       };
+      const txExecuteRaw = jest.fn(async (..._a: unknown[]) => 1);
+      db.__tx.$executeRaw = txExecuteRaw;
       db.__tx.payment = {
         findUnique: jest.fn(async () => succeededRow),
       };
@@ -388,6 +391,7 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
       await handlePaymentSuccess("order_done_2", {}, undefined, "pay_second_2");
 
       expect(db.$transaction).toHaveBeenCalled();
+      expectCaptureLockFirst(txExecuteRaw, "order_done_2");
     });
   });
 

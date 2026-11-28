@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { isLockTimeout } from "@/lib/db/pg-errors";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { describeViewerZone } from "@/lib/time/viewer-zone";
 import {
@@ -278,11 +279,16 @@ export async function GET(req: NextRequest) {
       } catch (syncError) {
         // Non-fatal: the webhook and the stuck-event sweeper remain the durable
         // path. Report so a systematically failing sync is visible rather than
-        // silently leaving buyers on a spinner.
-        Sentry.captureException(
-          syncError instanceof Error ? syncError : new Error(String(syncError)),
-          { tags: { subsystem: "payments" } },
-        );
+        // silently leaving buyers on a spinner. Another door holding the
+        // order's capture lock is not a failure: the poll answers PENDING.
+        if (!isLockTimeout(syncError)) {
+          Sentry.captureException(
+            syncError instanceof Error
+              ? syncError
+              : new Error(String(syncError)),
+            { tags: { subsystem: "payments" } },
+          );
+        }
         console.warn(
           `Failed to sync payment status from Razorpay for ${paymentIntent}:`,
           syncError,
