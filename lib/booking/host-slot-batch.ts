@@ -3,7 +3,7 @@
 // extension) take the same slot atoms as checkout and the allocator.
 
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
-import { CollaboratorStatus } from "@prisma/client";
+import { CollaboratorStatus, type Prisma } from "@prisma/client";
 import { ConsultantScheduleConflictError } from "@/lib/collaborators/availability";
 import { lockPlanRow } from "@/lib/collaborators/team";
 import { lockHostTimeInTx } from "@/lib/booking/allocation/host-time-locks";
@@ -75,6 +75,29 @@ export async function lockPlanForMove(
   heldProfileIds: readonly string[],
 ): Promise<void> {
   if (!(await lockPlanAndCheckBatch(tx, planType, planId, heldProfileIds))) {
+    throw new HostTimeHeldError();
+  }
+}
+
+/**
+ * The live sessions matching `where`, read inside the write transaction
+ * behind the plan lock, are all windows the batch holds. A session re-timed
+ * since the batch was sized is the same transient conflict, so an edit never
+ * publishes or hands over time it did not lock.
+ */
+export async function assertBatchCoversSessions(
+  tx: Pick<Tx, "appointmentOccurrence">,
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  held: readonly { startsAt: Date; endsAt: Date }[],
+): Promise<void> {
+  const live = await tx.appointmentOccurrence.findMany({
+    where,
+    select: { startsAt: true, endsAt: true },
+  });
+  const windowKey = (w: { startsAt: Date; endsAt: Date }) =>
+    `${w.startsAt.getTime()}:${w.endsAt.getTime()}`;
+  const heldWindows = new Set(held.map(windowKey));
+  if (live.some((w) => !heldWindows.has(windowKey(w)))) {
     throw new HostTimeHeldError();
   }
 }

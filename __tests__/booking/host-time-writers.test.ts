@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { ConsultantScheduleConflictError } from "@/lib/collaborators/availability";
 import {
   HostTimeHeldError,
+  assertBatchCoversSessions,
   lockHostBatchInTx,
 } from "@/lib/booking/host-slot-batch";
 import {
@@ -284,4 +285,40 @@ describe("a held atom is the door's own slot-taken answer", () => {
       slotBatchKeys(entries),
     );
   });
+});
+
+describe("an event edit that publishes its live sessions", () => {
+  const at = (hour: number) => new Date(Date.UTC(2027, 2, 1, hour));
+  const liveSessions = (live: { startsAt: Date; endsAt: Date }[]) => ({
+    appointmentOccurrence: { findMany: jest.fn(async () => live) },
+  });
+  const held = [{ startsAt: at(10), endsAt: at(11) }];
+
+  it("refuses a session re-timed since its batch was sized, as the transient conflict", async () => {
+    await expect(
+      assertBatchCoversSessions(
+        liveSessions([{ startsAt: at(14), endsAt: at(15) }]),
+        {},
+        held,
+      ),
+    ).rejects.toBeInstanceOf(HostTimeHeldError);
+  });
+
+  it("passes when every live session is a window the batch holds", async () => {
+    await expect(
+      assertBatchCoversSessions(liveSessions([...held]), {}, held),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    "app/api/bookings/classes/crud-with-plan/route.ts",
+    "app/api/bookings/webinars/crud-with-plan/route.ts",
+  ])(
+    "%s checks its batch against the live sessions behind the plan lock",
+    (file) => {
+      expect(read(file)).toMatch(
+        /await lockPlanForMove\(tx, "(?:CLASS|WEBINAR)", id, batchProfiles\);[^}]*await assertBatchCoversSessions\(\s*tx,/,
+      );
+    },
+  );
 });

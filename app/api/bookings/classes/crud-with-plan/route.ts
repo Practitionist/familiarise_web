@@ -65,6 +65,7 @@ import {
 } from "@/utils/appointmentlock";
 import {
   acceptedCohostProfileIds,
+  assertBatchCoversSessions,
   hostBatchEntries,
   lockHostBatchInTx,
   lockPlanForMove,
@@ -782,13 +783,16 @@ export async function PATCH(request: NextRequest) {
       endDateString !== undefined ||
       (consultantProfileId !== undefined &&
         consultantProfileId !== existingPlan.consultantProfileId);
+    const liveSessionsWhere = classToUpdate
+      ? {
+          appointment: { classId: classToUpdate.id, deletedAt: null },
+          deletedAt: null,
+        }
+      : null;
     const batchWindows =
-      classToUpdate && touchesHostTime
+      liveSessionsWhere && touchesHostTime
         ? await prisma.appointmentOccurrence.findMany({
-            where: {
-              appointment: { classId: classToUpdate.id, deletedAt: null },
-              deletedAt: null,
-            },
+            where: liveSessionsWhere,
             select: { startsAt: true, endsAt: true },
           })
         : [];
@@ -820,6 +824,14 @@ export async function PATCH(request: NextRequest) {
                   // the plan, then refuses a team its batch did not cover.
                   if (batchProfiles.length > 0) {
                     await lockPlanForMove(tx, "CLASS", id, batchProfiles);
+                    // The sessions this edit publishes are the ones its batch holds.
+                    if (liveSessionsWhere) {
+                      await assertBatchCoversSessions(
+                        tx,
+                        liveSessionsWhere,
+                        batchWindows,
+                      );
+                    }
                   }
                   // Use topics from existingPlan fetched *before* the transaction
                   const currentTopicIdsFromOuterScope = existingPlan.topics.map(

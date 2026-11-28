@@ -10,6 +10,7 @@ import {
 } from "@/utils/appointmentlock";
 import {
   acceptedCohostProfileIds,
+  assertBatchCoversSessions,
   hostBatchEntries,
   lockHostBatchInTx,
   lockPlanForMove,
@@ -66,7 +67,10 @@ import {
   buildOccurrence,
   replaceOccurrence,
 } from "@/lib/appointments/occurrences";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 
 /**
  * Nested include for "what is the current live run?".
@@ -832,6 +836,17 @@ export async function PATCH(request: NextRequest) {
                   // the plan, then refuses a team its batch did not cover.
                   if (batchProfiles.length > 0) {
                     await lockPlanForMove(tx, "WEBINAR", id, batchProfiles);
+                    // With no new time sent, the run this edit publishes is the one its batch holds.
+                    if (!(startTime && endTime) && webinarToUpdate) {
+                      await assertBatchCoversSessions(
+                        tx,
+                        {
+                          appointment: { webinarId: webinarToUpdate.id },
+                          ...liveOccurrenceWhere,
+                        },
+                        batchWindows,
+                      );
+                    }
                   }
                   // -> Use topics from existingPlan fetched *before* the transaction
                   const currentTopicIdsFromOuterScope = existingPlan.topics.map(
