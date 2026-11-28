@@ -5,7 +5,7 @@
  */
 import type { OccurrenceOutcome } from "@prisma/client";
 
-import type { NegativeMoneyOutcome } from "./misses";
+import { MAKEUP_WINDOW_DAYS, type NegativeMoneyOutcome } from "./misses";
 
 export type NoticeSide = "host" | "learner";
 
@@ -36,8 +36,6 @@ export interface ProposedNoticeInput {
   sessionWhen: string;
   /** `outcomeAt` + the report window, in the recipient's zone. */
   windowClosesWhen: string;
-  /** `outcomeAt` + the 14-day make-up window, when a void's refund falls due, in the recipient's zone. */
-  makeUpByWhen: string;
   /** The recipient seat's refund; null for a host, or a seat nothing was paid for. */
   refund: SeatRefund | null;
   /** The recipient seat was already refunded for this session, so nothing more is promised. */
@@ -88,9 +86,11 @@ function refundClause(refund: SeatRefund, tail: string): string {
   }
 }
 
-/** What a void does once confirmed, by the kind of booking: the settle sweep refunds it after the make-up window. */
+/** A void's 14 days run from its verdict's confirmation, which no notice can date in advance. */
+const LATER = `${MAKEUP_WINDOW_DAYS} days later`;
+
+/** What a void does once its verdict is confirmed, by the kind of booking; only a class has a make-up. */
 function voidRemedy(input: ProposedNoticeInput, side: NoticeSide): string {
-  const by = input.makeUpByWhen;
   switch (input.booking) {
     case "subscription":
       return side === "learner"
@@ -99,26 +99,28 @@ function voidRemedy(input: ProposedNoticeInput, side: NoticeSide): string {
     case "trial":
       return "the session won't count as held";
     case "consultation":
+    case "webinar":
       if (side === "host") {
-        return `it counts as a missed session, and the booking is refunded in full automatically after ${by}`;
+        return input.booking === "consultation"
+          ? `it counts as a missed session, and the booking is refunded in full automatically ${LATER}`
+          : `it counts as a missed session, and each seat is refunded automatically ${LATER}`;
       }
       if (input.refund) {
-        return `it counts as a missed session, and we'll ${refundClause(input.refund, `automatically after ${by}`)}`;
+        return `it counts as a missed session, and we'll ${refundClause(input.refund, `automatically ${LATER}`)}`;
       }
       return input.alreadyRefunded
         ? "it counts as a missed session, and this session has already been refunded"
         : "it counts as a missed session";
     case "class":
-    case "webinar":
       if (side === "host") {
-        return `it counts as a missed session: hold a make-up by ${by}, or that session is refunded automatically`;
+        return `it counts as a missed session: you then have ${MAKEUP_WINDOW_DAYS} days to hold a make-up, or that session is refunded automatically`;
       }
       if (input.refund) {
-        return `it counts as a missed session: the expert has until ${by} to hold a make-up, or we'll ${refundClause(input.refund, "automatically")}`;
+        return `it counts as a missed session: the expert then has ${MAKEUP_WINDOW_DAYS} days to hold a make-up, or we'll ${refundClause(input.refund, "automatically")}`;
       }
       return input.alreadyRefunded
         ? "it counts as a missed session, and this session has already been refunded"
-        : `it counts as a missed session: the expert has until ${by} to hold a make-up`;
+        : `it counts as a missed session: the expert then has ${MAKEUP_WINDOW_DAYS} days to hold a make-up`;
   }
 }
 

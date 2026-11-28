@@ -34,7 +34,6 @@ import {
 import { caseKeyOf } from "@/lib/support/case-key";
 import { getAppUrl } from "@/lib/url";
 import {
-  MAKEUP_WINDOW_DAYS,
   OUTCOME_REPORT_WINDOW_HOURS,
   type NegativeMoneyOutcome,
 } from "./misses";
@@ -374,10 +373,6 @@ export async function prepareProposedOutcomeNotices(
   if (!read || read.parties.length === 0) return null;
   const { row, booking, plan, parties } = read;
   const closesAt = windowClosesAt(session.outcomeAt);
-  // A void is stamped at the verdict, so its make-up window runs from `outcomeAt`.
-  const makeUpBy = new Date(
-    session.outcomeAt.getTime() + MAKEUP_WINDOW_DAYS * 86_400_000,
-  );
   const hasRecording =
     session.outcome === "LEARNER_ABSENT" &&
     plan.recordingEnabled &&
@@ -395,7 +390,6 @@ export async function prepareProposedOutcomeNotices(
       planTitle: plan.title,
       sessionWhen: when(session.startsAt, zone),
       windowClosesWhen: when(closesAt, zone),
-      makeUpByWhen: when(makeUpBy, zone),
       refund: party.refund,
       alreadyRefunded: party.alreadyRefunded,
       hasRecording,

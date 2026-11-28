@@ -289,7 +289,7 @@ it("names each group seat's refund destination from its own funding: the organis
     expect(text).toContain("or we'll refund it automatically.");
   }
   expect(bell("host")).toContain(
-    "hold a make-up by Mon, 7 Dec 2026 · 6:45 AM EST, or that session is refunded automatically",
+    "you then have 14 days to hold a make-up, or that session is refunded automatically",
   );
 });
 
