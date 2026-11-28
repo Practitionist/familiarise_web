@@ -60,6 +60,7 @@ class MockTrialDailyLimitError extends Error {
 }
 jest.mock("../../lib/trials/book-trial", () => ({
   lockTrialPick: (...a: unknown[]) => lockPick(...(a as [])),
+  lockTrialPickInTx: jest.fn(async () => undefined),
   bookTrialInTx: (...a: unknown[]) =>
     bookTrial(...(a as [unknown, { paid: boolean }])),
   TrialTimeRefusedError: class extends Error {},
@@ -240,6 +241,32 @@ it("a free trial is confirmed with the request: notices staged, nothing minted",
   );
   expect(createIntent).not.toHaveBeenCalled();
   expect((await res.json()).data.status).toBe("SCHEDULED");
+});
+
+it("a busy consultee key answers its retryable 409, not a 500", async () => {
+  const { ConsulteeBookingBusyError } = jest.requireMock(
+    "../../utils/appointmentlock",
+  );
+  lockPick.mockRejectedValueOnce(new ConsulteeBookingBusyError("busy"));
+  const res = await post();
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({
+    code: "CONSULTEE_BOOKING_BUSY",
+    retryAfter: 30,
+  });
+  expect(bookTrial).not.toHaveBeenCalled();
+});
+
+it("a cap lease lost before the write answers the cap's busy 409, nothing booked", async () => {
+  const locks = jest.requireMock("../../utils/appointmentlock");
+  locks.renewRequestCap.mockRejectedValueOnce(new locks.RequestCapBusyError());
+  const res = await post();
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({
+    code: "REQUEST_CAP_BUSY",
+    retryAfter: 5,
+  });
+  expect(bookTrial).not.toHaveBeenCalled();
 });
 
 // Nothing accepts or declines a trial: its PATCH takes only COMPLETED, CONVERTED and CANCELLED.

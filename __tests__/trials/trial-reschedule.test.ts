@@ -40,6 +40,7 @@ jest.mock("../../lib/booking/transitions", () => ({
 }));
 jest.mock("../../lib/trials/book-trial", () => ({
   lockTrialPick: (...a: unknown[]) => lockTrialPick(...(a as [])),
+  lockTrialPickInTx: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/trials/slot-check", () => ({
   trialWindowRefusal: jest.fn(async () => db.refusal),
@@ -50,6 +51,7 @@ jest.mock("../../utils/appointmentlock", () => ({
   ),
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
+  ConsulteeBookingBusyError: class extends Error {},
 }));
 jest.mock("../../lib/novu/service", () => ({
   notifyAppointmentRescheduled: jest.fn(async () => []),
@@ -270,6 +272,20 @@ describe("confirmTrialProposal", () => {
     expect(out).toEqual({ confirmed: false, reason: "VALIDATION_FAILED" });
   });
 
+  it("a busy consultee key answers APPOINTMENT_BUSY and moves nothing", async () => {
+    const { ConsulteeBookingBusyError } = jest.requireMock(
+      "../../utils/appointmentlock",
+    );
+    lockTrialPick.mockRejectedValueOnce(new ConsulteeBookingBusyError());
+    const out = await confirmTrialProposal({
+      rescheduleRequestId: "rr-1",
+      to: "AUTO_ACCEPTED",
+      now: NOW,
+    });
+    expect(out).toEqual({ confirmed: false, reason: "APPOINTMENT_BUSY" });
+    expect(transitionOccurrenceCompletion).not.toHaveBeenCalled();
+  });
+
   it("a lapsed proposal is not answerable", async () => {
     db.request = openRequest({ expiresAt: new Date(NOW.getTime() - 1) });
     const out = await confirmTrialProposal({
@@ -278,6 +294,76 @@ describe("confirmTrialProposal", () => {
       now: NOW,
     });
     expect(out).toEqual({ confirmed: false, reason: "PROPOSAL_EXPIRED" });
+  });
+});
+
+describe("a trial acceptance that reaches its commit after the deadline", () => {
+  it.each(["ACCEPTED", "AUTO_ACCEPTED"] as const)(
+    "%s: the closing write carries the deadline, and a miss on a still-open proposal answers PROPOSAL_EXPIRED",
+    async (to) => {
+      const { AllocationConflictError } = jest.requireActual(
+        "../../utils/scheduling-engine/errors",
+      );
+      const reads = (
+        jest.requireMock("../../lib/prisma") as {
+          default: { rescheduleRequest: { findUnique: jest.Mock } };
+        }
+      ).default.rescheduleRequest.findUnique;
+      // Open at the preflight; past its deadline, still unanswered, at the write.
+      reads.mockResolvedValueOnce(openRequest()).mockResolvedValueOnce({
+        status: "PENDING_REVIEW",
+        expiresAt: new Date(Date.now() - 1_000),
+      });
+      closeConfirmedProposal.mockRejectedValueOnce(
+        new AllocationConflictError("closed", "RESCHEDULE_NO_LONGER_OPEN"),
+      );
+      const before = Date.now();
+
+      const out = await confirmTrialProposal({
+        rescheduleRequestId: "rr-1",
+        to,
+        now: NOW,
+      });
+
+      const [, write] = closeConfirmedProposal.mock.calls[0] as unknown as [
+        unknown,
+        { whereAnd?: { expiresAt: { gt: Date } } },
+      ];
+      expect(write.whereAnd?.expiresAt.gt.getTime()).toBeGreaterThanOrEqual(
+        before,
+      );
+      expect(out).toEqual({ confirmed: false, reason: "PROPOSAL_EXPIRED" });
+      expect(transitionOccurrenceCompletion).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a proposal someone else closed keeps its no-longer-open answer", async () => {
+    const { AllocationConflictError } = jest.requireActual(
+      "../../utils/scheduling-engine/errors",
+    );
+    const reads = (
+      jest.requireMock("../../lib/prisma") as {
+        default: { rescheduleRequest: { findUnique: jest.Mock } };
+      }
+    ).default.rescheduleRequest.findUnique;
+    reads.mockResolvedValueOnce(openRequest()).mockResolvedValueOnce({
+      status: "WITHDRAWN",
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    closeConfirmedProposal.mockRejectedValueOnce(
+      new AllocationConflictError("closed", "RESCHEDULE_NO_LONGER_OPEN"),
+    );
+
+    const out = await confirmTrialProposal({
+      rescheduleRequestId: "rr-1",
+      to: "ACCEPTED",
+      now: NOW,
+    });
+
+    expect(out).toEqual({
+      confirmed: false,
+      reason: "RESCHEDULE_NO_LONGER_OPEN",
+    });
   });
 });
 

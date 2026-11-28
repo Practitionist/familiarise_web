@@ -38,6 +38,11 @@ import {
   mintApprovalPaymentAfterCommit,
 } from "@/lib/booking/approve-request";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  flushBackupInterestNotices,
+  stageNoticesForFreedWindows,
+  type StagedBackupInterestNotices,
+} from "@/lib/booking/backup-interest";
 
 const LOG_LABEL: Record<EventType, string> = {
   consultation: "[Consultation Allocation]",
@@ -181,6 +186,9 @@ export async function handleAllocate(
         eventId,
         mode,
       );
+      // A re-placed booking frees its old times: the learners waiting on them
+      // are told in the allocation's transaction and sent to after the commit.
+      let freedNotices: StagedBackupInterestNotices | null = null;
       const result = await Sentry.startSpan(
         { op: "booking.allocate", name: `allocate.${eventType}` },
         () =>
@@ -200,7 +208,15 @@ export async function handleAllocate(
             allowPartial: body.allowPartial === true && canOverride,
             topUp: body.topUp === true && canOverride,
             actorUserId: authResult.session.user.id,
-            inTx: auditInTx,
+            inTx: async (tx, moved) => {
+              await auditInTx?.(tx);
+              freedNotices = await stageNoticesForFreedWindows(
+                tx,
+                moved.consultantProfileId,
+                moved.freedWindows,
+                moved.placed,
+              );
+            },
           }),
       );
 
@@ -243,6 +259,7 @@ export async function handleAllocate(
       console.log(
         `${label} Success after ${duration}ms. Created ${result.appointments?.length || 0} appointment(s)`,
       );
+      await flushBackupInterestNotices(freedNotices);
       if (result.warnings && result.warnings.length > 0) {
         console.warn(`${label} Warnings: ${result.warnings.join("; ")}`);
       }

@@ -12,6 +12,7 @@ import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
+  ConsulteeBookingBusyError,
   withAppointmentLock,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
@@ -35,7 +36,7 @@ import {
 } from "@/lib/booking/reschedule-outcome-notice";
 import { ReleasedSessionsSchema } from "@/lib/booking/released-sessions";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
-import { lockTrialPick } from "@/lib/trials/book-trial";
+import { lockTrialPick, lockTrialPickInTx } from "@/lib/trials/book-trial";
 import { trialWindowRefusal } from "@/lib/trials/slot-check";
 
 export type TrialConfirmOutcome =
@@ -179,12 +180,26 @@ export async function confirmTrialProposal(args: {
     });
     try {
       return await prisma.$transaction(async (tx): Promise<MoveOutcome> => {
+        await lockTrialPickInTx(
+          tx,
+          {
+            consulteeUserId,
+            consultantProfileId: trial.consultantProfileId,
+            buyerConsultantProfileId: buyerProfile?.id,
+            startsAt: window.startsAt,
+            endsAt: window.endsAt,
+          },
+          () => new TrialMoveRefused("TIMES_TAKEN"),
+        );
         await closeConfirmedProposal(tx, {
           where: { id: request.id },
           to: args.to,
           ...(args.resolvedById
             ? { data: { resolvedById: args.resolvedById } }
             : {}),
+          // The deadline is part of the write: a confirmation that reaches
+          // its commit after the proposal lapsed moves nothing.
+          whereAnd: { expiresAt: { gt: new Date() } },
         });
         const refusal = await trialWindowRefusal(tx, {
           consultantProfileId: trial.consultantProfileId,
@@ -257,11 +272,25 @@ export async function confirmTrialProposal(args: {
       };
     }
     if (error instanceof AllocationConflictError) {
+      if (error.errorCode === "RESCHEDULE_NO_LONGER_OPEN") {
+        const after = await prisma.rescheduleRequest.findUnique({
+          where: { id: request.id },
+          select: { status: true, expiresAt: true },
+        });
+        // Still unanswered, so the write missed on its deadline.
+        if (
+          after?.status === "PENDING_REVIEW" &&
+          after.expiresAt.getTime() <= Date.now()
+        ) {
+          return { confirmed: false, reason: "PROPOSAL_EXPIRED" };
+        }
+      }
       return { confirmed: false, reason: error.errorCode };
     }
     if (
       error instanceof SlotLockError ||
-      error instanceof AppointmentBusyError
+      error instanceof AppointmentBusyError ||
+      error instanceof ConsulteeBookingBusyError
     ) {
       return { confirmed: false, reason: "APPOINTMENT_BUSY" };
     }

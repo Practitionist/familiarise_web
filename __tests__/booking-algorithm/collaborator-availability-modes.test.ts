@@ -8,6 +8,7 @@
  * the owner-scoped validators can see the clash.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // The in-transaction availability re-read has its own suite; these isolate the allocator.
@@ -35,6 +36,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   withEventCheckoutLock: (
     _key: unknown,
     fn: (renew: () => unknown) => unknown,

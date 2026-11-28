@@ -49,6 +49,15 @@ const allocate = jest.fn();
 jest.mock("../../lib/booking/allocation", () => ({
   allocate: (...a: unknown[]) => allocate(...a),
 }));
+const stageFreed = jest.fn(async (..._args: unknown[]) => ({
+  bells: [{ id: "bell_1" }],
+  emails: [],
+}));
+const flushFreed = jest.fn(async (..._args: unknown[]) => undefined);
+jest.mock("../../lib/booking/backup-interest", () => ({
+  stageNoticesForFreedWindows: (...a: unknown[]) => stageFreed(...a),
+  flushBackupInterestNotices: (...a: unknown[]) => flushFreed(...a),
+}));
 
 import { NextRequest } from "next/server";
 import { resolveEventHostActor } from "@/lib/auth-helpers";
@@ -158,7 +167,10 @@ describe("allocate rule-waiving flags", () => {
     const [request] = allocate.mock.calls[0];
     expect(request.actorUserId).toBe("u-op");
     const orgAuditLog = { create: jest.fn() };
-    await request.inTx({ orgAuditLog });
+    await request.inTx(
+      { orgAuditLog },
+      { consultantProfileId: "cp-host", freedWindows: [], placed: [] },
+    );
     expect(orgAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         organizationId: "org-host",
@@ -250,6 +262,54 @@ describe("sponsor-org allocate", () => {
         actorUserId: "u-payer-owner",
       }),
     );
+  });
+});
+
+describe("a booking re-placed through the allocate route", () => {
+  const FREED = {
+    startsAt: new Date("2026-12-01T10:00:00.000Z"),
+    endsAt: new Date("2026-12-01T11:00:00.000Z"),
+  };
+  const PLACED = {
+    startsAt: new Date("2026-12-03T10:00:00.000Z"),
+    endsAt: new Date("2026-12-03T11:00:00.000Z"),
+  };
+
+  it("tells the learners waiting on the time it freed, in the allocation's transaction, and sends after the commit", async () => {
+    apiUser = {
+      id: "u-cp",
+      role: "CONSULTANT",
+      consultantProfileId: "cp-host",
+    };
+    const tx = { marker: "allocation-tx" };
+    allocate.mockImplementation(
+      async (req: {
+        inTx?: (tx: unknown, moved: unknown) => Promise<void>;
+      }) => {
+        await req.inTx?.(tx, {
+          consultantProfileId: "cp-host",
+          freedWindows: [FREED],
+          placed: [PLACED],
+        });
+        return { success: true, appointments: [] };
+      },
+    );
+
+    const res = await handleAllocate(
+      new NextRequest("http://localhost/x", {
+        method: "PATCH",
+        body: JSON.stringify({ isAuto: false, slots: [PLACED.startsAt] }),
+      }),
+      "consultation",
+      "clzzzzzzz000consultation1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(stageFreed).toHaveBeenCalledWith(tx, "cp-host", [FREED], [PLACED]);
+    expect(flushFreed).toHaveBeenCalledWith({
+      bells: [{ id: "bell_1" }],
+      emails: [],
+    });
   });
 });
 

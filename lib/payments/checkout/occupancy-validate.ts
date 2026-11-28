@@ -373,8 +373,13 @@ export async function assertConsulteeHasNoOverlappingSession(
   window: ConsulteeWindow,
 ): Promise<void> {
   if (await consulteeHasOverlappingSession(tx, window)) {
-    throw new Error("You already have a session booked during this time.");
+    throw consulteeOverlapError();
   }
+}
+
+/** The buyer's own calendar is taken at this time: the checkout's existing refusal. */
+export function consulteeOverlapError(): Error {
+  return new Error("You already have a session booked during this time.");
 }
 
 type ConsulteeWindow = {

@@ -7,6 +7,7 @@
 export function bookTrialModule(): object {
   return {
     lockTrialPick: jest.fn(async () => async () => undefined),
+    lockTrialPickInTx: jest.fn(async () => undefined),
     bookTrialInTx: jest.fn(
       async (
         tx: { trial: { create: (a: unknown) => Promise<object> } },
@@ -45,8 +46,20 @@ export function flushNotificationsModule(): object {
 export function requestCapLockModule(): object {
   return {
     lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
+    renewRequestCap: jest.fn(async () => undefined),
     unlockRequestCap: jest.fn(async () => undefined),
-    RequestCapBusyError: class extends Error {},
+    requestLockBudget: () => ({}),
+    RequestCapBusyError: class extends Error {
+      readonly httpStatus = 409;
+      readonly retryAfterSeconds = 5;
+      readonly code = "REQUEST_CAP_BUSY";
+    },
     BookingLockUnavailableError: class extends Error {},
+    // The consultee key's busy answer, with the real one's status and code.
+    ConsulteeBookingBusyError: class extends Error {
+      readonly httpStatus = 409;
+      readonly retryAfterSeconds = 30;
+      readonly code = "CONSULTEE_BOOKING_BUSY";
+    },
   };
 }

@@ -137,6 +137,7 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,
 }));
 
+import "../fixtures/host-time-locks-free";
 import {
   getOccurrenceJoinState,
   getOccurrenceVMJoinState,

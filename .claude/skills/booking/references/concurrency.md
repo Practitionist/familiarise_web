@@ -107,9 +107,11 @@ with NX semantics, or sets none and returns the keys that were held. It never
 waits. All keys share one value, so `extendSlotInterval` re-arms the whole batch
 and `unlockSlotInterval` releases it in one compare-value call each; a failed
 re-arm means ownership was lost, so the caller aborts before writing. Every
-batch call has a 1.5-second Redis timeout: a slow Redis is an unavailable Redis,
-and the booking fails closed with `BookingLockUnavailableError` (503). An
-acquire that timed out gives back whatever it may still have set under its value.
+Redis call a lock makes (health probe, `SET`, release, renewal, batch script)
+is cut at `REDIS_CALL_TIMEOUT_MS`, 1.5 seconds: a slow Redis is an unavailable
+Redis, an acquire fails closed with `BookingLockUnavailableError` (503), and a
+renewal that got no answer reads as a lost grant. An acquire that timed out
+gives back whatever it may still have set under its value.
 
 Who waits and who does not:
 
@@ -122,14 +124,38 @@ Who waits and who does not:
   Auto mode adds each held time to its exclusions and re-searches, at most
   `MAX_ALLOCATION_RESEARCHES` (2) times inside one shared search budget, then
   answers 409 `ALLOCATION_RACE` (retryable after 5 seconds). The batch is taken
-  after the search and before the write, and renewed at the top of the write
-  (`renewAllocationBatch`).
+  after the search and before the write, and renewed with the consultee key
+  ahead of every write attempt in `bookingTransaction`'s `beforeAttempt`, never
+  inside the transaction.
 - **Host-time writers never wait.** Webinar and class create, publish and
   re-time, class make-up, co-host accept and meeting extension run inside
   `withHostSlotBatch` (`lib/booking/host-slot-batch.ts`) over the host and every
   ACCEPTED co-host; a held atom is `HostTimeHeldError`, a schedule conflict. A
   meeting extension holds its extra minutes before it is saved and refuses when
   it cannot.
+
+**Postgres arbitrates the same atoms.** Redis is the fast refusal; the database
+decides. Every writer above calls `lockHostTimeInTx`
+(`lib/booking/allocation/host-time-locks.ts`), or its door's wrapper
+(`lockAllocationTimesInTx`, `lockHostBatchInTx`, `lockTrialPickInTx`), as the
+**first statement of its write transaction**, before the event's advisory lock
+and every row lock, then runs its conflict re-check. No Redis call runs inside
+that transaction: renew a grant ahead of each attempt, outside it
+(`beforeAttempt`, or the body of the Serializable retry loop). It takes one
+`pg_try_advisory_xact_lock` per slot key (`hashtextextended(key, 42)`), walks
+the sorted keys and stops at the first held one, never waits, and throws the
+door's existing slot-taken 409. The locks end with the transaction. A new
+writer that makes an expert's time busy must take the Redis batch and this call
+with the same entries; `__tests__/booking/host-time-writers.test.ts` lists every
+writer and fails on one that takes the batch without the call. A 1:1 writer
+passes the learner too (`learnerTimes`, keys `learner-time:<userId>:<atom>`,
+Postgres only), so one learner cannot be booked twice at one time by two 1:1
+writers; a webinar or class seat passes none, because seats may clash by
+design. Order inside a
+transaction: host-time try-locks, then waiting advisory locks (the per-event
+allocation lock, the per-plan tranche lock), then row locks, then
+compare-and-set writes. Writer table, atom rules and limits:
+`docs/booking/12-concurrency-and-locking.md`, "Postgres arbitrates host time".
 
 ## 3. Acquisition fails closed
 
@@ -157,6 +183,20 @@ request-path acquisition is bounded unless a caller opts out.
 budget; `DEFAULT` remains only for callers
 that run outside a request.
 
+A door that takes several tiers does not get that budget per tier. Checkout,
+the request door, the trial door and the incident rebook mint one
+`requestLockBudget()` (`REQUEST_LOCK_BUDGET_MS`, 8 seconds) and pass it to every
+tier (`lockRequestCap`, `lockExpertPlanSales`, `lockConsulteeBooking`,
+`lockSlotBatch`, `lockEventCheckout`, `withAppointmentLock`). Past the deadline a
+tier makes no Redis call and starts no wait, and answers its own busy 409. A
+call the deadline cuts short, the health probe and the slot batch's acquire
+included, is out of time too: the tier's busy answer, never the 503 of an
+unavailable Redis. A
+lifecycle door that takes the event key and then the appointment key (cancel,
+webinar re-time, class series re-time) or the appointment key alone
+(reschedule) takes them from `requestLockTiers()`, which mints the deadline
+when the door starts acquiring. A new multi-tier door must do the same.
+
 Treat the ceiling as an observed figure, not a configured one: there is no
 `26000` constant and no `[functions]` timeout block in `netlify.toml`, only
 comments, and `lib/prisma.ts` explicitly disowns the old arithmetic around it.
@@ -167,7 +207,10 @@ A lock TTL is sized above the transaction it protects, then reduced by the drift
 factor (`effectiveTTL = floor(ttl * (1 - driftFactor))`). `APPROVAL_LOCK_TTL_MS`
 is 45 s against a 30 s Serializable transaction; `APPOINTMENT_LOCK_TTL_MS` is
 75 s against a 60 s reschedule transaction plus its maxWait; `lockAutoAllocate`
-and `lockConsulteeBooking` default to 150 s. Per checkout type,
+defaults to 150 s. The consultee key lives one attempt plus slack
+(`CONSULTEE_LOCK_TTL_MS`, 60 s) and is re-armed ahead of each write attempt
+with `renewConsulteeBooking`, so a crashed request blocks its user for at most
+a minute. Per checkout type,
 `CHECKOUT_LOCK_TTL_MS` is `CONSULTATION` 60 s and `SUBSCRIPTION`, `WEBINAR` and
 `CLASS` 45 s each: one checkout attempt plus slack, renewed per attempt, because
 seat checkout holds the event key only around its commit (§11). Lifecycle doors

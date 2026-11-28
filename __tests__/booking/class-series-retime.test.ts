@@ -16,12 +16,14 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   withEventCheckoutLock: jest.fn(),
   withAppointmentLock: jest.fn(),
 }));
 jest.mock("../../lib/booking/host-slot-batch", () => ({
   acceptedCohostProfileIds: jest.fn(async () => []),
   hostBatchEntries: jest.fn(() => []),
+  lockHostBatchInTx: jest.fn(async () => undefined),
   lockPlanForMove: jest.fn(async () => undefined),
   withHostSlotBatch: jest.fn((_entries: unknown, run: () => unknown) => run()),
 }));

@@ -96,6 +96,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   __esModule: true,
   LockContentionError: class extends Error {},
   EventCheckoutLockUnavailableError: class extends Error {},
@@ -133,6 +134,7 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(async () => undefined),
   extendLock: jest.fn(async () => true),
   extendSlotInterval: jest.fn(async () => true),
+  slotGrantEntries: jest.fn(() => []),
 }));
 
 jest.mock("../../lib/payments/index", () => ({
@@ -249,6 +251,7 @@ jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
   resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
 }));
 
+import "../fixtures/host-time-locks-free";
 import prisma from "../../lib/prisma";
 import {
   cancelPaymentIntent,

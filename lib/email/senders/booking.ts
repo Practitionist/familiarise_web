@@ -529,6 +529,14 @@ export const stageNewBookingRequestEmail =
     buildNewBookingRequestEmail,
   );
 
+/** Renders the new-request notice outside any transaction; `screenPreparedEmails` reads its verdicts before staging. */
+export function prepareNewBookingRequestEmail(
+  args: NewBookingRequestEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildNewBookingRequestEmail(args);
+  return prepareSpecEmails(spec, userIds);
+}
+
 // ── Unscheduled-subscription nudge ─────────────────────────────────────────
 
 export interface UnscheduledSubscriptionNudgeEmailArgs {

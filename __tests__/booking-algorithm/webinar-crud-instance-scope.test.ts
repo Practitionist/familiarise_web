@@ -41,7 +41,9 @@ jest.mock("../../lib/prisma", () => ({
 // A published webinar's live run is checked against host and co-host time.
 jest.mock("../../lib/booking/host-slot-batch", () => ({
   acceptedCohostProfileIds: async () => [],
+  assertBatchCoversSessions: async () => {},
   hostBatchEntries: () => [],
+  lockHostBatchInTx: async () => {},
   lockPlanForMove: async () => {},
   withHostSlotBatch: (_entries: unknown, run: (renew: () => void) => unknown) =>
     run(() => {}),

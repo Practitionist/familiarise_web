@@ -97,13 +97,16 @@ export interface ApprovalLock {
   callTimeoutMs?: number;
 }
 
-interface LockRetryConfig {
+/** No Redis call a lock makes runs longer: a slow Redis is an unavailable Redis (503), never unlocked. */
+const REDIS_CALL_TIMEOUT_MS = 1_500;
+
+export interface LockRetryConfig {
   retryCount: number;
   retryDelay: number;
   retryJitter: number;
   exponentialBackoff: boolean;
   driftFactor: number;
-  /** Bounds each Redis call; a stalled call fails the acquire at once, never retried. */
+  /** Bounds each Redis call (default REDIS_CALL_TIMEOUT_MS); a stalled call fails the acquire at once, never retried. */
   callTimeoutMs?: number;
   /** Epoch ms past which the acquire makes no Redis call and no retry wait; out of time reads as contention. */
   deadlineAt?: number;
@@ -121,6 +124,21 @@ export const REQUEST_PATH_RETRY_CONFIG: LockRetryConfig = {
   ...DEFAULT_RETRY_CONFIG,
   retryCount: 5,
 };
+
+/** All the lock waiting one buyer request may do, across every tier it takes. */
+export const REQUEST_LOCK_BUDGET_MS = 8_000;
+
+/**
+ * One deadline for a request's lock tiers: pass the same value to each tier, so
+ * a wait spent on one tier is not available to the next. Out of time reads as
+ * contention, the tier's own busy answer.
+ */
+export function requestLockBudget(): LockRetryConfig {
+  return {
+    ...REQUEST_PATH_RETRY_CONFIG,
+    deadlineAt: Date.now() + REQUEST_LOCK_BUDGET_MS,
+  };
+}
 
 /**
  * The allocator's wait per lock tier (appointment, consultant, consultee):
@@ -177,12 +195,11 @@ class RedisCallTimeout extends Error {
   }
 }
 
-/** `pending`, or a RedisCallTimeout after `ms`; unbounded when `ms` is undefined. */
+/** `pending`, or a RedisCallTimeout after `ms`. */
 async function withCallTimeout<T>(
   pending: Promise<T>,
-  ms: number | undefined,
+  ms: number = REDIS_CALL_TIMEOUT_MS,
 ): Promise<T> {
-  if (ms === undefined) return pending;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -196,21 +213,44 @@ async function withCallTimeout<T>(
   }
 }
 
+/** The two bounds on a Redis call: its own, and the request's deadline. */
+type CallBounds = Pick<LockRetryConfig, "callTimeoutMs" | "deadlineAt">;
+
 /**
  * The next Redis call's bound: the smaller of the per-call bound and the time
  * left before `deadlineAt`, and whether the deadline is what limits it. A tie is
  * the deadline's, since a caller may size the per-call bound to the time left.
  */
-function callBound(config: LockRetryConfig): {
-  ms: number | undefined;
+function callBound(config: CallBounds): {
+  ms: number;
   byDeadline: boolean;
 } {
+  const perCall = config.callTimeoutMs ?? REDIS_CALL_TIMEOUT_MS;
   if (config.deadlineAt === undefined) {
-    return { ms: config.callTimeoutMs, byDeadline: false };
+    return { ms: perCall, byDeadline: false };
   }
   const left = config.deadlineAt - Date.now();
-  const perCall = config.callTimeoutMs ?? Infinity;
   return { ms: Math.min(perCall, left), byDeadline: left <= perCall };
+}
+
+/**
+ * The health probe under the next call's bound. A stalled PING is Redis
+ * unavailable for this caller only, never cached as unhealthy; a PING the
+ * deadline cut short is out of time, the tier's busy answer.
+ */
+async function probeRedis(
+  config: CallBounds,
+): Promise<"healthy" | "unavailable" | "out-of-time"> {
+  const { ms, byDeadline } = callBound(config);
+  if (ms <= 0) return "out-of-time";
+  try {
+    const healthy = await withCallTimeout(checkRedisHealth(), ms);
+    return healthy ? "healthy" : "unavailable";
+  } catch (error: unknown) {
+    return error instanceof RedisCallTimeout && byDeadline
+      ? "out-of-time"
+      : "unavailable";
+  }
 }
 
 async function acquireLockWithRetry(
@@ -225,14 +265,13 @@ async function acquireLockWithRetry(
 
   for (let attempt = 0; attempt <= config.retryCount; attempt++) {
     const { ms: bound, byDeadline } = callBound(config);
-    if (bound !== undefined && bound <= 0) {
+    if (bound <= 0) {
       throw new LockContentionError(key, attempt);
     }
+    let pending: Promise<unknown> | null = null;
     try {
-      const result = await withCallTimeout(
-        client.set(key, value, { nx: true, px: effectiveTTL }),
-        bound,
-      );
+      pending = client.set(key, value, { nx: true, px: effectiveTTL });
+      const result = await withCallTimeout(pending, bound);
 
       if (result === "OK") {
         const duration = Date.now() - startTime;
@@ -291,6 +330,11 @@ async function acquireLockWithRetry(
       // The SET may have landed before the error: delete it only if it is ours,
       // so neither the retry nor the next caller meets our own key as contention.
       await releaseIfOurs(client, key, value, config.deadlineAt);
+      // An abandoned SET may land after that release: give the key back when it settles.
+      if (error instanceof RedisCallTimeout && pending) {
+        const release = () => releaseIfOurs(client, key, value);
+        void pending.then(release, release);
+      }
 
       // A call cut short by the deadline, not by its own bound, is out of time: no breaker failure.
       if (error instanceof RedisCallTimeout && byDeadline) {
@@ -321,15 +365,11 @@ async function acquireGuarded(
   context: string,
   config: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
-  const { ms: probeBound } = callBound(config);
-  if (probeBound !== undefined && probeBound <= 0) {
+  const probe = await probeRedis(config);
+  if (probe === "out-of-time") {
     throw new LockContentionError(key, 0);
   }
-  // A stalled PING reads as Redis unavailable for this caller only; it is not cached as unhealthy.
-  const healthy = await withCallTimeout(checkRedisHealth(), probeBound).catch(
-    () => false,
-  );
-  if (!healthy) {
+  if (probe === "unavailable") {
     throw new BookingLockUnavailableError(context);
   }
 
@@ -374,15 +414,13 @@ async function releaseIfOurs(
   deadlineAt?: number,
 ): Promise<void> {
   const left =
-    deadlineAt === undefined
-      ? SLOT_BATCH_REDIS_TIMEOUT_MS
-      : deadlineAt - Date.now();
+    deadlineAt === undefined ? REDIS_CALL_TIMEOUT_MS : deadlineAt - Date.now();
   // Past the caller's deadline no further call starts; the TTL frees the key.
   if (left <= 0) return;
   try {
     await withCallTimeout(
       client.eval(RELEASE_LOCK_SCRIPT, [key], [value]),
-      Math.min(SLOT_BATCH_REDIS_TIMEOUT_MS, left),
+      Math.min(REDIS_CALL_TIMEOUT_MS, left),
     );
   } catch {
     // The TTL still frees the key; the caller's own error is the one to report.
@@ -442,15 +480,19 @@ async function releaseLock(lock: ApprovalLock): Promise<void> {
   }
 }
 
+/** Re-arm one key; false when it is no longer ours or Redis did not answer inside the call bound. */
 export async function extendLock(
   lock: ApprovalLock,
   additionalTtl: number = 30000,
 ): Promise<boolean> {
   try {
-    const result = await lock.client.eval(
-      RENEW_LOCK_SCRIPT,
-      [lock.key],
-      [lock.value, additionalTtl.toString()],
+    const result = await withCallTimeout(
+      lock.client.eval(
+        RENEW_LOCK_SCRIPT,
+        [lock.key],
+        [lock.value, additionalTtl.toString()],
+      ),
+      lock.callTimeoutMs,
     );
 
     if (result === 1) {
@@ -738,6 +780,60 @@ export function parseSlotKey(
   };
 }
 
+/** A learner's own time in a 1:1: busy for that user whoever the expert is. */
+export interface LearnerTimeEntry {
+  userId: string;
+  startsAt: Date | string;
+  endsAt: Date | string;
+}
+
+const LEARNER_KEY_PREFIX = "learner-time:";
+
+/**
+ * Every half-hour atom of every learner entry, de-duplicated and sorted. These
+ * keys exist only as Postgres advisory locks inside a 1:1 write transaction;
+ * nothing sets them in Redis, where the consultee key serialises the learner.
+ */
+export function learnerTimeKeys(
+  entries: readonly LearnerTimeEntry[],
+): string[] {
+  const keys = new Set<string>();
+  for (const entry of entries) {
+    for (const atom of slotAtomStarts(
+      new Date(entry.startsAt),
+      new Date(entry.endsAt),
+    )) {
+      keys.add(`${LEARNER_KEY_PREFIX}${entry.userId}:${atom.toISOString()}`);
+    }
+  }
+  return [...keys].sort(byCodeUnit);
+}
+
+/** The learner and half-hour a learner key names. */
+export function parseLearnerTimeKey(
+  key: string,
+): { userId: string; startsAt: Date; endsAt: Date } | null {
+  if (!key.startsWith(LEARNER_KEY_PREFIX)) return null;
+  const rest = key.slice(LEARNER_KEY_PREFIX.length);
+  const split = rest.indexOf(":");
+  if (split <= 0) return null;
+  const startsAt = new Date(rest.slice(split + 1));
+  if (Number.isNaN(startsAt.getTime())) return null;
+  return {
+    userId: rest.slice(0, split),
+    startsAt,
+    endsAt: new Date(startsAt.getTime() + SLOT_ATOM_MS),
+  };
+}
+
+/** A held batch as one entry per atom: the same keys, for the database's locks on them. */
+export function slotGrantEntries(grant: SlotBatchGrant): SlotBatchEntry[] {
+  return grant.flatMap((lock) => {
+    const atom = parseSlotKey(lock.key);
+    return atom ? [atom] : [];
+  });
+}
+
 /** Every atom key of every entry, de-duplicated and sorted (a total order across profiles). */
 export function slotBatchKeys(entries: readonly SlotBatchEntry[]): string[] {
   const keys = new Set<string>();
@@ -761,62 +857,59 @@ export function slotBatchKeys(entries: readonly SlotBatchEntry[]): string[] {
   return [...keys].sort(byCodeUnit);
 }
 
-/** A slow Redis is an unavailable Redis: the booking fails closed (503), never unlocked. */
-const SLOT_BATCH_REDIS_TIMEOUT_MS = 1_500;
-
 function evalWithTimeout(
   client: Redis,
   script: string,
   keys: string[],
   args: string[],
 ): Promise<unknown> {
-  return withRedisTimeout(client.eval(script, keys, args));
+  return withCallTimeout(client.eval(script, keys, args));
 }
 
-async function withRedisTimeout<T>(pending: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      pending,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("slot batch: Redis timed out")),
-          SLOT_BATCH_REDIS_TIMEOUT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
+/** The slot batch ran out of the request's time: not granted, and no atom is known to be held. */
+const BATCH_OUT_OF_TIME = { ok: false as const, heldKeys: [] as string[] };
 
 /**
  * All-or-nothing, never waits: one Lua call sets every key with NX semantics,
  * or sets none and answers which keys are held. Redis down or slow throws
- * BookingLockUnavailableError.
+ * BookingLockUnavailableError. Each call is also bounded by `bounds.deadlineAt`:
+ * past it nothing more is sent and the answer is not-ok with no held key.
  */
 export async function tryLockSlotBatch(
   entries: readonly SlotBatchEntry[],
   ttlMs: number = DEFAULT_LOCK_TTL,
+  bounds: CallBounds = {},
 ): Promise<
   { ok: true; grant: SlotBatchGrant } | { ok: false; heldKeys: string[] }
 > {
   const keys = slotBatchKeys(entries);
-  if (!(await checkRedisHealth())) {
+  const probe = await probeRedis(bounds);
+  if (probe === "out-of-time") return BATCH_OUT_OF_TIME;
+  if (probe === "unavailable") {
     throw new BookingLockUnavailableError("slot-batch");
   }
+  const { ms: bound, byDeadline } = callBound(bounds);
+  if (bound <= 0) return BATCH_OUT_OF_TIME;
   const client = redisClient as Redis;
   const value = generateLockValue();
   const ttl = Math.floor(ttlMs * (1 - DEFAULT_RETRY_CONFIG.driftFactor));
   let result: unknown;
   let pending: Promise<unknown> | null = null;
   try {
-    result = await withCircuitBreaker(() => {
+    result = await withCircuitBreaker(async () => {
       pending = client.eval(SLOT_BATCH_ACQUIRE_SCRIPT, keys, [
         value,
         String(ttl),
       ]);
-      return withRedisTimeout(pending);
+      try {
+        return await withCallTimeout(pending, bound);
+      } catch (error: unknown) {
+        // Cut short by the deadline, not by its own bound: out of time, no breaker failure.
+        if (error instanceof RedisCallTimeout && byDeadline) {
+          return BATCH_OUT_OF_TIME;
+        }
+        throw error;
+      }
     });
   } catch (error: unknown) {
     // The script may have run (or still run) after we gave up, and a script
@@ -832,6 +925,11 @@ export async function tryLockSlotBatch(
       }),
     );
     throw new BookingLockUnavailableError("slot-batch");
+  }
+  if (result === BATCH_OUT_OF_TIME) {
+    // The abandoned script may still set the keys: give them back when it settles.
+    releaseAbandonedBatch(client, keys, value, pending);
+    return BATCH_OUT_OF_TIME;
   }
   const heldKeys = Array.isArray(result)
     ? result.filter((k): k is string => typeof k === "string")
@@ -852,7 +950,9 @@ function releaseAbandonedBatch(
   pending: Promise<unknown> | null,
 ): void {
   const release = () =>
-    client.eval(SLOT_BATCH_RELEASE_SCRIPT, keys, [value]).catch(() => null);
+    evalWithTimeout(client, SLOT_BATCH_RELEASE_SCRIPT, keys, [value]).catch(
+      () => null,
+    );
   void release();
   if (pending) void pending.then(release, release);
 }
@@ -860,27 +960,34 @@ function releaseAbandonedBatch(
 /**
  * The waiting form for buyer doors (checkout, request, trial): retries the
  * atomic batch inside the request-path budget, then throws SlotLockError
- * naming the first held atom.
+ * naming the first held atom. Past `config.deadlineAt` it makes no Redis call
+ * and starts no wait: out of time is the same SlotLockError.
  */
 export async function lockSlotBatch(
   entries: readonly SlotBatchEntry[],
   ttlMs: number = DEFAULT_LOCK_TTL,
   config: LockRetryConfig = INTERVAL_RETRY_CONFIG,
 ): Promise<SlotBatchGrant> {
+  const outOfTime = (waitMs = 0) =>
+    config.deadlineAt !== undefined && Date.now() + waitMs >= config.deadlineAt;
   let heldKeys: string[] = [];
+  let attempts = 0;
   for (let attempt = 0; attempt <= config.retryCount; attempt++) {
-    const outcome = await tryLockSlotBatch(entries, ttlMs);
+    if (outOfTime()) break;
+    attempts = attempt + 1;
+    const outcome = await tryLockSlotBatch(entries, ttlMs, config);
     if (outcome.ok) return outcome.grant;
-    heldKeys = outcome.heldKeys;
+    // An attempt that ran out of time names no atom; keep the last one known.
+    if (outcome.heldKeys.length > 0) heldKeys = outcome.heldKeys;
     if (attempt < config.retryCount) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, calculateRetryDelay(attempt, config)),
-      );
+      const delay = calculateRetryDelay(attempt, config);
+      if (outOfTime(delay)) break;
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
   reportLockContention("slot-interval", {
     heldKeys: heldKeys.length,
-    attempts: config.retryCount + 1,
+    attempts,
   });
   const held = parseSlotKey(heldKeys[0] ?? "");
   throw new SlotLockError(
@@ -999,11 +1106,13 @@ export const EVENT_LIFECYCLE_LOCK_TTL_MS = 75_000;
  * Run `fn` under the event's checkout key, the outermost booking tier (event →
  * appointment → … → slot batch). A null key runs `fn` unlocked: a 1:1 booking
  * has no event key. `renew` re-arms the key; call it at the top of every
- * Serializable attempt so a retry chain never outlives it.
+ * Serializable attempt so a retry chain never outlives it. A door that takes
+ * the appointment under it passes one `requestLockBudget()` to both tiers.
  */
 export async function withEventCheckoutLock<T>(
   key: { appointmentType: string; eventId: string } | null,
   fn: (renew: () => Promise<void>) => Promise<T>,
+  retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<T> {
   if (!key) return fn(() => Promise.resolve());
   let lock: ApprovalLock;
@@ -1012,6 +1121,7 @@ export async function withEventCheckoutLock<T>(
       key.appointmentType,
       key.eventId,
       EVENT_LIFECYCLE_LOCK_TTL_MS,
+      retryConfig,
     );
   } catch (error) {
     if (error instanceof EventCheckoutBusyError) {
@@ -1076,6 +1186,33 @@ export async function withAppointmentLock<T>(
   } finally {
     await unlockAppointment(lock);
   }
+}
+
+/**
+ * The event and appointment tiers of one lifecycle door, sharing one request
+ * deadline: the outermost tier mints it when the door starts acquiring, and
+ * the appointment tier under it waits only for what is left. A door with no
+ * event tier gets a fresh deadline for its appointment tier.
+ */
+export function requestLockTiers(): {
+  withEventCheckoutLock: <T>(
+    key: { appointmentType: string; eventId: string } | null,
+    fn: (renew: () => Promise<void>) => Promise<T>,
+  ) => Promise<T>;
+  withAppointmentLock: <T>(
+    appointmentId: string,
+    fn: (lock: ApprovalLock) => Promise<T>,
+  ) => Promise<T>;
+} {
+  let budget: LockRetryConfig | null = null;
+  return {
+    withEventCheckoutLock: (key, fn) => {
+      budget = requestLockBudget();
+      return withEventCheckoutLock(key, fn, budget);
+    },
+    withAppointmentLock: (appointmentId, fn) =>
+      withAppointmentLock(appointmentId, fn, budget ?? requestLockBudget()),
+  };
 }
 
 /** The appointment lock's grant lapsed or passed to another writer mid-operation. */
@@ -1153,14 +1290,18 @@ export class RequestCapBusyError extends Error {
   }
 }
 
+/** One request attempt plus slack; the door renews it before its write. */
+const REQUEST_CAP_TTL_MS = 60_000;
+
 /** One expert's open-request cap: held across its count and the request insert. */
 export async function lockRequestCap(
   consultantProfileId: string,
-  ttl: number = 60_000,
+  ttl: number = REQUEST_CAP_TTL_MS,
+  retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `request-cap:${consultantProfileId}`;
   try {
-    return await acquireGuarded(key, ttl, "request-cap");
+    return await acquireGuarded(key, ttl, "request-cap", retryConfig);
   } catch (error) {
     if (error instanceof BookingLockUnavailableError) throw error;
     throw new RequestCapBusyError();
@@ -1171,9 +1312,23 @@ export async function unlockRequestCap(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
 }
 
+/**
+ * Re-arm the cap lease ahead of the write, outside its transaction. A lease
+ * that is no longer ours answers the cap's busy 409, so no count runs uncovered.
+ */
+export async function renewRequestCap(
+  lock: ApprovalLock,
+  ttl: number = REQUEST_CAP_TTL_MS,
+): Promise<void> {
+  if (!(await extendLock(lock, ttl))) throw new RequestCapBusyError();
+}
+
+/** One booking attempt plus slack; a writer renews it before each attempt it makes. */
+export const CONSULTEE_LOCK_TTL_MS = 60_000;
+
 export async function lockConsulteeBooking(
   consulteeUserId: string,
-  ttl: number = 150000,
+  ttl: number = CONSULTEE_LOCK_TTL_MS,
   retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `consultee-booking:${consulteeUserId}`;
@@ -1189,6 +1344,19 @@ export async function unlockConsulteeBooking(
   lock: ApprovalLock,
 ): Promise<void> {
   await releaseLock(lock);
+}
+
+/**
+ * Re-arm the consultee key ahead of a write attempt, outside its transaction.
+ * A grant that is no longer ours answers the key's busy 409, so the attempt
+ * never writes unserialised.
+ */
+export async function renewConsulteeBooking(
+  lock: ApprovalLock | null | undefined,
+  ttl: number = CONSULTEE_LOCK_TTL_MS,
+): Promise<void> {
+  if (!lock) return;
+  if (!(await extendLock(lock, ttl))) throw new ConsulteeBookingBusyError();
 }
 
 /** Code-unit string order (never locale-aware): one lock order on every host. */

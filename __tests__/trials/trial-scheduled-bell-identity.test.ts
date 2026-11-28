@@ -8,41 +8,20 @@
  */
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 
-import type { Tx } from "@/lib/prisma";
 import { stageTrialScheduledNotices } from "@/lib/trials/schedule-notices";
+import { stagedBellTransactionIds } from "../fixtures/staged-bell-ids";
 
-const bell = {
-  workflowId: "trial-session-scheduled" as const,
-  kind: "SINGLE" as const,
-  recipients: ["user-learner"],
-  payload: { planTitle: "Plan", dateTime: "Sat, 6 Sep 2026" },
-};
-
-async function stagedTransactionIds(trialId: string): Promise<string[]> {
-  const createManyAndReturn = jest.fn(
-    async (_args: { data: { transactionId: string }[] }) => [],
-  );
-  const tx = {
-    notificationOutbox: { createManyAndReturn },
-    failedEmail: { createManyAndReturn: jest.fn(async () => []) },
-  } as unknown as Tx;
-  await stageTrialScheduledNotices(tx, trialId, {
-    bells: [bell],
-    emails: {
-      prepared: {
-        emailType: "TRIAL_SESSION_SCHEDULED",
-        entityRef: "trial:pending",
-        messages: [],
-        skipped: 0,
-        failed: 0,
-      },
-      screened: [],
+const stagedTransactionIds = (trialId: string) =>
+  stagedBellTransactionIds(
+    (tx, prepared) => stageTrialScheduledNotices(tx, trialId, prepared),
+    {
+      workflowId: "trial-session-scheduled",
+      kind: "SINGLE",
+      recipients: ["user-learner"],
+      payload: { planTitle: "Plan", dateTime: "Sat, 6 Sep 2026" },
     },
-  });
-  return createManyAndReturn.mock.calls[0][0].data.map(
-    (row) => row.transactionId,
+    "TRIAL_SESSION_SCHEDULED",
   );
-}
 
 it("keys the bell to the trial, so a replacement trial is not skipped as a duplicate", async () => {
   const first = await stagedTransactionIds("trial-1");

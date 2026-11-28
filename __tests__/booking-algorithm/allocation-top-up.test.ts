@@ -11,6 +11,7 @@
  * `deleteExistingAppointments` throws instead of quietly passing.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
@@ -44,6 +45,7 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid the @upstash/redis ESM import under Jest.
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   // allocate() takes an existing booking's appointment lock first.
   withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
     fn({ key: "appointment-lock" }),

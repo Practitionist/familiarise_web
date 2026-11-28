@@ -65,6 +65,9 @@ type IdemRow = Record<string, unknown> & { completedAt: Date | null };
 const idem = new Map<string, IdemRow>();
 const idemKey = (w: { scope_key_userId: Record<string, string> }) =>
   JSON.stringify(w.scope_key_userId);
+/** The same key from the flat identity a compare-and-set write carries. */
+const claimKey = (w: Record<string, unknown>) =>
+  JSON.stringify({ scope: w.scope, key: w.key, userId: w.userId });
 const idempotencyRecord = {
   create: jest.fn(async ({ data }: { data: Record<string, string> }) => {
     const k = JSON.stringify({
@@ -79,21 +82,23 @@ const idempotencyRecord = {
   findUnique: jest.fn(async ({ where }: { where: never }) =>
     idem.get(idemKey(where)),
   ),
-  update: jest.fn(
+  updateMany: jest.fn(
     async ({
       where,
       data,
     }: {
-      where: never;
+      where: Record<string, unknown>;
       data: Record<string, unknown>;
     }) => {
-      const row = idem.get(idemKey(where));
+      const row = idem.get(claimKey(where));
       if (row) Object.assign(row, data);
-      return row;
+      return { count: row ? 1 : 0 };
     },
   ),
-  delete: jest.fn(async ({ where }: { where: never }) =>
-    idem.delete(idemKey(where)),
+  deleteMany: jest.fn(
+    async ({ where }: { where: Record<string, unknown> }) => ({
+      count: idem.delete(claimKey(where)) ? 1 : 0,
+    }),
   ),
 };
 jest.mock("../../lib/prisma", () => ({

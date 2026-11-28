@@ -18,7 +18,7 @@ import {
   AppointmentBusyError,
   BookingLockUnavailableError,
   renewAppointmentLock,
-  withAppointmentLock,
+  requestLockTiers,
 } from "@/utils/appointmentlock";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
@@ -336,6 +336,8 @@ async function requestReschedule(
       orgScope?.organizationId,
     );
 
+    // The door's whole lock wait, slow Redis calls included, ends at one deadline.
+    const { withAppointmentLock } = requestLockTiers();
     const result = await withAppointmentLock(appointmentId, (lock) =>
       bookingTransaction(
         async (tx) => {

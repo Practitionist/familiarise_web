@@ -716,6 +716,28 @@ export async function prepareTrialScheduledBells(
 }
 
 /**
+ * The new-request bell resolved before the request's transaction: one
+ * recipient read for the bell policy and zone, and no write.
+ */
+export async function prepareNewBookingRequestBell(
+  subscriberId: string,
+  input: BookingRequestInput,
+): Promise<PreparedBell[]> {
+  const workflowId = W.NEW_BOOKING_REQUEST;
+  const zones = await bellRecipientZones(workflowId, [subscriberId]);
+  const timezone = zones.get(subscriberId);
+  if (timezone === undefined) return [];
+  return [
+    {
+      workflowId,
+      kind: "SINGLE" as const,
+      recipients: [subscriberId],
+      payload: bookingRequestWire(input, timezone),
+    },
+  ];
+}
+
+/**
  * Stages prepared bells inside `tx` in one insert. With Novu unconfigured the
  * rows stay for the relay and none is returned to flush.
  */
@@ -749,10 +771,6 @@ export const notifySubscriptionRenewed =
   defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_RENEWED);
 
 // Consultant-Specific
-export const notifyNewBookingRequest = defineZonedSingleNotifier(
-  W.NEW_BOOKING_REQUEST,
-  bookingRequestWire,
-);
 export const notifyUnscheduledSubscriptionNudge = defineZonedSingleNotifier<
   BookingRequestInput & { nudgeHours: number }
 >(W.NEW_BOOKING_REQUEST, bookingRequestWire);

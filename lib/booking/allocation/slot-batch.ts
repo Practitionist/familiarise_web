@@ -4,9 +4,14 @@
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
 } from "@/lib/prisma";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { acceptedCohostProfileIds } from "@/lib/booking/host-slot-batch";
+import {
+  lockHostTimeInTx,
+  type HeldHostTime,
+} from "@/lib/booking/allocation/host-time-locks";
 import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 import type { EventType } from "@/utils/scheduling-engine/types";
 import {
@@ -114,6 +119,35 @@ export async function lockPickedSlots(
   if (!outcome.ok)
     throw new SlotsTakenError(heldSlotStartsOf(outcome.heldKeys));
   return outcome.grant;
+}
+
+/**
+ * The write transaction's first statement: Postgres try-locks over the atoms of
+ * the Redis batch and, for a 1:1, the learner's own time, before the event's
+ * advisory lock and every row lock. A held picked time answers TIMES_TAKEN
+ * naming it; auto mode passes its own race. A webinar or class has no
+ * `learnerUserId`.
+ */
+export async function lockAllocationTimesInTx(
+  tx: Pick<Tx, "$queryRaw">,
+  slotStarts: readonly Date[],
+  profileIds: readonly string[],
+  learnerUserId: string | null | undefined,
+  refusal: (held: HeldHostTime) => Error = (held) =>
+    new SlotsTakenError([held.startsAt.toISOString()]),
+): Promise<void> {
+  await lockHostTimeInTx(
+    tx,
+    allocationBatchEntries(slotStarts, profileIds),
+    refusal,
+    learnerUserId
+      ? slotStarts.map((startsAt) => ({
+          userId: learnerUserId,
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + SCHEDULING_INTERVAL_MS),
+        }))
+      : [],
+  );
 }
 
 /** Re-arm at the top of the write; a lost batch aborts before anything is written. */

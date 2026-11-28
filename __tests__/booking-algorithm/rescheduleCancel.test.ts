@@ -75,24 +75,27 @@ jest.mock("../../lib/prisma", () => ({
           async ({ where }: { where: Parameters<typeof keyOf>[0] }) =>
             rows.get(keyOf(where)) ?? null,
         ),
-        update: jest.fn(
+        // Completion and release address the claim by its flat identity.
+        updateMany: jest.fn(
           async ({
             where,
             data,
           }: {
-            where: Parameters<typeof keyOf>[0];
+            where: Record<string, string>;
             data: Record<string, unknown>;
           }) => {
-            const k = keyOf(where);
+            const k = `${where.scope}|${where.key}|${where.userId}`;
+            if (!rows.has(k)) return { count: 0 };
             rows.set(k, { ...rows.get(k), ...data });
-            return rows.get(k);
+            return { count: 1 };
           },
         ),
-        delete: jest.fn(
-          async ({ where }: { where: Parameters<typeof keyOf>[0] }) => {
-            rows.delete(keyOf(where));
-            return {};
-          },
+        deleteMany: jest.fn(
+          async ({ where }: { where: Record<string, string> }) => ({
+            count: rows.delete(`${where.scope}|${where.key}|${where.userId}`)
+              ? 1
+              : 0,
+          }),
         ),
       };
     })(),
@@ -113,6 +116,7 @@ jest.mock("../../lib/rate-limit", () => ({
   rescheduleAppointmentLimiter: {},
 }));
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   __esModule: true,
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),

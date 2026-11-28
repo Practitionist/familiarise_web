@@ -17,10 +17,7 @@ import type { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
-import {
-  withAppointmentLock,
-  withEventCheckoutLock,
-} from "@/utils/appointmentlock";
+import { requestLockTiers } from "@/utils/appointmentlock";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -42,6 +39,7 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
@@ -302,6 +300,8 @@ export async function retimeClassSeries(args: {
   const firstOld = movable[0].startsAt;
   const firstNew = windows[0].startsAt;
 
+  // Both lock tiers share one deadline, minted when the door starts acquiring.
+  const { withEventCheckoutLock, withAppointmentLock } = requestLockTiers();
   const result = await withEventCheckoutLock(
     { appointmentType: "CLASS", eventId: hosted.cls.id },
     () =>
@@ -313,6 +313,7 @@ export async function retimeClassSeries(args: {
           ),
           () =>
             prisma.$transaction(async (tx) => {
+              await lockHostBatchInTx(tx, hostBatchEntries(profiles, windows));
               await lockPlanForMove(tx, "CLASS", plan.id, profiles);
               const { schedulingTimezone } = await assertSnapshotCurrent(
                 tx,

@@ -13,6 +13,7 @@
  * - Error handling and edge cases
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // ─── Module Mocks ───────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   // allocate() takes a webinar's or class's checkout key, then the appointment lock.
   withEventCheckoutLock: (
     _key: unknown,

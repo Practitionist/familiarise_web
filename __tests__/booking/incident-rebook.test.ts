@@ -87,6 +87,7 @@ jest.mock("../../lib/prisma", () => {
 });
 const lockSlotBatch = jest.fn(async (..._a: unknown[]) => []);
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
   lockConsulteeBooking: jest.fn(async () => ({})),
   unlockConsulteeBooking: jest.fn(),
@@ -120,6 +121,7 @@ jest.mock("../../lib/email/senders/booking", () => ({
     stageEmail(...(a as [])),
 }));
 
+import "../fixtures/host-time-locks-free";
 import prisma from "../../lib/prisma";
 import {
   bringIncidentRefundForward,

@@ -132,6 +132,8 @@ Each heatmap cell's status is the share of the cell covered by occupancy, comput
        manual / requested: held time → 409 TIMES_TAKEN (names the times)
                                             ▼
    INSIDE TX (Read Committed):
+     pg_try_advisory_xact_lock per (profile, half-hour) and, for a 1:1
+     only, per (learner user, half-hour); either held → 409 →
      pg_advisory_xact_lock(event) → idempotency replay check →
      revalidateConflicts → co-host check → tentative-count check →
      DELETE old rows → CREATE occurrences → CAS parent status
@@ -167,7 +169,7 @@ The consultee's cycle-done notice says "Your latest {plan} sessions are done" an
 ## 4. Concurrency layers
 
 ```text
- Layer 1  Redis locks (fail-CLOSED → 503)
+ Layer 1  Redis locks: the fast refusal (fail-CLOSED → 503)
           global order: event-checkout → appointment → approval →
             auto-allocate:<cp> | request-cap:<cp> → consultee →
             ONE ATOMIC BATCH of slot-booking:<cp>:<atom>
@@ -175,7 +177,15 @@ The consultee's cycle-done notice says "Your latest {plan} sessions are done" an
             checkout, request, trial, allocator (all modes), event
             create/publish/re-time, make-up, co-host accept, extension
           Lua all-or-nothing, 1.5s Redis timeout → 503 when slow
- Layer 2  Postgres isolation
+          a request's tiers share one 8s deadline; out of time, or a
+            call the deadline cut short → the tier's busy answer
+            (409, or 423 on the appointment key), never 503
+ Layer 2  Postgres arbitration and isolation
+          every writer that makes host time busy opens its write
+            transaction with pg_try_advisory_xact_lock on the same
+            (profile, half-hour) atoms, and a 1:1 on the learner's
+            (user, half-hour) atoms; a held atom → the door's 409,
+            no wait; the locks end with the transaction
           checkout + capture = SERIALIZABLE (+ retry P2034/40P01)
           allocation / cancel / reschedule = READ COMMITTED
  Layer 3  CAS-in-WHERE status helpers (transitions.ts, 7 helpers)

@@ -57,6 +57,17 @@ export function bookingExpiryPrismaModels() {
   };
 }
 
+/** `lib/prisma` over the sweep's models; a transaction runs on the same client. */
+export function bookingExpiryPrismaModule() {
+  const db: Record<string, unknown> = {
+    ...bookingExpiryPrismaModels(),
+    $queryRaw: jest.fn(async () => []),
+    $disconnect: jest.fn(),
+  };
+  db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
+  return { __esModule: true, default: db };
+}
+
 export function withNoRefundOwedMarker<T extends { id: string }>(rows: T[]) {
   return rows.map((row) => ({
     ...row,

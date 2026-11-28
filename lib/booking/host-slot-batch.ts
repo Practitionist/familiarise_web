@@ -3,13 +3,15 @@
 // extension) take the same slot atoms as checkout and the allocator.
 
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
-import { CollaboratorStatus } from "@prisma/client";
+import { CollaboratorStatus, type Prisma } from "@prisma/client";
 import { ConsultantScheduleConflictError } from "@/lib/collaborators/availability";
 import { lockPlanRow } from "@/lib/collaborators/team";
+import { lockHostTimeInTx } from "@/lib/booking/allocation/host-time-locks";
 import {
   extendSlotInterval,
   tryLockSlotBatch,
   unlockSlotInterval,
+  type LearnerTimeEntry,
   type SlotBatchEntry,
 } from "@/utils/appointmentlock";
 
@@ -77,6 +79,29 @@ export async function lockPlanForMove(
   }
 }
 
+/**
+ * The live sessions matching `where`, read inside the write transaction
+ * behind the plan lock, are all windows the batch holds. A session re-timed
+ * since the batch was sized is the same transient conflict, so an edit never
+ * publishes or hands over time it did not lock.
+ */
+export async function assertBatchCoversSessions(
+  tx: Pick<Tx, "appointmentOccurrence">,
+  where: Prisma.AppointmentOccurrenceWhereInput,
+  held: readonly { startsAt: Date; endsAt: Date }[],
+): Promise<void> {
+  const live = await tx.appointmentOccurrence.findMany({
+    where,
+    select: { startsAt: true, endsAt: true },
+  });
+  const windowKey = (w: { startsAt: Date; endsAt: Date }) =>
+    `${w.startsAt.getTime()}:${w.endsAt.getTime()}`;
+  const heldWindows = new Set(held.map(windowKey));
+  if (live.some((w) => !heldWindows.has(windowKey(w)))) {
+    throw new HostTimeHeldError();
+  }
+}
+
 /** Every window × every profile, as batch entries. */
 export function hostBatchEntries(
   profileIds: readonly string[],
@@ -88,6 +113,25 @@ export function hostBatchEntries(
       startsAt: w.startsAt,
       endsAt: w.endsAt,
     })),
+  );
+}
+
+/**
+ * The first statement of a host-time write transaction, before the plan row
+ * lock: Postgres try-locks over the atoms of the Redis batch, and over a 1:1
+ * learner's own time when the writer passes it. A held atom is the same
+ * transient schedule conflict.
+ */
+export async function lockHostBatchInTx(
+  tx: Pick<Tx, "$queryRaw">,
+  entries: readonly SlotBatchEntry[],
+  learnerTimes: readonly LearnerTimeEntry[] = [],
+): Promise<void> {
+  await lockHostTimeInTx(
+    tx,
+    entries,
+    () => new HostTimeHeldError(),
+    learnerTimes,
   );
 }
 

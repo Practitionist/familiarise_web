@@ -1,5 +1,6 @@
 // Module mocks and fixtures for driving handleCheckout end to end; import before the module under test.
 
+import "../../../../fixtures/host-time-locks-free";
 import type { CheckoutInput } from "../../../../../schemas/checkout";
 
 export const mockCreatePaymentIntent = jest.fn();
@@ -20,6 +21,7 @@ jest.mock("../../../../../lib/payments/index", () => ({
 jest.mock("../../../../../utils/appointmentlock", () => ({
   __esModule: true,
   CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },
+  requestLockBudget: () => ({ retryCount: 5 }),
   CHECKOUT_LOCK_TTL_MS: {},
   EventFullError: class extends Error {},
   EventCheckoutBusyError: class extends Error {},

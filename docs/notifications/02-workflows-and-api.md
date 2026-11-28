@@ -207,13 +207,13 @@ A completed trial is announced by `stageTrialCompletedNotices` (`lib/booking/tri
 
 ### Consultant-Specific
 
-| Workflow ID                   | Trigger Function                                                                                                                            | Recipients | Payload Type            |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------- |
-| `new-booking-request`         | `notifyNewBookingRequest(consultantUserId, payload)`; `notifyRequestExpiringSoon` and `notifyUnscheduledSubscriptionNudge` are its variants | Consultant | `BookingRequestPayload` |
-| `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)`                                                                                | Consultant | `VerificationPayload`   |
-| `payout-processed`            | `notifyPayoutProcessed(consultantUserId, payload)`                                                                                          | Consultant | `PayoutPayload`         |
-| `payout-failed`               | `notifyPayoutFailed(consultantUserId, payload)`                                                                                             | Consultant | `PayoutPayload`         |
-| `payout-clawback`             | `stageClawbackNotice(tx, …)` inside the clawback journal's transaction                                                                      | Consultant | `PayoutClawbackPayload` |
+| Workflow ID                   | Trigger Function                                                                                                                                                                                                          | Recipients | Payload Type            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------- |
+| `new-booking-request`         | `prepareNewBookingRequestBell(consultantUserId, payload)`, staged in the request's transaction by `lib/booking/request-notices.ts`; `notifyRequestExpiringSoon` and `notifyUnscheduledSubscriptionNudge` are its variants | Consultant | `BookingRequestPayload` |
+| `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)`                                                                                                                                                              | Consultant | `VerificationPayload`   |
+| `payout-processed`            | `notifyPayoutProcessed(consultantUserId, payload)`                                                                                                                                                                        | Consultant | `PayoutPayload`         |
+| `payout-failed`               | `notifyPayoutFailed(consultantUserId, payload)`                                                                                                                                                                           | Consultant | `PayoutPayload`         |
+| `payout-clawback`             | `stageClawbackNotice(tx, …)` inside the clawback journal's transaction                                                                                                                                                    | Consultant | `PayoutClawbackPayload` |
 
 **BookingRequestPayload**: `consulteeName`, `planTitle`, `appointmentType` (label), `appointmentTypeCode?`, `requestedDateTime?` (recipient-zone), `requestedDateTimeIso?`, `dashboardUrl`. Callers pass `BookingRequestInput`.
 

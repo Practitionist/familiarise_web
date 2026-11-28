@@ -154,6 +154,7 @@ jest.mock("../../lib/rate-limit", () => ({
   eventMutationLimiter: {},
 }));
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   __esModule: true,
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),

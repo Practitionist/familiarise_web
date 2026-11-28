@@ -52,6 +52,12 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 const MIN_KEY_LENGTH = 10;
 const MAX_KEY_LENGTH = 255;
 
+/** One retry of the claim when the key changes hands under a request. */
+const CLAIM_ATTEMPTS = 2;
+
+/** A held key: its identity and the instant this request claimed it. */
+type Claim = { scope: string; key: string; userId: string; createdAt: Date };
+
 export type IdempotencyOptions = {
   /** Route-owned namespace, e.g. "admin.refund". Must be stable. */
   scope: string;
@@ -104,55 +110,55 @@ export async function withIdempotency(
   }
 
   const requestHash = hashBody(rawBody);
-  const now = new Date();
-  const where = {
-    scope_key_userId: { scope: opts.scope, key, userId: opts.userId },
-  };
+  const identity = { scope: opts.scope, key, userId: opts.userId };
 
-  // Claim the key. The unique index is the race guard: two concurrent requests
-  // with the same key both try to create, and exactly one wins with P2002.
-  try {
-    await prisma.idempotencyRecord.create({
-      data: {
-        scope: opts.scope,
-        key,
-        userId: opts.userId,
-        requestHash,
-        expiresAt: new Date(now.getTime() + TTL_MS),
-      },
-    });
-  } catch (err) {
-    if (
-      typeof err !== "object" ||
-      err === null ||
-      (err as { code?: string }).code !== "P2002"
-    ) {
-      throw err;
+  for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
+    const now = new Date();
+    const claim: Claim = { ...identity, createdAt: now };
+    const expiresAt = new Date(now.getTime() + TTL_MS);
+
+    // Claim the key. The unique index is the race guard: of two concurrent
+    // requests with one key, exactly one insert lands.
+    try {
+      await prisma.idempotencyRecord.create({
+        data: { ...claim, requestHash, expiresAt },
+      });
+      return runAndRecord(handler, parsedBody, claim);
+    } catch (err) {
+      if (
+        typeof err !== "object" ||
+        err === null ||
+        (err as { code?: string }).code !== "P2002"
+      ) {
+        throw err;
+      }
     }
 
-    const existing = await prisma.idempotencyRecord.findUnique({ where });
+    const existing = await prisma.idempotencyRecord.findUnique({
+      where: { scope_key_userId: identity },
+    });
 
-    // Expired keys are reusable — the row is swept lazily, so a stale one must
-    // not permanently burn its key.
-    if (existing && existing.expiresAt <= now) {
-      await prisma.idempotencyRecord.update({
-        where,
+    // Gone between the refused insert and the read (a sweep, or its holder
+    // freed it): claim it again rather than run without a claim.
+    if (!existing) continue;
+
+    // An expired claim is taken over by one conditional write that repeats the
+    // expiry this request read; a retry that lost the takeover answers from
+    // the winner's claim on the next pass.
+    if (existing.expiresAt <= now) {
+      const taken = await prisma.idempotencyRecord.updateMany({
+        where: { ...identity, expiresAt: existing.expiresAt },
         data: {
           requestHash,
           responseBody: Prisma.JsonNull,
           responseStatus: null,
           completedAt: null,
           createdAt: now,
-          expiresAt: new Date(now.getTime() + TTL_MS),
+          expiresAt,
         },
       });
-      return runAndRecord(handler, parsedBody, where);
-    }
-
-    if (!existing) {
-      // Vanished between the failed create and the read (concurrent sweep).
-      // Treat as a fresh request rather than inventing an error.
-      return handler(parsedBody);
+      if (taken.count === 1) return runAndRecord(handler, parsedBody, claim);
+      continue;
     }
 
     // Same key, different body. This is a client bug — replaying the original
@@ -171,16 +177,7 @@ export async function withIdempotency(
 
     // Still in flight. Racing it would defeat the point; tell the caller to
     // retry rather than doing the work twice.
-    if (!existing.completedAt) {
-      return NextResponse.json(
-        {
-          error:
-            "Your earlier request is still being processed. Wait a moment, then refresh the page to see it.",
-          code: "IDEMPOTENCY_IN_FLIGHT",
-        },
-        { status: 409 },
-      );
-    }
+    if (!existing.completedAt) return inFlightResponse();
 
     // Genuine retry — replay the original outcome verbatim.
     return NextResponse.json(existing.responseBody ?? {}, {
@@ -189,38 +186,45 @@ export async function withIdempotency(
     });
   }
 
-  return runAndRecord(handler, parsedBody, where);
+  // The key changed hands on every pass: another request holds it now.
+  return inFlightResponse();
+}
+
+function inFlightResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        "Your earlier request is still being processed. Wait a moment, then refresh the page to see it.",
+      code: "IDEMPOTENCY_IN_FLIGHT",
+    },
+    { status: 409 },
+  );
 }
 
 /**
- * Run the handler and persist its response against the claimed key.
+ * Run the handler and settle its claim. Every write is fenced by the claim's
+ * own creation instant, so a handler that finishes after its key passed to a
+ * newer request neither overwrites nor frees the newer receipt.
  *
- * A thrown handler leaves `completedAt` null. That is deliberate: the mutation
- * may or may not have partially applied, so the honest state is "unknown", and
- * the next retry with the same key gets a 409 rather than silently re-running a
- * money operation. The record expires after the TTL and the key frees up.
+ * A 2xx is stored for replay. A non-2xx or a thrown handler frees the key, so
+ * the caller can retry after fixing the cause; the doors behind this wrapper
+ * guard their own writes, so a retry cannot apply twice. A process that dies
+ * mid-handler frees nothing: its claim stays in flight until it expires, and a
+ * retry inside that time is answered 409.
  */
 async function runAndRecord(
   handler: (body: unknown) => Promise<NextResponse>,
   body: unknown,
-  where: { scope_key_userId: { scope: string; key: string; userId: string } },
+  claim: Claim,
 ): Promise<NextResponse> {
+  const free = () =>
+    prisma.idempotencyRecord.deleteMany({ where: claim }).catch(() => {});
+
   let response: NextResponse;
   try {
     response = await handler(body);
   } catch (err) {
-    // A THROWN handler must free the key too. The money routes signal their
-    // caller-actionable failures by throwing — refundPayment raises
-    // RefundValidationError for things like REFUND_BLOCKED_BY_DISPUTE, which
-    // the route maps to a 400 and which the operator is expected to fix and
-    // retry. Leaving the claim in place would answer that retry with
-    // IDEMPOTENCY_IN_FLIGHT for the full 24-hour TTL.
-    //
-    // Freeing it is safe for the same reason the non-2xx path is: the
-    // underlying operations are individually idempotent (the refund's
-    // Serializable Phase 1 re-derives the refundable balance, the gateway call
-    // carries its own key), so a retry cannot double-apply.
-    await prisma.idempotencyRecord.delete({ where }).catch(() => {});
+    await free();
     throw err;
   }
 
@@ -233,8 +237,8 @@ async function runAndRecord(
     } catch {
       responseBody = null;
     }
-    await prisma.idempotencyRecord.update({
-      where,
+    await prisma.idempotencyRecord.updateMany({
+      where: claim,
       data: {
         completedAt: new Date(),
         responseStatus: response.status,
@@ -242,8 +246,7 @@ async function runAndRecord(
       },
     });
   } else {
-    // Free the key so the caller can legitimately retry after fixing the cause.
-    await prisma.idempotencyRecord.delete({ where }).catch(() => {}); // already swept — nothing to undo
+    await free();
   }
 
   return response;

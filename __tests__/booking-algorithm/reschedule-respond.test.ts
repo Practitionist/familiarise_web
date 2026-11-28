@@ -520,6 +520,44 @@ describe("accept re-validates through the allocator before anything is written",
     expect(txStub.rescheduleRequest.updateMany).not.toHaveBeenCalled();
   });
 
+  it("repeats the deadline in the final write, and a proposal that lapsed while the times were placed is refused as expired", async () => {
+    // Open at the preflight; past its deadline when the ACCEPTED write runs.
+    mockRequestFindUnique
+      .mockResolvedValueOnce(proposalRow())
+      .mockResolvedValueOnce({
+        status: "PENDING_REVIEW",
+        expiresAt: new Date(Date.now() - 1_000),
+      });
+    txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 0 });
+    mockAllocate.mockImplementation(
+      async (req: {
+        inTx: (tx: unknown, moved: typeof NOTHING_MOVED) => Promise<void>;
+      }) => {
+        const refused = await req
+          .inTx(txStub, NOTHING_MOVED)
+          .catch((e: { errorCode?: string }) => e);
+        return { success: false, errorCode: refused?.errorCode };
+      },
+    );
+    const before = Date.now();
+
+    const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
+      rescheduleRequestId: REQ,
+      eventType: "consultation",
+      eventId: "cons-1",
+      resolvedById: CONSULTEE_USER,
+    });
+
+    const [write] = txStub.rescheduleRequest.updateMany.mock.calls[0] as [
+      { where: { AND?: [{ expiresAt: { gt: Date } }] } },
+    ];
+    expect(write.where.AND?.[0].expiresAt.gt.getTime()).toBeGreaterThanOrEqual(
+      before,
+    );
+    expect(out).toEqual({ done: false, reason: "PROPOSAL_EXPIRED" });
+  });
+
   it("has nothing to accept on a preference-only request", async () => {
     mockRequestFindUnique.mockResolvedValue(proposalRow({ proposedTimes: [] }));
 
