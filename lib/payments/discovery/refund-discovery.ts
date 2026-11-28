@@ -362,7 +362,7 @@ async function reportDiscoveryFindings(
   next: DiscoveryState,
 ): Promise<void> {
   if (unknownPayment.length > 0) {
-    const message = `Refund discovery: ${unknownPayment.length} gateway refund(s) are on a payment the database does not hold as captured; nothing was written for them`;
+    const message = `Refund discovery: ${unknownPayment.length} gateway refund(s) were deferred by the handler: no payment, top-up or invoice row holds their gateway payment, or the payment row still awaits its capture; nothing was written for them`;
     await reportStandingFinding(
       {
         key: `${REFUND_DISCOVERY_JOB}:discovery-unknown-payment`,
