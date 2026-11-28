@@ -2265,8 +2265,11 @@ model OrganizationEarnings {
   preHoldStatus EarningStatus? @map("preDisputeStatus")
   holds         EarningsHold[]
 
-  orgPayoutId String?
-  orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
+  orgPayoutId          String?
+  orgPayout            OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
+  /// The last payout that released this row back to READY on failure, so a late
+  /// gateway completion of that payout can find what it actually paid.
+  releasedFromPayoutId String?
 
   // A6/A7/PM-16 — Timestamptz on the money models (#676).
   createdAt DateTime @default(now()) @db.Timestamptz
@@ -2317,6 +2320,8 @@ model OrganizationPayout {
   tdsRateAppliedBps Int?
   tdsFinancialYear  String?
   tdsAmountPaise    BigInt?
+  /// When this payout's TDS was fixed, at its first submission. Reserved: nothing writes or reads it yet.
+  tdsDeductedAt     DateTime?           @db.Timestamptz
   mustPayByDate     DateTime?           @db.Timestamptz // derived from MSME 15/45-day rule
   // #781 §A — rail the batch was (or will be) submitted on.
   paRouteProvider   PayoutRailProvider?
@@ -2334,6 +2339,8 @@ model OrganizationPayout {
 
   payoutReference            String?
   failureReason              String?
+  /// Sends attempted after the first. Reserved: nothing writes or reads it yet.
+  retryCount                 Int       @default(0)
   processedAt                DateTime? @db.Timestamptz
   failedAt                   DateTime? @db.Timestamptz
   createdBy                  String?
@@ -5295,6 +5302,7 @@ model RescheduleProposedTime {
 enum RescheduleInitiatorRole {
   CONSULTEE
   CONSULTANT
+  OPERATOR
 }
 
 /// #1065 — the half-day band a replacement session is preferred to land in,
@@ -6452,6 +6460,10 @@ enum RefundStatus {
 model Dispute {
   id                  String         @id @default(uuid())
   amountPaise         BigInt // Disputed amount in paise
+  /// What the bank took when the dispute closed against the platform, in paise.
+  /// Null while the dispute is open, when it closed with nothing taken, and when
+  /// the gateway reported no figure; readers then fall back to `amountPaise`.
+  deductedAmountPaise BigInt?
   currency            Currency       @default(INR)
   reason              String // Dispute reason from gateway
   status              DisputeStatus
@@ -6654,16 +6666,18 @@ model ConsultantPayout {
   kind                String? // #1771 row 6 — 'INSTANT'; null = the Monday batch
 
   // TDS (Tax Deducted at Source) — Section 194J
-  tdsDeducted       BigInt  @default(0) // TDS amount deducted from this payout, in paise
+  tdsDeducted       BigInt    @default(0) // TDS amount deducted from this payout, in paise
   netAmount         BigInt? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
   tdsRateAppliedBps Int? // #781 §C — bps; rate reserved for this payout, stamped into the final audit record
   tdsFinancialYear  String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
+  /// When this payout's TDS was fixed, at its first submission. Reserved: nothing writes or reads it yet.
+  tdsDeductedAt     DateTime? @db.Timestamptz
   // 194-O threshold: the FY whose catch-up this payout took (one per expert per FY,
   // `consultant_payout_one_tds_catch_up_per_fy`), TDS carried to later payouts (+) or
   // collected from earlier ones (−), and excess TDS credited back in cash.
   tdsCatchUpFy      String?
-  tdsCarryPaise     BigInt  @default(0)
-  tdsCreditPaise    BigInt  @default(0)
+  tdsCarryPaise     BigInt    @default(0)
+  tdsCreditPaise    BigInt    @default(0)
 
   // MSME 43B(h) settlement deadline; mirrors OrganizationPayout. #776 — the
   // consultant is the supplier here, so the deadline derives from the
@@ -7057,6 +7071,9 @@ model IdempotencyRecord {
   /// means a request is in flight; a concurrent duplicate gets a 409 rather
   /// than racing it.
   completedAt DateTime? @db.Timestamptz
+  /// Lease on an in-flight key. Reserved: nothing writes or reads it yet; the
+  /// claim still uses expiresAt.
+  lockedUntil DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   /// Swept by the cleanup-auth-tokens cron; 24h is longer than any client
