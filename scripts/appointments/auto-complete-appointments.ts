@@ -1223,7 +1223,7 @@ async function decideOneSlot(
     settle.wrappers.add(slot.appointmentId);
   }
   if (decision.kind === "written" && decision.moved) {
-    for (const id of sessionHostUserIds(slot.appointment)) {
+    for (const id of sessionHostUserIds(slot.appointment, slot)) {
       settle.decidedHosts.add(id);
     }
   }

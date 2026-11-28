@@ -230,16 +230,16 @@ interface Party {
   alreadyRefunded: boolean;
 }
 
-/** The hosts, and the learner seats that held this session: a seat taken after it started was never in it. */
+/** The hosts the session had, and the learner seats that held it: a seat taken after it started was never in it. */
 async function readParties(
   appointmentId: string,
-  session: { occurrenceId: string; startsAt: Date },
+  session: { occurrenceId: string; startsAt: Date; endsAt: Date },
 ) {
   const { startsAt } = session;
   const row = await readPartiesRow(appointmentId);
   const shape = row ? bookingOf(row) : null;
   if (!row || !shape) return null;
-  const hosts = sessionHostUserIds(row);
+  const hosts = sessionHostUserIds(row, session);
   const heldSeats = row.participants.filter(
     (p) => !hosts.includes(p.userId) && seatHeld(p, startsAt),
   );
@@ -357,6 +357,7 @@ export interface OutcomeNoticeSession {
   occurrenceId: string;
   appointmentId: string;
   startsAt: Date;
+  endsAt: Date;
 }
 
 /**

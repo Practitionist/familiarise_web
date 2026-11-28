@@ -517,7 +517,7 @@ export async function decideSlotOutcome(
       : classifySessionOutcome({
           startsAt: slot.startsAt,
           endsAt: slot.endsAt,
-          hostUserIds: sessionHostUserIds(slot.appointment),
+          hostUserIds: sessionHostUserIds(slot.appointment, slot),
           intervals: presences,
           meeting: room
             ? { endedAt: room.endedAt, endedReason: room.endedReason }
@@ -548,6 +548,7 @@ export async function decideSlotOutcome(
         occurrenceId: slot.id,
         appointmentId: slot.appointmentId,
         startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
         outcome: verdict.outcome,
         outcomeAt: ctx.now,
       });
@@ -929,9 +930,12 @@ type ReportPartiesRow = Prisma.AppointmentGetPayload<{
   select: typeof REPORT_PARTIES_SELECT;
 }>;
 
-/** The host side, and the learner seat holders who are not hosts. */
-export function reportParties(row: ReportPartiesRow) {
-  const hostUserIds = sessionHostUserIds(row);
+/** The host side the session had, and the learner seat holders who are not on it. */
+export function reportParties(
+  row: ReportPartiesRow,
+  booked: { startsAt: Date; endsAt: Date },
+) {
+  const hostUserIds = sessionHostUserIds(row, booked);
   return {
     hostUserIds,
     learnerUserIds: row.participants
@@ -991,7 +995,7 @@ function isStrongVerdict(
     {
       startsAt: row.startsAt,
       endsAt: row.endsAt,
-      hostUserIds: sessionHostUserIds(row.appointment),
+      hostUserIds: sessionHostUserIds(row.appointment, row),
       intervals: meeting?.presences ?? [],
       meeting: meeting
         ? { endedAt: meeting.endedAt, endedReason: meeting.endedReason }
@@ -1073,7 +1077,7 @@ function judgeRowReports(
     outcome,
     endsAt: row.endsAt,
     windowClosesAt: reportWindowClosesAt(outcomeAt),
-    ...reportParties(row.appointment),
+    ...reportParties(row.appointment, row),
   });
 }
 

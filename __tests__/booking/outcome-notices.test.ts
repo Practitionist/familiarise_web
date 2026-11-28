@@ -115,6 +115,7 @@ const SESSION = {
   occurrenceId: "occ-1",
   appointmentId: "apt-1",
   startsAt: new Date("2026-11-23T10:00:00Z"),
+  endsAt: new Date("2026-11-23T11:00:00Z"),
 };
 const OUTCOME_AT = new Date("2026-11-23T11:45:00Z");
 
@@ -378,4 +379,56 @@ it("promises nothing more to a seat already refunded for this session, and still
   );
   expect(bell("refunded")).not.toContain("or we'll");
   expect(bell("partial")).toContain("or we'll refund it automatically.");
+});
+
+it("tells the hosts the session had: a co-host removed since still hears of it, and one who joined the team afterwards does not", async () => {
+  const period = (
+    userId: string,
+    acceptedAt: string,
+    endedAt: string | null,
+  ) => ({
+    status: endedAt ? ("REMOVED" as const) : ("ACCEPTED" as const),
+    acceptedAt: new Date(acceptedAt),
+    endedAt: endedAt ? new Date(endedAt) : null,
+    consultantProfile: {
+      userId,
+      deletedAt: endedAt ? new Date(endedAt) : null,
+    },
+  });
+  findAppointment.mockResolvedValue({
+    ...consultation,
+    consultation: null,
+    class: {
+      classPlan: {
+        ...plan("Python cohort"),
+        collaborators: [
+          // On the team for the session, removed a day later.
+          period("cohost-then", "2026-11-01T00:00:00Z", "2026-11-24T00:00:00Z"),
+          // Joined the team the day after the session.
+          period("cohost-later", "2026-11-24T00:00:00Z", null),
+        ],
+      },
+    },
+  } satisfies OutcomePartiesRow);
+  findUsers.mockResolvedValue([]);
+  ZONES["cohost-then"] = "America/New_York";
+  ZONES["cohost-later"] = "America/New_York";
+
+  const prepared = await prepareProposedOutcomeNotices({
+    ...SESSION,
+    outcome: "HOST_ABSENT",
+    outcomeAt: OUTCOME_AT,
+  });
+
+  const told = Object.fromEntries(
+    prepared!.bells.map((b) => [
+      b.recipients[0],
+      (b.payload as { side: string }).side,
+    ]),
+  );
+  expect(told).toEqual({
+    host: "host",
+    "cohost-then": "host",
+    learner: "learner",
+  });
 });

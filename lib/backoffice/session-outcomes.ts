@@ -755,7 +755,12 @@ export async function overturnSessionOutcome(args: {
 }) {
   const occ = await prisma.appointmentOccurrence.findUnique({
     where: { id: args.occurrenceId },
-    select: { appointmentId: true, startsAt: true, outcome: true },
+    select: {
+      appointmentId: true,
+      startsAt: true,
+      endsAt: true,
+      outcome: true,
+    },
   });
   if (!occ) {
     throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
@@ -768,6 +773,7 @@ export async function overturnSessionOutcome(args: {
           occurrenceId: args.occurrenceId,
           appointmentId: occ.appointmentId,
           startsAt: occ.startsAt,
+          endsAt: occ.endsAt,
           outcome: args.outcome,
           reviewedAt: now,
         }).catch((err: unknown) => {
@@ -969,7 +975,7 @@ export async function rereadSessionAttendance(args: {
   const verdict = classifySessionOutcome({
     startsAt: occ.startsAt,
     endsAt: occ.endsAt,
-    hostUserIds: sessionHostUserIds(occ.appointment),
+    hostUserIds: sessionHostUserIds(occ.appointment, occ),
     intervals: settled.intervals,
     meeting: room && { endedAt: room.endedAt, endedReason: room.endedReason },
     maintenanceWindows: await readOutageWindows(prisma, occ.startsAt),
@@ -1024,6 +1030,7 @@ const personOf = (u: HeadlineUser | null) =>
 async function readPageReports(
   rows: {
     id: string;
+    startsAt: Date;
     endsAt: Date;
     outcome: OccurrenceOutcome | null;
     outcomeAt: Date | null;
@@ -1066,7 +1073,7 @@ async function readPageReports(
       outcome: row.outcome,
       endsAt: row.endsAt,
       windowClosesAt: reportWindowClosesAt(row.outcomeAt),
-      ...reportParties(c.occurrence.appointment),
+      ...reportParties(c.occurrence.appointment, row),
     });
     const side = reasonSide(c.flowReason);
     const reason = SupportFlowReasonEnum.safeParse(c.flowReason);
