@@ -472,14 +472,9 @@ export function planTitleOrSessionLabel(
 }
 
 /**
- * How long the recipient-timezone read may take before the send proceeds on the
- * default zone.
- *
- * A notification must never be the thing that hangs a request. `PG_POOL_MAX=1`
- * on Netlify means this read waits behind whatever else holds the connection,
- * and a caller that triggers from inside a transaction would otherwise wait for
- * a connection its own transaction is holding. Abandoning the wait degrades one
- * notification to the platform zone; blocking would degrade the request.
+ * How long a global-client recipient-timezone read may take before the send
+ * proceeds on the default zone. Under `PG_POOL_MAX=1` it can wait behind
+ * another holder of the one connection; a transaction's own read never races.
  */
 const TIMEZONE_LOOKUP_TIMEOUT_MS = 2_000;
 
@@ -490,27 +485,35 @@ const TIMEZONE_LOOKUP_TIMEOUT_MS = 2_000;
  * rendered date would be right for at most one of them. Callers group by the
  * value this returns and send one payload per distinct zone.
  *
- * Never throws and never blocks for long: on any failure every recipient falls
- * back to the platform default, which is the behaviour this layer had before
- * #536 anyway.
+ * On the global client it never throws and gives up after the timeout, leaving
+ * every recipient on the platform default. On a transaction client a failed
+ * read has aborted the transaction, so the read is awaited and its error thrown.
  */
 export async function resolveRecipientTimezones(
   userIds: string[],
-  /** The caller's transaction when the trigger is staged inside one (#1697). */
+  /** The caller's transaction when the trigger is staged inside one. */
   db: Pick<Db, "user"> = prisma,
 ): Promise<Map<string, string>> {
   const zones = new Map<string, string>();
   const unique = Array.from(new Set(userIds));
   for (const id of unique) zones.set(id, DEFAULT_NOTIFICATION_TIMEZONE);
   if (unique.length === 0) return zones;
+  const query = {
+    where: { id: { in: unique } },
+    select: { id: true, timezone: true },
+  } as const;
+
+  if (db !== prisma) {
+    for (const user of await db.user.findMany(query)) {
+      zones.set(user.id, resolveNotificationTimezone(user.timezone));
+    }
+    return zones;
+  }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const users = await Promise.race([
-      db.user.findMany({
-        where: { id: { in: unique } },
-        select: { id: true, timezone: true },
-      }),
+      db.user.findMany(query),
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), TIMEZONE_LOOKUP_TIMEOUT_MS);
       }),
