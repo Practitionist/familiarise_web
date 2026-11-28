@@ -1205,17 +1205,26 @@ async function confirmPage(
     }
   }
   // One CAS per row, so each is held only by a dispute in its own window; a relabel or confirm since the read skips it too.
-  const counts = await Promise.all(
-    strong
-      .filter((row) => !row.claim && !row.classVoid)
-      .map((row) =>
-        prisma.appointmentOccurrence.updateMany({
-          where: confirmGuard(where, row),
-          data: { outcomeConfirmedAt: now },
-        }),
-      ),
+  const stamped = strong.filter((row) => !row.claim && !row.classVoid);
+  const stamps = await Promise.allSettled(
+    stamped.map((row) =>
+      prisma.appointmentOccurrence.updateMany({
+        where: confirmGuard(where, row),
+        data: { outcomeConfirmedAt: now },
+      }),
+    ),
   );
-  run.confirmed += counts.reduce((sum, c) => sum + c.count, 0);
+  // A stamp that throws is that row's alone: the others stand, and the page goes on to its voids and claims.
+  stamps.forEach((stamp, i) => {
+    if (stamp.status === "fulfilled") {
+      run.confirmed += stamp.value.count;
+      return;
+    }
+    ctx.failed.push(stamped[i].id);
+    run.errors.push(
+      `Failed to confirm the verdict on ${stamped[i].id}: ${stamp.reason instanceof Error ? stamp.reason.message : String(stamp.reason)}`,
+    );
+  });
   // A class void (its own transaction, with notices) and a no-show claim (it drives a refund) run one
   // at a time inside the pass's share, in page order, so a cut names how far the page got.
   for (const row of strong.filter((r) => r.classVoid || r.claim)) {

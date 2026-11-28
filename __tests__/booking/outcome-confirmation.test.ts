@@ -245,6 +245,34 @@ describe("the window-close pass", () => {
     expect(row("strong").outcomeConfirmedAt).toBeNull();
   });
 
+  it("a stamp that fails does not stop the others on its page or a claim after them, and is reported with the run's failed rows", async () => {
+    occurrences.rows.push(
+      verdict("bad", { outcomeAt: hoursAgo(70) }),
+      verdict("good", { outcomeAt: hoursAgo(60) }),
+      proposal("claim"),
+    );
+    const write = occurrences.updateMany.getMockImplementation()!;
+    occurrences.updateMany.mockImplementation(async (args) => {
+      if (matchesWhere(row("bad"), args.where)) {
+        throw new Error("the connection dropped");
+      }
+      return write(args);
+    });
+    const run = await confirmClosedOutcomes(NOW, () => false);
+    occurrences.updateMany.mockImplementation(write);
+
+    expect(run).toMatchObject({ confirmed: 2, claimed: 1 });
+    expect(row("good").outcomeConfirmedAt).toEqual(NOW);
+    expect(row("bad").outcomeConfirmedAt).toBeNull();
+    expect(confirmConsultantNoShow).toHaveBeenCalledTimes(1);
+    expect(run.errors).toEqual([
+      "Failed to confirm the verdict on bad: the connection dropped",
+    ]);
+    expect(mockStandingFinding).toHaveBeenCalledWith(
+      expect.objectContaining({ ids: ["bad"] }),
+    );
+  });
+
   it("loses the CAS to a dispute filed between its read and its write", async () => {
     occurrences.rows.push(verdict("strong"));
     const read = occurrences.findMany.getMockImplementation()!;
