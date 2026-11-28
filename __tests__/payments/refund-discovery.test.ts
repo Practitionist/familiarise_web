@@ -301,7 +301,7 @@ describe("a refund the handler defers", () => {
     );
   });
 
-  it("starts at most five gateway-read hand-overs a run and remembers the rest as due", async () => {
+  it("stops starting gateway-read hand-overs once five were deferred in a run, and remembers the rest as due", async () => {
     noPaymentHeld();
     mockFetchPayment.mockResolvedValue({ id: "pay_cap1", order_id: "order_x" });
     mockList.mockResolvedValue(
@@ -315,6 +315,28 @@ describe("a refund the handler defers", () => {
     expect(run).toMatchObject({ unknownPayment: 5, waiting: 1, notHeld: 0 });
     expect(positionOf(run).deferred).toHaveLength(6);
     expect(positionOf(run).since).toBe(NOW_S);
+  });
+
+  it("does not count a gateway-read hand-over the handler took against the run's five", async () => {
+    noPaymentHeld();
+    mockFetchPayment.mockResolvedValue({ id: "pay_cap1", order_id: "order_x" });
+    mockList.mockResolvedValue([
+      ...Array.from({ length: 5 }, (_, i) => listed(`rfnd_topup_${i}`)),
+      listed("rfnd_orphan"),
+    ]);
+    db.refund.findUnique.mockResolvedValue(null);
+    mockHandleRefundCreated.mockImplementation(async (id: string) =>
+      id === "rfnd_orphan" ? deferral() : undefined,
+    );
+
+    const run = await discoverGatewayRefunds(never, NOW);
+
+    expect(mockHandleRefundCreated).toHaveBeenCalledTimes(6);
+    expect(run).toMatchObject({
+      noRefundRow: 5,
+      unknownPayment: 1,
+      waiting: 0,
+    });
   });
 
   it("stops holding the window seven days after the gateway created it, and is reported once as no longer retried", async () => {

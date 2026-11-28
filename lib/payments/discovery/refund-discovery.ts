@@ -205,7 +205,7 @@ export async function discoverGatewayRefunds(
   const unknownPayment: string[] = [];
   const waiting: string[] = [];
   const notHeld: string[] = [];
-  let gatewayReadTries = 0;
+  let gatewayReadDeferrals = 0;
   let skip = window.skip;
   let pagesHandled = 0;
   let windowDone = false;
@@ -276,7 +276,7 @@ export async function discoverGatewayRefunds(
             triedAt: nowSeconds - DEFERRED_RETRY_SECONDS,
           },
           nowSeconds,
-          gatewayReadTries,
+          gatewayReadDeferrals,
         );
         if (turn !== "try") {
           (turn === "wait" ? waiting : notHeld).push(listed.id);
@@ -288,7 +288,6 @@ export async function discoverGatewayRefunds(
         break;
       }
       try {
-        if (localOrderId === undefined) gatewayReadTries++;
         const outcome = await handOver(listed, localOrderId);
         if (outcome !== "unknown-payment") {
           remembered.delete(listed.id);
@@ -297,6 +296,7 @@ export async function discoverGatewayRefunds(
           continue;
         }
         unknownPayment.push(listed.id);
+        if (localOrderId === undefined) gatewayReadDeferrals++;
         if (
           remembered.has(listed.id) ||
           remembered.size < MAX_REMEMBERED_DEFERRALS

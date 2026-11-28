@@ -186,7 +186,7 @@ export async function discoverGatewayDisputes(
   const unknownPayment: string[] = [];
   const waiting: string[] = [];
   const untried: string[] = [];
-  let gatewayReadTries = 0;
+  let gatewayReadDeferrals = 0;
   let skip = state.skip;
   let pagesHandled = 0;
   let listDone = false;
@@ -253,7 +253,7 @@ export async function discoverGatewayDisputes(
           listed.id,
           { triedAt: nowSeconds - DEFERRED_RETRY_SECONDS },
           nowSeconds,
-          gatewayReadTries,
+          gatewayReadDeferrals,
         );
         if (turn !== "try") {
           (turn === "wait" ? waiting : untried).push(listed.id);
@@ -266,7 +266,6 @@ export async function discoverGatewayDisputes(
       }
       try {
         if (status === undefined) {
-          if (needsGatewayRead) gatewayReadTries++;
           const outcome = await importDispute(listed);
           if (outcome === "imported") {
             run.imported++;
@@ -274,6 +273,7 @@ export async function discoverGatewayDisputes(
           } else {
             unknownPayment.push(listed.id);
             if (needsGatewayRead) {
+              gatewayReadDeferrals++;
               remembered.set(listed.id, { triedAt: nowSeconds });
             }
           }

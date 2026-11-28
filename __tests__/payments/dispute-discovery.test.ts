@@ -317,7 +317,7 @@ describe("a dispute on a payment the database does not hold", () => {
     ]);
   });
 
-  it("starts at most five gateway-read hand-overs a run and still reaches the disputes behind them", async () => {
+  it("stops starting gateway-read hand-overs once five were deferred in a run, and still reaches the disputes behind them", async () => {
     const orphans = Array.from({ length: 7 }, (_, i) => `disp_orphan_${i}`);
     db.payment.findMany.mockResolvedValue([{ gatewayPaymentId: "pay_cap1" }]);
     mockList.mockResolvedValue([...orphans.map(unlinked), listed("disp_held")]);
@@ -353,6 +353,22 @@ describe("a dispute on a payment the database does not hold", () => {
       orphans.slice(5),
     );
     expect(second).toMatchObject({ unknownPayment: 2, waiting: 5 });
+  });
+
+  it("does not count a gateway-read hand-over that imported its dispute against the run's five", async () => {
+    noPaymentHeld();
+    mockList.mockResolvedValue([
+      ...Array.from({ length: 5 }, (_, i) => unlinked(`disp_by_order_${i}`)),
+      unlinked("disp_orphan"),
+    ]);
+    mockHandleDisputeCreated.mockImplementation(async (id: string) =>
+      id === "disp_orphan" ? deferral(id) : undefined,
+    );
+
+    const run = await discoverGatewayDisputes(never, NOW);
+
+    expect(mockHandleDisputeCreated).toHaveBeenCalledTimes(6);
+    expect(run).toMatchObject({ imported: 5, unknownPayment: 1, waiting: 0 });
   });
 
   it("is tried every run and not remembered while its payment row only awaits its capture", async () => {
