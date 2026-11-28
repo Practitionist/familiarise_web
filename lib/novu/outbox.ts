@@ -357,10 +357,20 @@ function describeNovuFailure(error: unknown): {
   };
 }
 
+/** Novu's answer for a workflow id it does not know; "Subscriber not found" is not one. */
+function isWorkflowNotFound(message: string): boolean {
+  return /workflow_not_found|workflow.*not found/i.test(message);
+}
+
+/** A rejected API key (401) or a key without access (403). */
+function isAuthRejection(statusCode: number | undefined): boolean {
+  return statusCode === 401 || statusCode === 403;
+}
+
 /**
  * The slug a terminal failure is fingerprinted on, or null when a retry may
  * help. Terminal is a 4xx Novu will answer the same way every time: an
- * unknown workflow, a rejected body, a bad key. 408, 409 and 429 are
+ * unknown workflow or a rejected body. 401, 403, 408, 409 and 429 are
  * transient, as is anything without a status (timeout, connection reset, 5xx).
  */
 export function terminalTriggerReason(
@@ -373,7 +383,9 @@ export function terminalTriggerReason(
   if (statusCode === 408 || statusCode === 409 || statusCode === 429) {
     return null;
   }
-  if (novuMessage && /workflow_not_found|not found/i.test(novuMessage)) {
+  // A missing or revoked key is fixed by an operator, so the row waits instead of dead-lettering.
+  if (isAuthRejection(statusCode)) return null;
+  if (novuMessage && isWorkflowNotFound(novuMessage)) {
     return "workflow_not_found";
   }
   return `http_${statusCode}`;
@@ -417,6 +429,7 @@ function reportTriggerFailure(
   opts?: {
     exhaustedRetries?: boolean;
     suppressSentry?: boolean;
+    relay?: boolean;
     /** Set when the terminal cause came back in a bulk response body. */
     terminalReason?: string | null;
   },
@@ -435,7 +448,9 @@ function reportTriggerFailure(
     recipientCount,
     accepted,
   });
-  if (!opts?.suppressSentry) {
+  // An inline auth rejection leaves the row PENDING; the relay's exhausted dead letter reports it once.
+  const quietAuth = !opts?.relay && isAuthRejection(statusCode);
+  if (!opts?.suppressSentry && !quietAuth) {
     Sentry.captureException(
       sanitizeNovuErrorForSentry(error, statusCode, novuMessage),
       {
@@ -573,7 +588,7 @@ function eventOutcome(
   if (result.status !== "error") return "retry";
   const message = (result.error ?? []).join("; ");
   if (isDuplicateTransaction(message)) return "accepted";
-  if (/workflow_not_found|not found/i.test(message)) {
+  if (isWorkflowNotFound(message)) {
     return { terminal: "workflow_not_found" };
   }
   return "retry";
@@ -902,7 +917,11 @@ export async function attemptTrigger(
 
   const attempts = opts.relay ? row.attempts + 1 : row.attempts;
   const exhaustedRetries = Boolean(opts.relay && attempts >= MAX_ATTEMPTS);
-  const reportOpts = { exhaustedRetries, suppressSentry: opts.suppressSentry };
+  const reportOpts = {
+    exhaustedRetries,
+    suppressSentry: opts.suppressSentry,
+    relay: opts.relay,
+  };
   // Nobody accepted these under the sent key, so the next attempt starts a
   // new generation: policy recheck, new anchor, new key.
   const freshGeneration = (remaining: string[]) => ({

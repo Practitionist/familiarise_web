@@ -963,6 +963,95 @@ describe("conditional writes, rate limits and the replay window", () => {
   });
 });
 
+describe("auth rejections and workflow_not_found", () => {
+  const keyRejected = (statusCode: number) =>
+    Object.assign(new Error("Unauthorized"), {
+      statusCode,
+      body: '{"message":"API Key not found"}',
+    });
+
+  it.each([
+    [401, "API Key not found", null],
+    [403, "Forbidden", null],
+    [422, "workflow_not_found", "workflow_not_found"],
+    [404, "Subscriber not found", "http_404"],
+    [400, "Bad Request", "http_400"],
+  ])("classifies %i %s as %s", (status, message, reason) => {
+    expect(terminalTriggerReason(status, message)).toBe(reason);
+  });
+
+  it("retries a relay 401 on the backoff instead of dead-lettering it", async () => {
+    const now = Date.now();
+    mockTrigger.mockRejectedValue(keyRejected(401));
+
+    const result = await attemptTrigger(row(), { relay: true, now: () => now });
+
+    expect(result).toMatchObject({ success: false, outcome: "RETRY" });
+    expect(settleData()).toMatchObject({
+      status: "RETRY",
+      attempts: 1,
+      nextRetryAt: new Date(now + 5 * 60_000),
+    });
+  });
+
+  it("dead-letters a relay 401 once as exhausted at the attempt cap", async () => {
+    mockTrigger.mockRejectedValue(keyRejected(401));
+
+    const result = await attemptTrigger(
+      row({ status: "RETRY", attempts: 4, firstAttemptAt: new Date() }),
+      { relay: true },
+    );
+
+    expect(result).toMatchObject({ success: false, outcome: "DEAD_LETTER" });
+    expect(settleData()).toMatchObject({ status: "DEAD_LETTER", attempts: 5 });
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException.mock.calls[0][1]).toMatchObject({
+      level: "error",
+      fingerprint: ["novu-trigger-exhausted", "appointment-booked"],
+    });
+  });
+
+  it("leaves an inline 401 PENDING without a Sentry capture", async () => {
+    mockTrigger.mockRejectedValue(keyRejected(401));
+
+    const result = await attemptTrigger(row());
+
+    expect(result).toMatchObject({ success: false, outcome: "PENDING" });
+    expect(settleData()).not.toHaveProperty("status");
+    expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("drops only a bulk event refused as workflow_not_found, and retries one whose subscriber is missing", async () => {
+    mockTriggerBulk.mockResolvedValueOnce({
+      headers: {},
+      result: [
+        refusedWith("error", ["workflow_not_found"]),
+        refusedWith("error", ["Subscriber not found"]),
+      ],
+    });
+
+    const result = await attemptTrigger(
+      row({
+        kind: "MULTI",
+        status: "RETRY",
+        attempts: 1,
+        recipients: ["u1", "u2"],
+        firstAttemptAt: new Date(Date.now() - 60_000),
+      }),
+      { relay: true },
+    );
+
+    expect(result).toMatchObject({
+      outcome: "RETRY",
+      terminalSplit: expect.stringContaining("workflow_not_found"),
+    });
+    expect(settleData()).toMatchObject({ status: "RETRY", recipients: ["u2"] });
+    expect(insertedRows()).toEqual([
+      expect.objectContaining({ recipients: ["u1"], status: "DEAD_LETTER" }),
+    ]);
+  });
+});
+
 describe("runNotificationDrainTick", () => {
   const now = new Date("2026-09-15T09:00:00Z");
   const due = {
