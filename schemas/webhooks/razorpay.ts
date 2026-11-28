@@ -201,6 +201,45 @@ export type RazorpayDisputeUpdateEntity = z.infer<
   typeof disputeUpdateEntitySchema
 >;
 
+/** A refund as `GET /v1/refunds` lists it; `created_at` is Unix seconds. */
+const razorpayListedRefundSchema = z.object({
+  id: z.string().min(1),
+  payment_id: z.string().min(1),
+  amount: z.number().int().positive(),
+  currency: z.string().optional(),
+  status: z.string(),
+  notes: razorpayNotesSchema,
+  created_at: z.number().int().positive(),
+});
+
+export type RazorpayListedRefund = z.infer<typeof razorpayListedRefundSchema>;
+
+export const razorpayListedRefundPageSchema = z.object({
+  items: z.array(razorpayListedRefundSchema),
+});
+
+/** A dispute as `GET /v1/disputes` lists it; `respond_by` is Unix seconds. */
+const razorpayListedDisputeSchema = z.object({
+  id: z.string().min(1),
+  payment_id: z.string().min(1),
+  amount: z.number().int().positive(),
+  currency: z.string().optional(),
+  status: z.string(),
+  phase: z.string().nullable().optional(),
+  reason_code: z.string().nullable().optional(),
+  reason_description: z.string().nullable().optional(),
+  respond_by: z.number().nullable().optional(),
+  /** Paise Razorpay pulled from the balance; 0 until the dispute is lost. */
+  amount_deducted: z.number().nullable().optional(),
+  deduct_at_onset: z.boolean().optional(),
+});
+
+export type RazorpayListedDispute = z.infer<typeof razorpayListedDisputeSchema>;
+
+export const razorpayListedDisputePageSchema = z.object({
+  items: z.array(razorpayListedDisputeSchema),
+});
+
 // Event payload schemas
 const paymentEventPayloadSchema = z.object({
   payment: z.object({

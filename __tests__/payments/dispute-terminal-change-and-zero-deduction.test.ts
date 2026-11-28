@@ -73,6 +73,11 @@ jest.mock("@/lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 1,
   withCronLock: (_n: string, _o: unknown, fn: () => unknown) => fn(),
 }));
+jest.mock("@/lib/payments/discovery/dispute-discovery", () =>
+  jest
+    .requireActual("../fixtures/quiet-discovery")
+    .quietDisputeDiscoveryModule(),
+);
 jest.mock("@/lib/novu", () => ({
   notifyRefundProcessed: jest.fn(),
   attemptTrigger: jest.fn(),

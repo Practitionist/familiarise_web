@@ -14,6 +14,11 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 1,
   withCronLock: (_n: string, _o: unknown, fn: () => unknown) => fn(),
 }));
+// The discovery pass has its own suite; here it is a quiet pass unless a test says otherwise.
+const mockDiscover = jest.fn();
+jest.mock("../../lib/payments/discovery/dispute-discovery", () => ({
+  discoverGatewayDisputes: (...a: unknown[]) => mockDiscover(...a),
+}));
 const mockGetRazorpayDispute = jest.fn();
 jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
   ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
@@ -51,9 +56,147 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { reconcileDisputes } from "../../scripts/disputes/reconcile-disputes";
+import { quietDisputeDiscovery } from "../fixtures/quiet-discovery";
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDiscover.mockResolvedValue(quietDisputeDiscovery());
+});
+
+describe("the poll leaves discovery its share of the run", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("stops starting polls at half the run's start budget, leaves the rest untouched for the next run, and discovery still starts in time", async () => {
+    const startedAt = 1_800_000_000_000;
+    let clock = startedAt;
+    jest.spyOn(Date, "now").mockImplementation(() => clock);
+    findMany
+      .mockImplementationOnce(async () => [])
+      .mockImplementationOnce(async () => [
+        row("dp_1"),
+        row("dp_2"),
+        row("dp_3"),
+      ]);
+    // Each poll of the gateway takes nine seconds.
+    mockGetRazorpayDispute.mockImplementation(async () => {
+      clock += 9_000;
+      return {
+        paymentId: "pay_1",
+        status: "under_review",
+        evidence: {},
+        isChargeRefundable: true,
+        dueBy: null,
+      };
+    });
+
+    const result = await reconcileDisputes({ limit: 10, startedAt });
+
+    expect(mockGetRazorpayDispute.mock.calls.map((c) => c[0])).toEqual([
+      "dp_1",
+    ]);
+    expect(result.totalProcessed).toBe(1);
+    const touched = updateMany.mock.calls.map(
+      ([args]) => (args as { where: { disputeId?: string } }).where.disputeId,
+    );
+    expect(touched).toEqual(["dp_1"]);
+    const outOfTime = mockDiscover.mock.calls[0][0] as () => boolean;
+    expect(outOfTime()).toBe(false);
+  });
+});
+
+describe("the poll's cutoff leaves neither cohort unstarted", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("takes the near-deadline and the stale disputes in turn, near-deadline first, so a stale one starts before the cutoff", async () => {
+    const startedAt = 1_800_000_000_000;
+    let clock = startedAt;
+    jest.spyOn(Date, "now").mockImplementation(() => clock);
+    findMany
+      .mockImplementationOnce(async () =>
+        ["n1", "n2", "n3", "n4", "n5", "n6"].map((id) => row(id)),
+      )
+      .mockImplementationOnce(async () =>
+        ["s1", "s2", "s3"].map((id) => row(id)),
+      );
+    // Each poll of the gateway takes two seconds.
+    mockGetRazorpayDispute.mockImplementation(async () => {
+      clock += 2_000;
+      return {
+        paymentId: "pay_1",
+        status: "under_review",
+        evidence: {},
+        isChargeRefundable: true,
+        dueBy: null,
+      };
+    });
+
+    const result = await reconcileDisputes({ limit: 9, startedAt });
+
+    expect(mockGetRazorpayDispute.mock.calls.map((c) => c[0])).toEqual([
+      "n1",
+      "s1",
+      "n2",
+      "s2",
+    ]);
+    expect(result.totalProcessed).toBe(4);
+  });
+});
+
+describe("the discovery pass runs after the poll", () => {
+  it("returns the pass's counts, keeps its position as the run's checkpoint, and fails the run on its errors", async () => {
+    findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mockDiscover.mockResolvedValue({
+      ...quietDisputeDiscovery(),
+      listed: 2,
+      imported: 1,
+      alreadyKnown: 1,
+      errors: ["Dispute disp_bad: could not serialize access"],
+      stoppedShort: { bound: "deadline", pagesHandled: 0 },
+      checkpoint: '{"skip":0,"cutRuns":1}',
+    });
+
+    const startedAt = Date.now();
+    const result = await reconcileDisputes({ limit: 10, startedAt });
+
+    expect(result.discovery).toEqual({
+      listed: 2,
+      imported: 1,
+      alreadyKnown: 1,
+      updated: 0,
+      notAdopted: 0,
+      unknownPayment: 0,
+      waiting: 0,
+      untried: 0,
+      stoppedShort: { bound: "deadline", pagesHandled: 0 },
+    });
+    expect(result.checkpoint).toBe('{"skip":0,"cutRuns":1}');
+    expect(result.errors).toEqual([
+      "Dispute disp_bad: could not serialize access",
+    ]);
+    expect(result.success).toBe(false);
+
+    // The pass stops starting hand-overs at the run's start deadline.
+    const outOfTime = mockDiscover.mock.calls[0][0] as () => boolean;
+    expect(outOfTime()).toBe(false);
+    jest.spyOn(Date, "now").mockReturnValue(startedAt + 16_000);
+    expect(outOfTime()).toBe(true);
+    jest.restoreAllMocks();
+  });
+
+  it("a pass that throws is one error and records no checkpoint, so the stored position stands", async () => {
+    findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mockDiscover.mockRejectedValue(new Error("connection terminated"));
+
+    const result = await reconcileDisputes({ limit: 10 });
+
+    expect(result.discovery).toBeNull();
+    expect(result).not.toHaveProperty("checkpoint");
+    expect(result.errors).toEqual(["Dispute discovery: connection terminated"]);
+  });
 });
 
 describe("dispute reconciliation is a CAS on the status it read", () => {

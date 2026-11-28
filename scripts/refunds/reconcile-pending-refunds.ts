@@ -1,6 +1,7 @@
 /**
  * Reconciles PENDING refunds whose gateway outcome never reached the database:
  * a crash or timeout between the gateway call and the bind, or a lost webhook.
+ * Its last pass discovers gateway refunds the database holds no row for.
  * Registered as `reconcile-refunds` in lib/cron/cleanup-registry.ts.
  */
 
@@ -13,7 +14,7 @@ import {
   compareLeastRecentlyReconciled,
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
-import prisma, { type PrismaLike } from "../../lib/prisma";
+import prisma from "../../lib/prisma";
 import {
   failRefund,
   resettleOwedOnLateSuccess,
@@ -58,6 +59,10 @@ import { applyRefundCascade } from "../../lib/payments/operations/refund";
 import { settleRefundSeatTx } from "../../lib/payments/operations/refund-seat";
 import { retireSupersededPlaceholderTx } from "../../lib/payments/operations/refund-placeholder";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import {
+  discoverGatewayRefunds,
+  type RefundDiscoveryRun,
+} from "@/lib/payments/discovery/refund-discovery";
 
 // Threshold: Only reconcile refunds older than 1 hour
 const RECONCILIATION_THRESHOLD_MS = 60 * 60 * 1000;
@@ -92,13 +97,17 @@ export interface RefundReconciliationResult {
   redriveFailedCount: number;
   /** Rows that reached the re-drive cap this run and left the cohort for an operator. */
   redriveDeadLettered: number;
+  /** The discovery pass's counts and the bound that cut it; null when the pass itself threw. */
+  discovery: Omit<RefundDiscoveryRun, "errors" | "checkpoint"> | null;
+  /** The discovery position, kept on the run row for the next run; absent when the pass did not run. */
+  checkpoint?: string;
   errors: string[];
   timestamp: string;
 }
 
 const SYNTHETIC_PREFIXES = ["pending_", "internal_", "credits_"];
 
-/** Pass 1 placeholders; shared with the ticker's idle probe. */
+/** Pass 1 placeholders. */
 function placeholderRefundWhere(createdBefore: Date): Prisma.RefundWhereInput {
   return {
     status: RefundStatus.PENDING,
@@ -107,7 +116,7 @@ function placeholderRefundWhere(createdBefore: Date): Prisma.RefundWhereInput {
   };
 }
 
-/** Pass 2 real-id PENDING rows; shared with the ticker's idle probe. */
+/** Pass 2 real-id PENDING rows. */
 function realIdPendingRefundWhere(
   createdBefore: Date,
 ): Prisma.RefundWhereInput {
@@ -118,33 +127,6 @@ function realIdPendingRefundWhere(
     })),
     createdAt: { lt: createdBefore },
   };
-}
-
-/** True when any pass of the run (pending, stranded cascade, failure notice) has a row. */
-export async function hasPendingRefundWork(
-  db: PrismaLike,
-  now: Date,
-  outOfTime: () => boolean,
-): Promise<boolean> {
-  const thresholdDate = new Date(now.getTime() - RECONCILIATION_THRESHOLD_MS);
-  if (outOfTime()) return true;
-  const refund = await db.refund.findFirst({
-    where: {
-      OR: [
-        placeholderRefundWhere(thresholdDate),
-        realIdPendingRefundWhere(thresholdDate),
-        FAILED_REFUND_NOTICE_WHERE,
-      ],
-    },
-    select: { id: true },
-  });
-  if (refund) return true;
-  if (outOfTime()) return true;
-  const stranded = await db.$queryRaw<{ id: string }[]>`
-    SELECT id FROM "Refund"
-    WHERE ${strandedRefundSqlWhere(new Date(now.getTime() - STRANDED_AFTER_MS))}
-    LIMIT 1`;
-  return stranded.length > 0;
 }
 
 export interface ReconcilePendingRefundsOptions {
@@ -647,6 +629,24 @@ async function reconcilePendingRefundsUnlocked(
       );
   totalProcessed += backstop.scanned;
 
+  // Stops starting hand-overs two seconds before the run's start deadline, which the failure notices keep.
+  let discovery: RefundReconciliationResult["discovery"] = null;
+  let checkpoint: string | undefined;
+  try {
+    const {
+      errors: discoveryErrors,
+      checkpoint: position,
+      ...counts
+    } = await discoverGatewayRefunds(() => Date.now() >= startedAt + 14_000);
+    discovery = counts;
+    checkpoint = position;
+    errors.push(...discoveryErrors);
+  } catch (error) {
+    errors.push(
+      `Refund discovery: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   // One expected warning per run listing the ids, never one per row per tick.
   if (retiredNoClient.length > 0) {
     reportSentryMessage(
@@ -715,6 +715,8 @@ async function reconcilePendingRefundsUnlocked(
     redrivenCount: backstop.redriven,
     redriveFailedCount: backstop.failed,
     redriveDeadLettered: backstop.deadLettered.length,
+    discovery,
+    ...(checkpoint === undefined ? {} : { checkpoint }),
     errors,
     timestamp: new Date().toISOString(),
   };
@@ -875,7 +877,7 @@ const REDRIVE_ATTEMPTS_KEY = "cascadeRedriveAttempts";
 
 /**
  * Stranded SUCCEEDED refunds under the re-drive cap; raw because a missing JSON
- * key must count as zero attempts. Shared with the ticker's idle probe.
+ * key must count as zero attempts.
  */
 function strandedRefundSqlWhere(updatedBefore: Date): Prisma.Sql {
   return Prisma.sql`status = 'SUCCEEDED'
@@ -1035,7 +1037,7 @@ function prismaMetadataObject(metadata: unknown): Record<string, unknown> {
 // #779 §A — default failure reason when the gateway metadata carries none.
 const REFUND_FAILED_DEFAULT_REASON = "Gateway rejected the refund";
 
-/** FAILED refunds the payer has not heard about; shared with the ticker's idle probe. */
+/** FAILED refunds the payer has not heard about. */
 const FAILED_REFUND_NOTICE_WHERE: Prisma.RefundWhereInput = {
   status: RefundStatus.FAILED,
   failedNotifiedAt: null,
