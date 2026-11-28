@@ -360,32 +360,26 @@ export function useSupportThread(
       failedTurns: { ...page.failedTurns, [id]: failed },
     }));
 
-  // Undo the optimistic bubble in the thread the turn was sent from. A turn sent
-  // before the first GET resolves has NO snapshot to restore, so the pending
-  // bubble is filtered out instead.
+  // Takes the turn's own pending bubble out of the thread it was sent from, and nothing else:
+  // a message another read brought in meanwhile stays. A thread the bubble alone started goes with it.
   const rollbackOptimistic = (
     sentFrom: ThreadKey,
     previous: ThreadData | undefined,
     optimisticId: string | undefined,
   ) => {
-    if (previous) {
-      qc.setQueryData(sentFrom, previous);
-      return;
-    }
     if (!optimisticId) return;
-    qc.setQueryData<ThreadData>(sentFrom, (old) =>
-      old?.thread
-        ? {
-            ...old,
-            thread: {
-              ...old.thread,
-              messages: old.thread.messages.filter(
-                (m) => m.id !== optimisticId,
-              ),
-            },
-          }
-        : old,
-    );
+    qc.setQueryData<ThreadData>(sentFrom, (old) => {
+      if (!old?.thread) return old;
+      const messages = old.thread.messages.filter((m) => m.id !== optimisticId);
+      if (
+        previous?.thread === null &&
+        old.thread.id === "local" &&
+        messages.length === 0
+      ) {
+        return { ...old, thread: null };
+      }
+      return { ...old, thread: { ...old.thread, messages } };
+    });
   };
 
   const turn = useMutation({
@@ -432,12 +426,20 @@ export function useSupportThread(
     // Echo the user's turn immediately: two serial round trips on a cold
     // instance otherwise read as the tap having missed.
     onMutate: async (vars) => {
-      await qc.cancelQueries({ queryKey });
+      // Exact: a session's page has its own entry under the booking's key, and its read is not this turn's to cancel.
+      await qc.cancelQueries({ queryKey, exact: true });
       const previous = qc.getQueryData<ThreadData>(queryKey);
       const said = vars.userMessage ?? vars.chosenLabel;
-      let optimisticId: string | undefined;
-      if (said) {
-        optimisticId = nextLocalId();
+      // A retry bound to a case the page no longer shows is echoed nowhere; it keeps its id, so a second failure is still retryable.
+      const shownId = previous?.thread?.id;
+      const forOtherCase = Boolean(
+        vars.binding?.caseId &&
+        shownId &&
+        shownId !== "local" &&
+        vars.binding.caseId !== shownId,
+      );
+      const optimisticId = said ? nextLocalId() : undefined;
+      if (said && !forOtherCase) {
         qc.setQueryData<ThreadData>(queryKey, (old) =>
           appendMessages(old, [
             { id: optimisticId, sender: "USER", body: said, pending: true },

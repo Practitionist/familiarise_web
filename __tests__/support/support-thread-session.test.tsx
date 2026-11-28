@@ -497,3 +497,160 @@ it("keeps a session's action cards and unsent messages with that session's threa
     Object.values(page.result.current.failedTurns).map((f) => f.body),
   ).toEqual(["Are you there?"]);
 });
+
+/** A thread read answered at once for the booking's page; `onSessionRead` answers a session's, and `onTurn` each turn. */
+function mockReadsAndTurns(opts: {
+  booking: ThreadData;
+  onSessionRead?: () => unknown;
+  onTurn: () => unknown;
+}) {
+  global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      turnBodies.push(JSON.parse(String(init.body)));
+      return opts.onTurn();
+    }
+    if (String(url).includes("occurrence=") && opts.onSessionRead) {
+      return opts.onSessionRead();
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        data: opts.booking.thread,
+        intents: [],
+        booking: null,
+      }),
+    };
+  }) as unknown as typeof fetch;
+}
+
+const unavailable = { ok: false, status: 503, json: async () => ({}) };
+
+it("a turn on the booking's page leaves a session page's first read alone", async () => {
+  let answerSession: (response: unknown) => void = () => undefined;
+  mockReadsAndTurns({
+    booking: shown("case-book", "occ-x"),
+    onSessionRead: () => new Promise((resolve) => (answerSession = resolve)),
+    onTurn: () => unavailable,
+  });
+  const booking = renderThread();
+  await waitFor(() =>
+    expect(booking.result.current.thread?.id).toBe("case-book"),
+  );
+  // The same client also holds a session's page, still loading.
+  const session = renderThread("occ-a", booking.client);
+
+  act(() => {
+    booking.result.current.submitTurn({
+      chosenOptionId: "expert",
+      chosenLabel: "The expert",
+    });
+  });
+  await waitFor(() =>
+    expect(Object.keys(booking.result.current.failedTurns)).toHaveLength(1),
+  );
+  await act(async () => {
+    answerSession({
+      ok: true,
+      json: async () => ({
+        data: shown("case-a", "occ-a").thread,
+        intents: [],
+        booking: null,
+      }),
+    });
+  });
+
+  await waitFor(() => expect(session.result.current.thread?.id).toBe("case-a"));
+});
+
+it("a turn that fails takes back only its own message: one that arrived while it was out stays", async () => {
+  let answerTurn: (response: unknown) => void = () => undefined;
+  mockReadsAndTurns({
+    booking: shown("case-a", "occ-a"),
+    onTurn: () => new Promise((resolve) => (answerTurn = resolve)),
+  });
+  const { result, client } = renderThread();
+  await waitFor(() => expect(result.current.thread?.id).toBe("case-a"));
+
+  act(() => {
+    result.current.submitTurn({ userMessage: "Hello?" });
+  });
+  await waitFor(() => expect(turnBodies).toHaveLength(1));
+  // Another reader of this thread fetched the team's reply while the turn was out.
+  act(() => {
+    client.setQueryData<ThreadData>(supportKeys.thread("appointment"), (old) =>
+      old?.thread
+        ? {
+            ...old,
+            thread: {
+              ...old.thread,
+              messages: [
+                ...old.thread.messages,
+                {
+                  id: "m-agent",
+                  seq: 1,
+                  sender: "AGENT",
+                  body: "We're on it",
+                  createdAt: "2026-11-23T12:00:00.000Z",
+                },
+              ],
+            },
+          }
+        : old,
+    );
+  });
+  await act(async () => {
+    answerTurn(unavailable);
+  });
+  await waitFor(() =>
+    expect(Object.keys(result.current.failedTurns)).toHaveLength(1),
+  );
+
+  expect(result.current.messages.map((m) => m.body)).toEqual(["We're on it"]);
+});
+
+it("a retry for a case the page no longer shows puts no pending message on the case it shows now, and stays retryable if it fails again", async () => {
+  mockReadsAndTurns({
+    booking: shown("case-a", "occ-a"),
+    onTurn: () => unavailable,
+  });
+  const { result, client } = renderThread();
+  await waitFor(() => expect(result.current.thread?.id).toBe("case-a"));
+  act(() => {
+    result.current.submitTurn({
+      chosenOptionId: "expert",
+      chosenLabel: "The expert",
+    });
+  });
+  await waitFor(() =>
+    expect(Object.keys(result.current.failedTurns)).toHaveLength(1),
+  );
+  // The page now shows another case.
+  act(() => {
+    client.setQueryData(
+      supportKeys.thread("appointment"),
+      shown("case-b", "occ-b"),
+    );
+  });
+  let answerRetry: (response: unknown) => void = () => undefined;
+  mockReadsAndTurns({
+    booking: shown("case-b", "occ-b"),
+    onTurn: () => new Promise((resolve) => (answerRetry = resolve)),
+  });
+
+  act(() => {
+    result.current.retryTurn(Object.keys(result.current.failedTurns)[0]);
+  });
+  await waitFor(() => expect(turnBodies).toHaveLength(2));
+  expect(result.current.messages.map((m) => m.body)).not.toContain(
+    "The expert",
+  );
+
+  await act(async () => {
+    answerRetry(unavailable);
+  });
+  await waitFor(() =>
+    expect(
+      Object.values(result.current.failedTurns).map((f) => f.body),
+    ).toEqual(["The expert"]),
+  );
+});
