@@ -189,6 +189,9 @@ the request door, the trial door and the incident rebook mint one
 tier (`lockRequestCap`, `lockExpertPlanSales`, `lockConsulteeBooking`,
 `lockSlotBatch`, `lockEventCheckout`, `withAppointmentLock`). Past the deadline a
 tier makes no Redis call and starts no wait, and answers its own busy 409. A
+call the deadline cuts short, the health probe and the slot batch's acquire
+included, is out of time too: the tier's busy answer, never the 503 of an
+unavailable Redis. A
 lifecycle door that takes the event key and then the appointment key (cancel,
 webinar re-time, class series re-time) or the appointment key alone
 (reschedule) takes them from `requestLockTiers()`, which mints the deadline

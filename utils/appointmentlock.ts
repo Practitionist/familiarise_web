@@ -213,12 +213,15 @@ async function withCallTimeout<T>(
   }
 }
 
+/** The two bounds on a Redis call: its own, and the request's deadline. */
+type CallBounds = Pick<LockRetryConfig, "callTimeoutMs" | "deadlineAt">;
+
 /**
  * The next Redis call's bound: the smaller of the per-call bound and the time
  * left before `deadlineAt`, and whether the deadline is what limits it. A tie is
  * the deadline's, since a caller may size the per-call bound to the time left.
  */
-function callBound(config: LockRetryConfig): {
+function callBound(config: CallBounds): {
   ms: number;
   byDeadline: boolean;
 } {
@@ -228,6 +231,26 @@ function callBound(config: LockRetryConfig): {
   }
   const left = config.deadlineAt - Date.now();
   return { ms: Math.min(perCall, left), byDeadline: left <= perCall };
+}
+
+/**
+ * The health probe under the next call's bound. A stalled PING is Redis
+ * unavailable for this caller only, never cached as unhealthy; a PING the
+ * deadline cut short is out of time, the tier's busy answer.
+ */
+async function probeRedis(
+  config: CallBounds,
+): Promise<"healthy" | "unavailable" | "out-of-time"> {
+  const { ms, byDeadline } = callBound(config);
+  if (ms <= 0) return "out-of-time";
+  try {
+    const healthy = await withCallTimeout(checkRedisHealth(), ms);
+    return healthy ? "healthy" : "unavailable";
+  } catch (error: unknown) {
+    return error instanceof RedisCallTimeout && byDeadline
+      ? "out-of-time"
+      : "unavailable";
+  }
 }
 
 async function acquireLockWithRetry(
@@ -338,15 +361,11 @@ async function acquireGuarded(
   context: string,
   config: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
-  const { ms: probeBound } = callBound(config);
-  if (probeBound <= 0) {
+  const probe = await probeRedis(config);
+  if (probe === "out-of-time") {
     throw new LockContentionError(key, 0);
   }
-  // A stalled PING reads as Redis unavailable for this caller only; it is not cached as unhealthy.
-  const healthy = await withCallTimeout(checkRedisHealth(), probeBound).catch(
-    () => false,
-  );
-  if (!healthy) {
+  if (probe === "unavailable") {
     throw new BookingLockUnavailableError(context);
   }
 
@@ -843,35 +862,50 @@ function evalWithTimeout(
   return withCallTimeout(client.eval(script, keys, args));
 }
 
+/** The slot batch ran out of the request's time: not granted, and no atom is known to be held. */
+const BATCH_OUT_OF_TIME = { ok: false as const, heldKeys: [] as string[] };
+
 /**
  * All-or-nothing, never waits: one Lua call sets every key with NX semantics,
  * or sets none and answers which keys are held. Redis down or slow throws
- * BookingLockUnavailableError.
+ * BookingLockUnavailableError. Each call is also bounded by `bounds.deadlineAt`:
+ * past it nothing more is sent and the answer is not-ok with no held key.
  */
 export async function tryLockSlotBatch(
   entries: readonly SlotBatchEntry[],
   ttlMs: number = DEFAULT_LOCK_TTL,
+  bounds: CallBounds = {},
 ): Promise<
   { ok: true; grant: SlotBatchGrant } | { ok: false; heldKeys: string[] }
 > {
   const keys = slotBatchKeys(entries);
-  // A stalled PING reads as Redis unavailable for this caller only; it is not cached as unhealthy.
-  const healthy = await withCallTimeout(checkRedisHealth()).catch(() => false);
-  if (!healthy) {
+  const probe = await probeRedis(bounds);
+  if (probe === "out-of-time") return BATCH_OUT_OF_TIME;
+  if (probe === "unavailable") {
     throw new BookingLockUnavailableError("slot-batch");
   }
+  const { ms: bound, byDeadline } = callBound(bounds);
+  if (bound <= 0) return BATCH_OUT_OF_TIME;
   const client = redisClient as Redis;
   const value = generateLockValue();
   const ttl = Math.floor(ttlMs * (1 - DEFAULT_RETRY_CONFIG.driftFactor));
   let result: unknown;
   let pending: Promise<unknown> | null = null;
   try {
-    result = await withCircuitBreaker(() => {
+    result = await withCircuitBreaker(async () => {
       pending = client.eval(SLOT_BATCH_ACQUIRE_SCRIPT, keys, [
         value,
         String(ttl),
       ]);
-      return withCallTimeout(pending);
+      try {
+        return await withCallTimeout(pending, bound);
+      } catch (error: unknown) {
+        // Cut short by the deadline, not by its own bound: out of time, no breaker failure.
+        if (error instanceof RedisCallTimeout && byDeadline) {
+          return BATCH_OUT_OF_TIME;
+        }
+        throw error;
+      }
     });
   } catch (error: unknown) {
     // The script may have run (or still run) after we gave up, and a script
@@ -887,6 +921,11 @@ export async function tryLockSlotBatch(
       }),
     );
     throw new BookingLockUnavailableError("slot-batch");
+  }
+  if (result === BATCH_OUT_OF_TIME) {
+    // The abandoned script may still set the keys: give them back when it settles.
+    releaseAbandonedBatch(client, keys, value, pending);
+    return BATCH_OUT_OF_TIME;
   }
   const heldKeys = Array.isArray(result)
     ? result.filter((k): k is string => typeof k === "string")
@@ -932,9 +971,10 @@ export async function lockSlotBatch(
   for (let attempt = 0; attempt <= config.retryCount; attempt++) {
     if (outOfTime()) break;
     attempts = attempt + 1;
-    const outcome = await tryLockSlotBatch(entries, ttlMs);
+    const outcome = await tryLockSlotBatch(entries, ttlMs, config);
     if (outcome.ok) return outcome.grant;
-    heldKeys = outcome.heldKeys;
+    // An attempt that ran out of time names no atom; keep the last one known.
+    if (outcome.heldKeys.length > 0) heldKeys = outcome.heldKeys;
     if (attempt < config.retryCount) {
       const delay = calculateRetryDelay(attempt, config);
       if (outOfTime(delay)) break;

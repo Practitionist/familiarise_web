@@ -140,6 +140,42 @@ describe("the lock tiers of one request share one deadline", () => {
   });
 });
 
+describe("a call the request deadline cuts short is out of time, not an outage", () => {
+  const closeDeadline = () => ({
+    ...requestLockBudget(),
+    deadlineAt: Date.now() + 100,
+  });
+
+  it("a slow health probe on a single-key tier answers the tier's busy", async () => {
+    redis.checkRedisHealth.mockImplementation(hang);
+    expect(
+      await after(
+        lockConsulteeBooking("user-1", undefined, closeDeadline()),
+        100,
+      ),
+    ).toEqual({ error: "ConsulteeBookingBusyError" });
+  });
+
+  it("the slot batch sends no acquire once its probe has used the time left", async () => {
+    redis.checkRedisHealth.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(true), 200)),
+    );
+    const acquire = jest.spyOn(client, "eval");
+    expect(
+      await after(lockSlotBatch(WINDOW, undefined, closeDeadline()), 100),
+    ).toEqual({ error: "SlotLockError" });
+    await jest.advanceTimersByTimeAsync(200);
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  it("a slot-batch acquire that hangs is cut at the deadline and answers busy", async () => {
+    jest.spyOn(client, "eval").mockImplementation(hang);
+    expect(
+      await after(lockSlotBatch(WINDOW, undefined, closeDeadline()), 100),
+    ).toEqual({ error: "SlotLockError" });
+  });
+});
+
 describe("a lifecycle door's tiers share the request deadline", () => {
   it("the event tier stops waiting at the deadline and never runs the door", async () => {
     await client.set("event-checkout:WEBINAR:w-1", "a-buyer", { px: 600_000 });
