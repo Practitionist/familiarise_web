@@ -119,9 +119,16 @@ jest.mock("../../lib/trials/conversion", () => ({
   __esModule: true,
   convertCompletedTrial: jest.fn(async () => undefined),
 }));
+// The real savepoint runs only where a pin asks for it.
+const referralSavepoint = { real: false };
 jest.mock("../../lib/referrals/capture", () => ({
   __esModule: true,
-  recordReferralCaptureInSavepoint: jest.fn(async () => undefined),
+  recordReferralCaptureInSavepoint: (...a: unknown[]) =>
+    referralSavepoint.real
+      ? jest
+          .requireActual("../../lib/referrals/capture")
+          .recordReferralCaptureInSavepoint(...a)
+      : Promise.resolve(undefined),
 }));
 jest.mock("../../lib/referrals/referral-notify", () => ({
   __esModule: true,
@@ -190,6 +197,7 @@ jest.mock("../../lib/enterprise/system-events", () => ({
 import { AppointmentsType, TrialStatus } from "@prisma/client";
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
+import { isLockTimeout } from "../../lib/db/pg-errors";
 import { buildPaymentMetadata } from "../../lib/payments/checkout/schema";
 import { buildApprovalMetadata } from "../../lib/payments/operations/approval-payment";
 import { sanitizeRazorpayNotes } from "../../lib/payments/core/razorpay";
@@ -383,7 +391,49 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  referralSavepoint.real = false;
+  jest.restoreAllMocks();
+});
+
+describe("a lock timeout inside a Phase 1 savepoint fails the whole capture", () => {
+  const lockTimeout = () =>
+    Object.assign(new Error("canceling statement due to lock timeout"), {
+      name: "DriverAdapterError",
+      cause: { kind: "postgres", code: "55P03", originalCode: "55P03" },
+    });
+
+  it("from the referral capture, instead of confirming without the referral", async () => {
+    primeBooking("CONSULTATION");
+    referralSavepoint.real = true;
+    const bookingRead = tx.payment.findUnique.getMockImplementation()!;
+    // The referral's first read is the payment by id.
+    tx.payment.findUnique.mockImplementation(((args: {
+      where: { id?: string };
+    }) =>
+      args.where.id
+        ? Promise.reject(lockTimeout())
+        : bookingRead(args)) as never);
+
+    const failure = await handlePaymentSuccess("order_1", {}, 599400, "pay_1")
+      .then(() => null)
+      .catch((err: unknown) => err);
+
+    expect(isLockTimeout(failure)).toBe(true);
+  });
+
+  it("from the earnings, instead of deferring them outside the capture", async () => {
+    primeBooking("CONSULTATION");
+    createEarningsFromPayment.mockRejectedValueOnce(lockTimeout());
+
+    const failure = await handlePaymentSuccess("order_1", {}, 599400, "pay_1")
+      .then(() => null)
+      .catch((err: unknown) => err);
+
+    expect(isLockTimeout(failure)).toBe(true);
+    expect(createEarningsFromPayment).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("a capture on a booking that already exists", () => {
   it("confirms a subscription whose minted notes carry the period start and no end", async () => {

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import { isLockTimeout } from "@/lib/db/pg-errors";
 import { reportSentryError } from "@/lib/observability/report";
 import { readReferralProgramConfig, recordBudgetSpend } from "./program-config";
 
@@ -172,7 +173,7 @@ export async function recordReferralCapture(
 
 /**
  * The capture paths' entry: a referral fault must never undo a confirmed booking, so it
- * rolls back to its own savepoint; only a serialization failure retries the whole capture.
+ * rolls back to its own savepoint; a serialization failure or a lock timeout fails the whole capture.
  */
 export async function recordReferralCaptureInSavepoint(
   tx: Tx,
@@ -197,8 +198,9 @@ export async function recordReferralCaptureInSavepoint(
       () => undefined,
     );
     if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === "P2034"
+      (err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2034") ||
+      isLockTimeout(err)
     ) {
       throw err;
     }

@@ -112,6 +112,8 @@ export const disputeApi = {
 
 const noPayouts = { updateMany: jest.fn(async () => ({ count: 0 })) };
 const txStub = {
+  // The capture's lock timeout and order lock; one test client never waits on them.
+  $executeRaw: async () => 1,
   payment: paymentApi,
   refund: refundApi,
   dispute: disputeApi,

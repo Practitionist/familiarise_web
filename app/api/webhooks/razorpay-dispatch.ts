@@ -52,6 +52,7 @@ import {
   withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
+import { isLockTimeout } from "@/lib/db/pg-errors";
 import { postGatewayFee } from "@/lib/payments/ledger/gateway-fee";
 import {
   recordPayerInstruments,
@@ -704,6 +705,12 @@ export async function processRazorpayWebhookEvent(
           },
         );
       }
+    } else if (isLockTimeout(handlerError)) {
+      // Another door holds this order's capture lock; the sweeper re-drives the event.
+      deferred = true;
+      console.log(
+        `⏳ Deferring ${eventType} ${eventId}: another door is confirming its order`,
+      );
     } else {
       processingError = errorMessageOf(handlerError);
       console.error(

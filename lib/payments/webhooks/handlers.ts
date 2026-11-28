@@ -46,7 +46,11 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { isExclusionViolation, isWriteConflict } from "@/lib/db/pg-errors";
+import {
+  isExclusionViolation,
+  isLockTimeout,
+  isWriteConflict,
+} from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   isDeadOccurrence,
@@ -376,6 +380,9 @@ export async function refundLateCapture(input: {
   }
 }
 
+// Below pg's client query_timeout (PG_QUERY_TIMEOUT_MS in lib/prisma.ts), so a waiting door fails cleanly with 55P03.
+const CAPTURE_LOCK_TIMEOUT_MS = 4_000;
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
@@ -520,6 +527,9 @@ export async function handlePaymentSuccess(
     txResult = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx): Promise<PaymentSuccessTxResult | null> => {
+          // Doors confirming one order take turns; a wait past the timeout raises 55P03 (isLockTimeout).
+          await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(CAPTURE_LOCK_TIMEOUT_MS)}, true)`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-capture:${paymentIntentId}`}, 42))`;
           const readPayment = () =>
             tx.payment.findUnique({
               where: { paymentIntent: paymentIntentId },
@@ -1152,7 +1162,11 @@ export async function handlePaymentSuccess(
                 phase1EarningsErr instanceof
                   Prisma.PrismaClientKnownRequestError &&
                 phase1EarningsErr.code === "P2034";
-              if (isRetryableSerialization) {
+              // A lock timeout fails the whole capture, so its door retries it later.
+              if (
+                isRetryableSerialization ||
+                isLockTimeout(phase1EarningsErr)
+              ) {
                 throw phase1EarningsErr;
               }
               console.warn(
@@ -2945,7 +2959,7 @@ async function stageStartedBeforePaymentNotice(
     return staged;
   } catch (error) {
     await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_started_notice`;
-    if (isWriteConflict(error)) throw error;
+    if (isWriteConflict(error) || isLockTimeout(error)) throw error;
     reportSentryError(error, {
       subsystem: "payments",
       op: "capture.started-before-payment-notice.stage",
@@ -3017,7 +3031,7 @@ async function stageTrialPaidAfterStartNotice(
     };
   } catch (error) {
     await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_trial_started_notice`;
-    if (isWriteConflict(error)) throw error;
+    if (isWriteConflict(error) || isLockTimeout(error)) throw error;
     reportSentryError(error, {
       subsystem: "payments",
       op: "capture.trial-paid-after-start-notice.stage",

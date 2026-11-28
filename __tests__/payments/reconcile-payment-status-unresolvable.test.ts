@@ -67,6 +67,13 @@ const routeCapturedPayment = jest.fn();
 jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
   routeCapturedPayment: (...a: unknown[]) => routeCapturedPayment(...a),
 }));
+// The closed-order arm imports the capture handlers dynamically.
+const closedCaptureSuccess = jest.fn();
+jest.mock("../../lib/payments/webhooks/handlers", () => ({
+  handlePaymentSuccess: (...a: unknown[]) => closedCaptureSuccess(...a),
+  refundLateCapture: jest.fn(),
+  settleAutoRefundMarker: jest.fn(),
+}));
 
 // #1757 — the orphan retire path is the abandoned-payments unit; pin the
 // delegation, not the unit (it has its own suite).
@@ -779,5 +786,77 @@ describe("payment polling progress after interrupted runs", () => {
       clock.mockRestore();
       stamp.mockReset().mockResolvedValue(1);
     }
+  });
+});
+
+describe("reconcile-payment-status — a capture another door is confirming", () => {
+  const lockTimeout = () =>
+    Object.assign(new Error("canceling statement due to lock timeout"), {
+      name: "DriverAdapterError",
+      cause: { kind: "postgres", code: "55P03", originalCode: "55P03" },
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setRazorpayEnv();
+  });
+
+  it("skips a routed capture held by another door, with no error and no Sentry event", async () => {
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([
+        {
+          ...pendingRow,
+          id: "pay-held",
+          paymentIntent: "order_held",
+          appointmentId: "appt-held",
+          appointment: { id: "appt-held" },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    razorpayCaptured({ id: "pay_held", amount: 50000, notes: {} });
+    routeCapturedPayment.mockRejectedValueOnce(lockTimeout());
+
+    const result = await reconcilePaymentStatus();
+
+    expect(routeCapturedPayment).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ skippedCount: 1, reconciledCount: 0 });
+    expect(result.errors).toEqual([]);
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("skips a closed order's capture held by another door instead of counting a refund failure", async () => {
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      { id: "pay-closed" },
+    ]);
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          ...pendingRow,
+          id: "pay-closed",
+          paymentIntent: "order_closed",
+          paymentStatus: "EXPIRED",
+          parentPaymentId: null,
+          appointmentId: "appt-closed",
+          appointment: { id: "appt-closed" },
+        },
+      ]);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        items: [
+          { id: "pay_closed", status: "captured", amount: 50000, notes: {} },
+        ],
+      }),
+    });
+    closedCaptureSuccess.mockRejectedValueOnce(lockTimeout());
+
+    const result = await reconcilePaymentStatus();
+
+    expect(closedCaptureSuccess).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ skippedCount: 1, reconciledCount: 0 });
+    expect(result.errors).toEqual([]);
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });

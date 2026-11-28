@@ -35,9 +35,16 @@ jest.mock("../../lib/prisma", () => ({
     },
   },
 }));
+jest.mock("@sentry/nextjs", () => ({
+  ...jest.requireActual("@sentry/nextjs"),
+  captureException: jest.fn(),
+}));
 
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest } from "next/server";
 import { GET } from "../../app/api/checkout/verify/route";
+import { routeCapturedPayment } from "../../app/api/webhooks/razorpay-dispatch";
+import { withRazorpaySdkTimeout } from "../../lib/payments/core/razorpay";
 import { calendarSeatWhere } from "../../lib/appointments/calendar-links";
 
 const startsAt = new Date(Date.now() + 3 * 24 * 3600_000);
@@ -209,3 +216,32 @@ it.each(KINDS)(
     });
   },
 );
+
+it("keeps the poll waiting, unreported, while another door holds the order's capture lock", async () => {
+  paymentFindUnique.mockResolvedValue(
+    payPageOrder("CONSULTATION", "PENDING", false),
+  );
+  jest
+    .mocked(withRazorpaySdkTimeout)
+    .mockResolvedValueOnce({ status: "paid", notes: {} } as never)
+    .mockResolvedValueOnce({
+      items: [{ id: "pay_1", status: "captured", amount: 11_300, notes: {} }],
+    } as never);
+  jest.mocked(routeCapturedPayment).mockRejectedValueOnce(
+    Object.assign(new Error("canceling statement due to lock timeout"), {
+      name: "DriverAdapterError",
+      cause: { kind: "postgres", code: "55P03", originalCode: "55P03" },
+    }),
+  );
+
+  const res = await GET(
+    new NextRequest(
+      "https://x.test/api/checkout/verify?payment_intent=order_1&sync=true",
+    ),
+  );
+
+  expect(routeCapturedPayment).toHaveBeenCalledTimes(1);
+  expect(res.status).toBe(400);
+  expect((await res.json()).status).toBe("PENDING");
+  expect(Sentry.captureException).not.toHaveBeenCalled();
+});

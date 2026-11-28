@@ -1900,14 +1900,13 @@ async function findExistingEarningsId(
     return { exists: false, id: null };
   }
 
-  const [existingOrgEarnings, existingConsultantEarnings] = await Promise.all([
-    tx.organizationEarnings.findFirst({
-      where: { paymentId, role: EarningRole.OWNER },
-    }),
-    tx.consultantEarnings.findFirst({
-      where: { paymentId },
-    }),
-  ]);
+  // Sequential: one transaction client runs one query at a time.
+  const existingOrgEarnings = await tx.organizationEarnings.findFirst({
+    where: { paymentId, role: EarningRole.OWNER },
+  });
+  const existingConsultantEarnings = await tx.consultantEarnings.findFirst({
+    where: { paymentId },
+  });
   if (existingOrgEarnings || existingConsultantEarnings) {
     console.warn(`Earnings already exist for payment ${paymentId}. Skipping.`);
     return { exists: true, id: existingConsultantEarnings?.id ?? null };

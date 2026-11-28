@@ -164,3 +164,15 @@ it("recovers the paid-for booking and writes an OpsActionLog row", async () => {
     }),
   );
 });
+
+it("answers 409 CAPTURE_IN_PROGRESS while another door holds the order's capture lock", async () => {
+  handlePaymentSuccess.mockRejectedValueOnce(
+    Object.assign(new Error("canceling statement due to lock timeout"), {
+      name: "DriverAdapterError",
+      cause: { kind: "postgres", code: "55P03", originalCode: "55P03" },
+    }),
+  );
+  const res = await recover(CHECKOUT_NOTES);
+  expect(res.status).toBe(409);
+  expect((await res.json()).code).toBe("CAPTURE_IN_PROGRESS");
+});

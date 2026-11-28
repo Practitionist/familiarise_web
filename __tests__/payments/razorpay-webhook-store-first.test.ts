@@ -101,8 +101,14 @@ jest.mock("../../lib/payments/webhooks/digital-product-purchase", () => ({
 jest.mock("../../lib/payments/payouts/reverse-penny-drop", () => ({
   handleFundAccountValidationWebhook: jest.fn(),
 }));
+jest.mock("../../lib/payments/webhooks/capture-rail", () => ({
+  ...jest.requireActual("../../lib/payments/webhooks/capture-rail"),
+  resolveCaptureRail: jest.fn(async () => ({ rail: "booking" })),
+}));
 
+import * as Sentry from "@sentry/nextjs";
 import type { NextRequest } from "next/server";
+import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/webhooks/razorpay/route";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
 
@@ -348,5 +354,58 @@ describe("dispatch parses each event's entity itself", () => {
 
     const [, error] = markWebhookEventProcessed.mock.calls[0];
     expect(error).toMatch(/^permanent: schema mismatch: unreadable/);
+  });
+});
+
+describe("a capture another door is confirming", () => {
+  const capturedEvent = {
+    entity: "event",
+    account_id: "acc_test",
+    event: "payment.captured",
+    contains: ["payment"],
+    payload: {
+      payment: {
+        entity: {
+          id: "pay_locked_1",
+          entity: "payment",
+          amount: 50000,
+          currency: "INR",
+          status: "captured",
+          order_id: "order_locked_1",
+          method: "upi",
+          captured: true,
+          notes: { type: "booking" },
+          created_at: 1_700_000_000,
+        },
+      },
+    },
+    created_at: 1_700_000_000,
+  };
+
+  it("defers the event for the sweeper instead of recording or reporting a failure", async () => {
+    handlePaymentSuccess.mockRejectedValueOnce(
+      Object.assign(new Error("canceling statement due to lock timeout"), {
+        name: "DriverAdapterError",
+        cause: { kind: "postgres", code: "55P03", originalCode: "55P03" },
+      }),
+    );
+
+    await processRazorpayWebhookEvent(
+      capturedEvent,
+      "payment.captured",
+      "evt-locked",
+      CLAIM,
+    );
+
+    expect(handlePaymentSuccess).toHaveBeenCalledTimes(1);
+    expect(markWebhookEventProcessed).not.toHaveBeenCalled();
+    expect(jest.mocked(prisma.webhookEvent.updateMany)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ eventId: "evt-locked" }),
+        data: { deferCount: { increment: 1 } },
+      }),
+    );
+    expect(jest.mocked(Sentry.captureException)).not.toHaveBeenCalled();
+    expect(reportSentryError).not.toHaveBeenCalled();
   });
 });

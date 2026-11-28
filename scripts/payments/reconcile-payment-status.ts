@@ -32,6 +32,7 @@ import { PaymentStatus, PaymentGateway, Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
+import { isLockTimeout } from "@/lib/db/pg-errors";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
@@ -689,6 +690,12 @@ async function reconcilePaymentStatusUnlocked(
             skippedCount++;
           }
         } catch (err) {
+          // Another door holds the order's capture lock; the next run reads it again.
+          if (isLockTimeout(err)) {
+            console.log(`   Skipped: another door is confirming ${payment.id}`);
+            skippedCount++;
+            continue;
+          }
           const msg = err instanceof Error ? err.message : String(err);
           errors.push(
             `Payment ${payment.id}: late capture not refunded: ${msg}`,
@@ -901,6 +908,13 @@ async function reconcilePaymentStatusUnlocked(
             reconciledCount++;
             succeededCount++;
           } catch (err) {
+            if (isLockTimeout(err)) {
+              console.log(
+                `   Skipped: another door is confirming ${payment.id}`,
+              );
+              skippedCount++;
+              continue;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`   Pipeline failed for ${payment.id}: ${msg}`);
             errors.push(`Payment ${payment.id}: ${msg}`);
