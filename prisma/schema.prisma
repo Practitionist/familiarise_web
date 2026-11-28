@@ -6559,10 +6559,6 @@ model ConsultantEarnings {
   // Float percentage. Derived display field; the authoritative cut is the paise.
   shareBps Int         @default(10000)
 
-  // #1569 — the paid call, for a per-call fee (consultation, webinar, trial);
-  // NULL for a whole-purchase fee (subscription, class) until it is split.
-  appointmentOccurrenceId String?
-
   /// #1766 — 0-based earnings tranche of a subscription; NULL for every other row.
   cycleOrdinal Int?
 
@@ -6591,9 +6587,8 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
-  // One row per (payment, consultant, role, occurrence, cycle): the NULLS NOT
-  // DISTINCT sidecar unique consultant_earnings_occurrence_key in prisma/sql;
-  // no @@unique/@@index on that set here (#1268, #1766).
+  // One row per (payment, consultant, role, cycle): the NULLS NOT DISTINCT
+  // sidecar unique consultant_earnings_occurrence_key in prisma/sql, not here.
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])

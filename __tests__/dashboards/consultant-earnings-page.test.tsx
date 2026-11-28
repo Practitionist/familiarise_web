@@ -40,7 +40,6 @@ const earning = (
   refundedShareAmount: 0,
   role: "OWNER",
   shareBps: 10_000,
-  appointmentOccurrenceId: null,
   status,
   holdUntil: "2026-09-25T09:12:00Z",
   paidAt: null,

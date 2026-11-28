@@ -304,6 +304,12 @@
       "reason": "Legacy pre-#2257 support-ticket tables, re-created empty as a stop-gap for origin/prod. Dropped by the reconcile push once dev is promoted to prod.",
       "trackedBy": "#2271",
       "expires": "2026-11-21"
+    },
+    {
+      "statement": "ALTER TABLE \"ConsultantEarnings\" DROP COLUMN \"appointmentOccurrenceId\"",
+      "reason": "Dropped from the schema; no code reads or writes it. origin/prod still names it in every ConsultantEarnings insert and default select, so the drop waits: move this to destructiveStatementsAllowed once the release carrying the drop is on prod.",
+      "trackedBy": "chore/drop-earnings-occurrence-id",
+      "expires": "2026-12-21"
     }
   ]
 }

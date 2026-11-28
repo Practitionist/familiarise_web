@@ -37,7 +37,7 @@ import {
   computeHoldUntil,
   withNewExpertHold,
   holdHoursFor,
-  resolveEarningsAnchor,
+  lastLiveOccurrenceEnd,
 } from "./earnings-hold";
 import { calculateRevenueSplit } from "@/lib/collaborators/revenue-split";
 import {
@@ -155,10 +155,7 @@ export interface PartySettlement {
 
 export interface PreplannedEarningsContext {
   resolvedPayment: ResolvedEarningsPayment;
-  anchor: {
-    lastOccurrenceEndsAt: Date | null;
-    appointmentOccurrenceId: string | null;
-  };
+  lastOccurrenceEndsAt: Date | null;
   orgSplit: OrgEarningsSplit | null;
   parkForTrust: boolean;
   splits: RevenueSplit[];
@@ -1221,11 +1218,9 @@ export async function planEarningsForPayment(
     payment.appointment,
   );
 
-  const anchor = await resolveEarningsAnchor(
-    db,
-    payment.appointmentId,
-    appointmentType,
-  );
+  const lastOccurrenceEndsAt = payment.appointmentId
+    ? await lastLiveOccurrenceEnd(db, payment.appointmentId)
+    : null;
 
   const parkForTrust = await checkSponsorTrustPark(db, payment);
 
@@ -1283,7 +1278,7 @@ export async function planEarningsForPayment(
 
   return {
     resolvedPayment,
-    anchor,
+    lastOccurrenceEndsAt,
     orgSplit,
     parkForTrust,
     splits,
@@ -1331,7 +1326,6 @@ async function createMultiPartyConsultantEarnings(
     partySettlements: PartySettlement[];
     paymentId: string;
     grossAmount: number;
-    appointmentOccurrenceId: string | null;
     initialEarningStatus: EarningStatus;
     holdUntil: Date | null;
   },
@@ -1341,7 +1335,6 @@ async function createMultiPartyConsultantEarnings(
     partySettlements,
     paymentId,
     grossAmount,
-    appointmentOccurrenceId,
     initialEarningStatus,
     holdUntil,
   } = params;
@@ -1363,7 +1356,6 @@ async function createMultiPartyConsultantEarnings(
         consultantSharePaise: p.consultantSharePaise,
         role: p.role,
         shareBps: shareBpsList[i] ?? 0,
-        appointmentOccurrenceId,
         status: initialEarningStatus,
         // The new-expert days follow each payee, never the owner's standing.
         holdUntil: await withNewExpertHold(
@@ -1408,7 +1400,6 @@ async function createSingleOwnerConsultantEarnings(
     grossAmount: number;
     platformFeePaise: number;
     totalConsultantPool: number;
-    appointmentOccurrenceId: string | null;
     initialEarningStatus: EarningStatus;
     holdUntil: Date | null;
     tranches: PreplannedEarningsContext["tranches"];
@@ -1420,7 +1411,6 @@ async function createSingleOwnerConsultantEarnings(
     grossAmount,
     platformFeePaise,
     totalConsultantPool,
-    appointmentOccurrenceId,
     initialEarningStatus,
     holdUntil,
     tranches,
@@ -1458,7 +1448,6 @@ async function createSingleOwnerConsultantEarnings(
       grossAmount: row.gross,
       platformFeePaise: row.fee,
       consultantSharePaise: row.share,
-      appointmentOccurrenceId,
       cycleOrdinal: k,
       status: initialEarningStatus,
       holdUntil: null,
@@ -1482,7 +1471,6 @@ async function createSingleOwnerConsultantEarnings(
       grossAmount,
       platformFeePaise,
       consultantSharePaise: totalConsultantPool,
-      appointmentOccurrenceId,
       status: initialEarningStatus,
       holdUntil: await withNewExpertHold(tx, consultantProfileId, holdUntil),
       currency: "INR",
@@ -1958,7 +1946,6 @@ async function settleSingleOwnerEarningsInTx(
     appointmentType: AppointmentType;
     scope: { id: string; kind: "webinar" | "class" } | null;
     grossAmount: number;
-    appointmentOccurrenceId: string | null;
     initialEarningStatus: EarningStatus;
     holdUntil: Date | null;
     preplanned?: PreplannedEarningsContext | null;
@@ -1971,7 +1958,6 @@ async function settleSingleOwnerEarningsInTx(
     appointmentType,
     scope,
     grossAmount,
-    appointmentOccurrenceId,
     initialEarningStatus,
     holdUntil,
     preplanned,
@@ -2014,7 +2000,6 @@ async function settleSingleOwnerEarningsInTx(
     grossAmount,
     platformFeePaise,
     totalConsultantPool,
-    appointmentOccurrenceId,
     initialEarningStatus,
     holdUntil,
     tranches,
@@ -2053,10 +2038,6 @@ async function executeEarningsCreationInTx(
     planId: string | null;
     scope: { id: string; kind: "webinar" | "class" } | null;
     grossAmount: number;
-    anchor: {
-      lastOccurrenceEndsAt: Date | null;
-      appointmentOccurrenceId: string | null;
-    };
     holdUntil: Date | null;
     teamAt: Date;
     preplanned?: PreplannedEarningsContext | null;
@@ -2070,7 +2051,6 @@ async function executeEarningsCreationInTx(
     planId,
     scope,
     grossAmount,
-    anchor,
     holdUntil,
     teamAt,
     preplanned,
@@ -2121,7 +2101,6 @@ async function executeEarningsCreationInTx(
       appointmentType,
       scope,
       grossAmount,
-      appointmentOccurrenceId: anchor.appointmentOccurrenceId,
       initialEarningStatus,
       holdUntil,
       preplanned,
@@ -2153,7 +2132,6 @@ async function executeEarningsCreationInTx(
       partySettlements,
       paymentId: payment.id,
       grossAmount,
-      appointmentOccurrenceId: anchor.appointmentOccurrenceId,
       initialEarningStatus,
       holdUntil,
     });
@@ -2242,18 +2220,16 @@ export async function createEarningsFromPayment(
   }
 
   const grossAmount = payment.originalAmount;
-  const anchor = hasPreplanned
-    ? preplanned.anchor
-    : await resolveEarningsAnchor(
-        outerTx ?? prisma,
-        payment.appointmentId,
-        appointmentType,
-      );
+  const lastOccurrenceEndsAt = hasPreplanned
+    ? preplanned.lastOccurrenceEndsAt
+    : payment.appointmentId
+      ? await lastLiveOccurrenceEnd(outerTx ?? prisma, payment.appointmentId)
+      : null;
   const holdUntil = payment.appointment?.trial
     ? null
     : computeHoldUntil({
         capturedAt: new Date(),
-        lastOccurrenceEndsAt: anchor.lastOccurrenceEndsAt,
+        lastOccurrenceEndsAt,
         holdHours: holdHoursFor(appointmentType),
       });
 
@@ -2267,7 +2243,6 @@ export async function createEarningsFromPayment(
         planId,
         scope,
         grossAmount,
-        anchor,
         holdUntil,
         teamAt,
         preplanned,

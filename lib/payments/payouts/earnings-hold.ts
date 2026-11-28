@@ -226,41 +226,6 @@ export async function restoreEarningsHold(
   return moved;
 }
 
-/** Types whose fee buys ONE call; a subscription or class fee buys the purchase. */
-const PER_CALL_TYPES: readonly AppointmentType[] = ["CONSULTATION", "WEBINAR"];
-
-/**
- * What a capture stamps on its earnings: the paid occurrence for a per-call
- * fee (NULL for a whole-purchase fee, until it is split) and the end the hold
- * anchors on.
- */
-export async function resolveEarningsAnchor(
-  db: PrismaLike,
-  appointmentId: string | null | undefined,
-  appointmentType: AppointmentType,
-): Promise<{
-  appointmentOccurrenceId: string | null;
-  lastOccurrenceEndsAt: Date | null;
-}> {
-  if (!appointmentId) {
-    return { appointmentOccurrenceId: null, lastOccurrenceEndsAt: null };
-  }
-  const last = await db.appointmentOccurrence.findFirst({
-    where: {
-      appointmentId,
-      deletedAt: null,
-      completionStatus: { notIn: [...DEAD_OCCURRENCE_STATUSES] },
-    },
-    orderBy: { endsAt: "desc" },
-    select: { id: true, endsAt: true },
-  });
-  return {
-    appointmentOccurrenceId:
-      last && PER_CALL_TYPES.includes(appointmentType) ? last.id : null,
-    lastOccurrenceEndsAt: last?.endsAt ?? null,
-  };
-}
-
 /**
  * Re-anchor every unreleased earning of the appointment's payments after its
  * live occurrences changed (first allocation, top-up, reschedule). PENDING rows

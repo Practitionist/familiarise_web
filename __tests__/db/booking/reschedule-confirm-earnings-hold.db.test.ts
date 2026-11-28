@@ -134,7 +134,6 @@ async function paidBooking() {
       grossAmount: BigInt(50_000),
       platformFeePaise: BigInt(10_000),
       consultantSharePaise: BigInt(40_000),
-      appointmentOccurrenceId: booking.occurrenceId,
       status: "PENDING",
       holdUntil: original,
     },
