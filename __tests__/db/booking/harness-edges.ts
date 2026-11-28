@@ -55,6 +55,35 @@ export function noFlushMock(): object {
   };
 }
 
+/** The gateway reads a discovery suite answers: one payment, and a page of each list. */
+export const gatewayReads = {
+  fetchPayment: jest.fn(),
+  listRefunds: jest.fn(),
+  listDisputes: jest.fn(),
+};
+
+/** The Razorpay core with a client that only reads a payment, the refund list from `gatewayReads`, and no breaker. */
+export function razorpayCoreMock(): object {
+  return {
+    ...jest.requireActual("../../../lib/payments/core/razorpay"),
+    listRazorpayRefundsCreatedBetween: (...a: unknown[]) =>
+      gatewayReads.listRefunds(...a),
+    getRazorpayClient: () => ({
+      payments: { fetch: (...a: unknown[]) => gatewayReads.fetchPayment(...a) },
+    }),
+    withRazorpaySdkTimeout: (_op: string, call: () => Promise<unknown>) =>
+      call(),
+  };
+}
+
+/** The dispute client with its list read from `gatewayReads`. */
+export function razorpayDisputesMock(): object {
+  return {
+    ...jest.requireActual("../../../lib/payments/core/razorpay-disputes"),
+    listRazorpayDisputes: (...a: unknown[]) => gatewayReads.listDisputes(...a),
+  };
+}
+
 /** The stubbed refund door every suite shares (see `../setup.ts`). */
 export const refundDoor = jest.requireMock(
   "../../../lib/payments/operations/booking-refund",

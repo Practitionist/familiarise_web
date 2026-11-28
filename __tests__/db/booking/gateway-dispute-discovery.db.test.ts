@@ -4,68 +4,21 @@
  * the webhook end as one row and one hold whichever comes first. The gateway
  * list is mocked.
  */
+import {
+  CONSULTATION_PRICE_PAISE as PRICE_PAISE,
+  never,
+  seedCapturedConsultation,
+} from "./harness-discovery";
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
-import {
-  futureAt,
-  HOUR_MS,
-  seedConsultee,
-  seedHost,
-  seedOneToOne,
-} from "./harness";
-
-jest.mock("../../../lib/novu/service", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
-jest.mock("../../../lib/novu/stage-then-attempt", () =>
-  jest.requireActual("./harness-edges").noFlushMock(),
-);
-jest.mock("../../../lib/email/render", () => ({
-  __esModule: true,
-  renderEmail: async () => ({ html: "<p>rendered</p>", text: "rendered" }),
-}));
-
-const mockListDisputes = jest.fn();
-jest.mock("../../../lib/payments/core/razorpay-disputes", () => ({
-  ...jest.requireActual("../../../lib/payments/core/razorpay-disputes"),
-  listRazorpayDisputes: (...a: unknown[]) => mockListDisputes(...a),
-}));
-const mockFetchPayment = jest.fn();
-jest.mock("../../../lib/payments/core/razorpay", () => ({
-  ...jest.requireActual("../../../lib/payments/core/razorpay"),
-  getRazorpayClient: () => ({
-    payments: { fetch: (...a: unknown[]) => mockFetchPayment(...a) },
-  }),
-  withRazorpaySdkTimeout: (_op: string, call: () => Promise<unknown>) => call(),
-}));
-
+import { HOUR_MS } from "./harness";
+import { gatewayReads } from "./harness-edges";
 import { handleDisputeCreated } from "../../../app/api/webhooks/utils";
 import { discoverGatewayDisputes } from "../../../lib/payments/discovery/dispute-discovery";
 
-const PRICE_PAISE = 50_000;
-const never = () => false;
-
-/** A paid ₹500 consultation five days out with one unpaid earning and its captured gateway payment id. */
+/** A paid consultation with one unpaid earning for a dispute to hold. */
 async function paidConsultation() {
-  const host = await seedHost();
-  const buyer = await seedConsultee();
-  const startsAt = futureAt(5, 9);
-  const booking = await seedOneToOne(
-    "consultation",
-    host,
-    buyer,
-    { startsAt, endsAt: new Date(startsAt.getTime() + HOUR_MS) },
-    {
-      status: "APPROVED",
-      isTentative: false,
-      payment: { status: "SUCCEEDED", expiresAt: null, amount: PRICE_PAISE },
-    },
-  );
-  const gatewayPaymentId = `pay_dbtier_${randomUUID()}`;
-  const payment = await prisma.payment.update({
-    where: { id: booking.payment!.id },
-    data: { gatewayPaymentId },
-  });
+  const { host, payment, gatewayPaymentId } = await seedCapturedConsultation();
   const earning = await prisma.consultantEarnings.create({
     data: {
       consultantProfileId: host.consultantProfileId,
@@ -131,14 +84,14 @@ const deliverCreated = (disputeId: string, gatewayPaymentId: string) =>
   );
 
 beforeEach(() => {
-  mockListDisputes.mockReset();
-  mockFetchPayment.mockReset();
+  gatewayReads.listDisputes.mockReset();
+  gatewayReads.fetchPayment.mockReset();
 });
 
 it("imports a dispute its webhook never delivered with one hold, and the webhook arriving afterwards adds nothing", async () => {
   const { payment, gatewayPaymentId, earningId } = await paidConsultation();
   const disputeId = `disp_dbtier_${randomUUID()}`;
-  mockListDisputes.mockResolvedValue([
+  gatewayReads.listDisputes.mockResolvedValue([
     listedDispute(disputeId, gatewayPaymentId),
   ]);
 
@@ -169,7 +122,7 @@ it("leaves the row a webhook already wrote as the only row and the only hold whe
   const disputeId = `disp_dbtier_${randomUUID()}`;
   await deliverCreated(disputeId, gatewayPaymentId);
   const [fromWebhook] = await disputesOf(payment.id);
-  mockListDisputes.mockResolvedValue([
+  gatewayReads.listDisputes.mockResolvedValue([
     listedDispute(disputeId, gatewayPaymentId),
   ]);
 
@@ -189,7 +142,7 @@ it("leaves the row a webhook already wrote as the only row and the only hold whe
 it("settles a dispute that was already won when first listed: the row is WON and its hold is released", async () => {
   const { payment, gatewayPaymentId, earningId } = await paidConsultation();
   const disputeId = `disp_dbtier_${randomUUID()}`;
-  mockListDisputes.mockResolvedValue([
+  gatewayReads.listDisputes.mockResolvedValue([
     listedDispute(disputeId, gatewayPaymentId, { status: "won" }),
   ]);
 
@@ -216,7 +169,7 @@ it("keeps a won dispute WON when the list shows it open in a later phase, and re
       paymentGateway: "RAZORPAY",
     },
   });
-  mockListDisputes.mockResolvedValue([
+  gatewayReads.listDisputes.mockResolvedValue([
     listedDispute(disputeId, gatewayPaymentId, { phase: "pre_arbitration" }),
   ]);
 
@@ -241,10 +194,10 @@ it("keeps a won dispute WON when the list shows it open in a later phase, and re
 it("writes no dispute and no unlinked alert for a dispute whose payment the database does not know", async () => {
   const gatewayPaymentId = `pay_dbtier_${randomUUID()}`;
   const disputeId = `disp_dbtier_${randomUUID()}`;
-  mockListDisputes.mockResolvedValue([
+  gatewayReads.listDisputes.mockResolvedValue([
     listedDispute(disputeId, gatewayPaymentId),
   ]);
-  mockFetchPayment.mockResolvedValue({
+  gatewayReads.fetchPayment.mockResolvedValue({
     id: gatewayPaymentId,
     order_id: `order_dbtier_${randomUUID()}`,
   });

@@ -19,17 +19,6 @@ const mockDiscover = jest.fn();
 jest.mock("../../lib/payments/discovery/dispute-discovery", () => ({
   discoverGatewayDisputes: (...a: unknown[]) => mockDiscover(...a),
 }));
-const quietDiscovery = {
-  listed: 0,
-  imported: 0,
-  alreadyKnown: 0,
-  updated: 0,
-  notAdopted: 0,
-  unknownPayment: 0,
-  errors: [] as string[],
-  stoppedShort: null,
-  checkpoint: '{"skip":0,"cutRuns":0}',
-};
 const mockGetRazorpayDispute = jest.fn();
 jest.mock("../../lib/payments/core/razorpay-disputes", () => ({
   ...jest.requireActual("../../lib/payments/core/razorpay-disputes"),
@@ -67,17 +56,18 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { reconcileDisputes } from "../../scripts/disputes/reconcile-disputes";
+import { quietDisputeDiscovery } from "../fixtures/quiet-discovery";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockDiscover.mockResolvedValue(quietDiscovery);
+  mockDiscover.mockResolvedValue(quietDisputeDiscovery());
 });
 
 describe("the discovery pass runs after the poll", () => {
   it("returns the pass's counts, keeps its position as the run's checkpoint, and fails the run on its errors", async () => {
     findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     mockDiscover.mockResolvedValue({
-      ...quietDiscovery,
+      ...quietDisputeDiscovery(),
       listed: 2,
       imported: 1,
       alreadyKnown: 1,

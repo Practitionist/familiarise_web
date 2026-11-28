@@ -142,6 +142,7 @@ import {
   reconcilePendingRefunds,
   notifyFailedRefunds,
 } from "../../scripts/refunds/reconcile-pending-refunds";
+import { quietRefundDiscovery } from "../fixtures/quiet-discovery";
 
 /** The Prisma refund surface the reconcile core touches. */
 interface ReconcileRefundMock {
@@ -228,21 +229,9 @@ const unknownId = () =>
     "input_validation_failed",
   );
 
-const quietDiscovery = {
-  listed: 0,
-  imported: 0,
-  alreadyKnown: 0,
-  unknownPayment: 0,
-  gatewayFailed: 0,
-  noRefundRow: 0,
-  errors: [] as string[],
-  stoppedShort: null,
-  checkpoint: '{"since":1764244800,"window":null,"cutRuns":0}',
-};
-
 beforeEach(() => {
   jest.clearAllMocks();
-  mockDiscover.mockResolvedValue(quietDiscovery);
+  mockDiscover.mockResolvedValue(quietRefundDiscovery());
   refundTable.findUnique.mockResolvedValue(null);
   refundTable.findMany.mockResolvedValue([]);
   // The stranded-refund backstop pass finds nothing unless a test says so.
@@ -254,7 +243,7 @@ beforeEach(() => {
 describe("reconcilePendingRefunds — discovery pass", () => {
   test("returns the pass's counts, keeps its position as the run's checkpoint, and fails the run on its errors", async () => {
     mockDiscover.mockResolvedValue({
-      ...quietDiscovery,
+      ...quietRefundDiscovery(),
       listed: 3,
       imported: 1,
       alreadyKnown: 2,
@@ -274,7 +263,7 @@ describe("reconcilePendingRefunds — discovery pass", () => {
       noRefundRow: 0,
       stoppedShort: { bound: "pages", pagesHandled: 3 },
     });
-    expect(result.checkpoint).toBe(quietDiscovery.checkpoint);
+    expect(result.checkpoint).toBe(quietRefundDiscovery().checkpoint);
     expect(result.errors).toEqual([
       "Refund rfnd_bad: could not serialize access",
     ]);

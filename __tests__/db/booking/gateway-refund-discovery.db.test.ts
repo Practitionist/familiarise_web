@@ -3,67 +3,12 @@
  * row for is imported by the refund webhook's own handler, so discovery and the
  * webhook end as one row whichever comes first. The gateway list is mocked.
  */
+import { never, seedCapturedConsultation } from "./harness-discovery";
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
-import {
-  futureAt,
-  HOUR_MS,
-  seedConsultee,
-  seedHost,
-  seedOneToOne,
-} from "./harness";
-
-jest.mock("../../../lib/novu/service", () =>
-  jest.requireActual("../../fixtures/noop-module").noopModule(),
-);
-jest.mock("../../../lib/novu/stage-then-attempt", () =>
-  jest.requireActual("./harness-edges").noFlushMock(),
-);
-jest.mock("../../../lib/email/render", () => ({
-  __esModule: true,
-  renderEmail: async () => ({ html: "<p>rendered</p>", text: "rendered" }),
-}));
-
-const mockListRefunds = jest.fn();
-const mockFetchPayment = jest.fn();
-jest.mock("../../../lib/payments/core/razorpay", () => ({
-  ...jest.requireActual("../../../lib/payments/core/razorpay"),
-  listRazorpayRefundsCreatedBetween: (...a: unknown[]) => mockListRefunds(...a),
-  getRazorpayClient: () => ({
-    payments: { fetch: (...a: unknown[]) => mockFetchPayment(...a) },
-  }),
-  withRazorpaySdkTimeout: (_op: string, call: () => Promise<unknown>) => call(),
-}));
-
+import { gatewayReads } from "./harness-edges";
 import { handleRefundCreated } from "../../../app/api/webhooks/utils";
 import { discoverGatewayRefunds } from "../../../lib/payments/discovery/refund-discovery";
-
-const PRICE_PAISE = 50_000;
-const never = () => false;
-
-/** A paid ₹500 consultation five days out whose row holds its captured gateway payment id. */
-async function paidConsultation() {
-  const host = await seedHost();
-  const buyer = await seedConsultee();
-  const startsAt = futureAt(5, 9);
-  const booking = await seedOneToOne(
-    "consultation",
-    host,
-    buyer,
-    { startsAt, endsAt: new Date(startsAt.getTime() + HOUR_MS) },
-    {
-      status: "APPROVED",
-      isTentative: false,
-      payment: { status: "SUCCEEDED", expiresAt: null, amount: PRICE_PAISE },
-    },
-  );
-  const gatewayPaymentId = `pay_dbtier_${randomUUID()}`;
-  const payment = await prisma.payment.update({
-    where: { id: booking.payment!.id },
-    data: { gatewayPaymentId },
-  });
-  return { payment, gatewayPaymentId };
-}
 
 const listedRefund = (
   id: string,
@@ -103,14 +48,14 @@ const deliverProcessed = (
   );
 
 beforeEach(() => {
-  mockListRefunds.mockReset();
-  mockFetchPayment.mockReset();
+  gatewayReads.listRefunds.mockReset();
+  gatewayReads.fetchPayment.mockReset();
 });
 
 it("imports a refund made at the gateway once, and its webhook arriving afterwards adds nothing", async () => {
-  const { payment, gatewayPaymentId } = await paidConsultation();
+  const { payment, gatewayPaymentId } = await seedCapturedConsultation();
   const gatewayRefundId = `rfnd_dbtier_${randomUUID()}`;
-  mockListRefunds.mockResolvedValue([
+  gatewayReads.listRefunds.mockResolvedValue([
     listedRefund(gatewayRefundId, gatewayPaymentId),
   ]);
 
@@ -141,7 +86,7 @@ it("imports a refund made at the gateway once, and its webhook arriving afterwar
 });
 
 it("leaves the row a webhook already wrote as the only row when the list shows that refund later", async () => {
-  const { payment, gatewayPaymentId } = await paidConsultation();
+  const { payment, gatewayPaymentId } = await seedCapturedConsultation();
   const gatewayRefundId = `rfnd_dbtier_${randomUUID()}`;
   await deliverProcessed(
     gatewayRefundId,
@@ -149,7 +94,7 @@ it("leaves the row a webhook already wrote as the only row when the list shows t
     gatewayPaymentId,
   );
   const [fromWebhook] = await refundsOf(payment.id);
-  mockListRefunds.mockResolvedValue([
+  gatewayReads.listRefunds.mockResolvedValue([
     listedRefund(gatewayRefundId, gatewayPaymentId),
   ]);
 
@@ -162,7 +107,7 @@ it("leaves the row a webhook already wrote as the only row when the list shows t
 });
 
 it("settles the app's own reservation when the listed refund names it, instead of adding a row", async () => {
-  const { payment, gatewayPaymentId } = await paidConsultation();
+  const { payment, gatewayPaymentId } = await seedCapturedConsultation();
   const reservation = await prisma.refund.create({
     data: {
       paymentId: payment.id,
@@ -173,7 +118,7 @@ it("settles the app's own reservation when the listed refund names it, instead o
     },
   });
   const gatewayRefundId = `rfnd_dbtier_${randomUUID()}`;
-  mockListRefunds.mockResolvedValue([
+  gatewayReads.listRefunds.mockResolvedValue([
     listedRefund(gatewayRefundId, gatewayPaymentId, {
       notes: { reservationId: reservation.id },
     }),
@@ -193,7 +138,7 @@ it("settles the app's own reservation when the listed refund names it, instead o
 });
 
 it("fails nothing: a refund the gateway lists as failed leaves its reservation PENDING", async () => {
-  const { payment, gatewayPaymentId } = await paidConsultation();
+  const { payment, gatewayPaymentId } = await seedCapturedConsultation();
   const reservation = await prisma.refund.create({
     data: {
       paymentId: payment.id,
@@ -203,7 +148,7 @@ it("fails nothing: a refund the gateway lists as failed leaves its reservation P
       paymentGateway: "RAZORPAY",
     },
   });
-  mockListRefunds.mockResolvedValue([
+  gatewayReads.listRefunds.mockResolvedValue([
     listedRefund(`rfnd_dbtier_${randomUUID()}`, gatewayPaymentId, {
       status: "failed",
       notes: { reservationId: reservation.id },
@@ -226,10 +171,10 @@ it("writes no refund and no refusal for a refund whose payment the database does
   const gatewayPaymentId = `pay_dbtier_${randomUUID()}`;
   const orderId = `order_dbtier_${randomUUID()}`;
   const gatewayRefundId = `rfnd_dbtier_${randomUUID()}`;
-  mockListRefunds.mockResolvedValue([
+  gatewayReads.listRefunds.mockResolvedValue([
     listedRefund(gatewayRefundId, gatewayPaymentId),
   ]);
-  mockFetchPayment.mockResolvedValue({
+  gatewayReads.fetchPayment.mockResolvedValue({
     id: gatewayPaymentId,
     order_id: orderId,
     captured: true,
