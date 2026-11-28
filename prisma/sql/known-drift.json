@@ -304,6 +304,18 @@
       "reason": "Legacy pre-#2257 support-ticket tables, re-created empty as a stop-gap for origin/prod. Dropped by the reconcile push once dev is promoted to prod.",
       "trackedBy": "#2271",
       "expires": "2026-11-21"
+    },
+    {
+      "statement": "DROP INDEX \"SupportCase_appointmentOccurrenceId_idx\"",
+      "reason": "Live in the shared database ahead of its schema, so the drift check tolerates it; it must not be dropped. Remove this entry in the PR that merges the schema.",
+      "trackedBy": "#3036",
+      "expires": "2026-12-10"
+    },
+    {
+      "statement": "ALTER TABLE \"SupportCase\" DROP COLUMN \"flowReason\", DROP COLUMN \"flowReasonAt\"",
+      "reason": "Live in the shared database ahead of its schema, so the drift check tolerates it; it must not be dropped. Remove this entry in the PR that merges the schema.",
+      "trackedBy": "#3036",
+      "expires": "2026-12-10"
     }
   ]
 }

@@ -152,6 +152,12 @@ currently hold:
   the swap waits. Move the four `DROP TYPE` entries to
   `destructiveStatementsAllowed` once the release is on prod, then preflight,
   push, sidecars, assert, and delete every `#2746` entry.
+- **`knownDivergences` — the no-show report columns of #3036** (2 statements):
+  `SupportCase.flowReason`, `SupportCase.flowReasonAt` and
+  `SupportCase_appointmentOccurrenceId_idx`. They are live in the shared
+  database ahead of #3036's schema so its preview runs, and dropping them would
+  delete its report answers. The pull request that merges that schema deletes
+  both entries.
 - **`destructiveStatementsAllowed` — the pre-#2041 recording-storage columns and
   their enum, plus six indexes the schema no longer declares** (13 statements).
   No schema declares them and no code reads them, so they are dead and a push
