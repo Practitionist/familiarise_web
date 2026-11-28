@@ -11,7 +11,7 @@ import { PERSONAL_PLAN_HOST } from "@/lib/api/scope/parse";
 import {
   MAKEUP_WINDOW_DAYS,
   UNSETTLED_MISS,
-  missedAt,
+  makeUpWindowStart,
 } from "@/lib/booking/misses";
 import { answerableBy, countRequestsToAnswer } from "@/lib/data/needs-you";
 import { countReviewsNeedingReply } from "@/lib/reviews-needs-reply";
@@ -88,7 +88,8 @@ async function readRescheduleReplies(consultantProfileId: string, now: Date) {
 /**
  * The same pairing the class detail uses (ClassSessionControls): a miss is
  * owed until a live occurrence with its ordinal exists or the sweep settles
- * its seats; the window runs 14 days from the miss.
+ * its seats; the window runs 14 days from the miss, or from the confirmation
+ * of a void whose verdict waited for one (not owed until then).
  */
 async function readOwedMakeUps(consultantProfileId: string, now: Date) {
   const misses = await prisma.appointmentOccurrence.findMany({
@@ -106,6 +107,8 @@ async function readOwedMakeUps(consultantProfileId: string, now: Date) {
       ordinal: true,
       hostCancelledAt: true,
       voidedAt: true,
+      outcome: true,
+      outcomeConfirmedAt: true,
       appointment: {
         select: {
           class: { select: { classPlan: { select: { title: true } } } },
@@ -129,7 +132,7 @@ async function readOwedMakeUps(consultantProfileId: string, now: Date) {
 
   return misses
     .flatMap((miss) => {
-      const at = missedAt(miss);
+      const at = makeUpWindowStart(miss);
       if (!at || covered.has(`${miss.appointmentId}:${miss.ordinal}`))
         return [];
       const deadline = new Date(at.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS);

@@ -144,6 +144,37 @@ it("Home's reschedule replies leave out a proposal past its deadline", async () 
   expect(m.rescheduleRequest.findMany).toHaveBeenCalledTimes(1);
 });
 
+it("Home's owed make-ups count a confirmed void's 14 days from its confirmation and leave out one still waiting for it", async () => {
+  const now = new Date("2026-11-25T12:00:00Z");
+  const voided = (id: string, outcomeConfirmedAt: Date | null) => ({
+    id,
+    appointmentId: `apt-${id}`,
+    ordinal: 1,
+    hostCancelledAt: null,
+    voidedAt: new Date("2026-11-01T12:00:00Z"),
+    outcome: "HOST_ABSENT",
+    outcomeConfirmedAt,
+    appointment: { class: { classPlan: { title: "Python" } } },
+  });
+  m.appointmentOccurrence.findMany
+    .mockResolvedValueOnce([
+      voided("confirmed", new Date("2026-11-20T12:00:00Z")),
+      voided("pending", null),
+    ])
+    .mockResolvedValueOnce([]);
+
+  const home = await readConsultantNeedsYou("cp-1", now);
+
+  expect(home.owedMakeUps).toEqual([
+    {
+      appointmentId: "apt-confirmed",
+      occurrenceId: "confirmed",
+      title: "Python",
+      deadline: "2026-12-04T12:00:00.000Z",
+    },
+  ]);
+});
+
 describe("countOpenRequestsForCap", () => {
   it("counts real submitted requests in every tenant, inside their hold; a trial is never one", async () => {
     const now = new Date("2026-10-27T12:00:00Z");

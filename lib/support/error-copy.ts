@@ -55,6 +55,7 @@ const FRIENDLY_COPY: Record<string, string> = {
 
 /** 409s that describe the case itself: retrying or refreshing returns the same answer. */
 const DEFINITE_CONFLICTS: ReadonlySet<string> = new Set([
+  "OPTION_NOT_AVAILABLE",
   "CASE_DECIDED",
   "REOPEN_WINDOW_EXPIRED",
   "CASE_CLOSED",

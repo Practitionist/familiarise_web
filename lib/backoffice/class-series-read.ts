@@ -26,6 +26,7 @@ const OCC_SELECT = {
   hostCancelledAt: true,
   voidedAt: true,
   outcome: true,
+  outcomeConfirmedAt: true,
   seatsSettledAt: true,
   deletedAt: true,
 } as const;

@@ -33,6 +33,7 @@ const completedCtx = {
   isOrgContext: false,
   isOrgOperator: false,
   refundPctIfCancelledNow: 0,
+  reportSessions: [],
 } as unknown as SupportContext;
 
 function recordingFlow() {

@@ -471,3 +471,69 @@ describe("Resources card: which reads the page sends", () => {
     ]);
   });
 });
+
+/** A confirmed one-hour consultation, Rachel with Ethan, whose one session ended yesterday. */
+function endedConsultationDetail(): TAppointmentDetail {
+  return {
+    appointment: {
+      id: "appt-1",
+      appointmentType: "CONSULTATION",
+      organizationId: null,
+      organization: null,
+      deletedAt: null,
+      subscription: null,
+      webinar: null,
+      class: null,
+      trial: null,
+      consultation: {
+        id: "c-1",
+        status: "APPROVED",
+        requestedAt: new Date(NOW - 3 * DAY),
+        bookingSource: "DIRECT_CHECKOUT",
+        pendingPaymentUrl: null,
+        consultationPlan: {
+          id: "plan-c",
+          title: "Career strategy",
+          price: 150_000,
+          priceCurrency: "INR",
+          consultantProfile: {
+            id: "cp-1",
+            userId: "u-ethan",
+            user: user("u-ethan", "Ethan"),
+          },
+        },
+        requestedBy: {
+          id: "ce-1",
+          userId: "u-rachel",
+          user: user("u-rachel", "Rachel Anderson"),
+        },
+      },
+      payment: [],
+      rescheduleRequests: [],
+      occurrences: [
+        {
+          id: "occ-1",
+          appointmentId: "appt-1",
+          startsAt: new Date(NOW - DAY - 3_600_000),
+          endsAt: new Date(NOW - DAY),
+          isTentative: false,
+          completionStatus: "COMPLETED",
+          deletedAt: null,
+          meeting: null,
+        },
+      ],
+      participants: [],
+      statusHistory: [],
+    },
+  } as unknown as TAppointmentDetail;
+}
+
+describe("consultee · a consultation whose one session has ended", () => {
+  it("offers that session's report in the header, with no Sessions card to carry it", () => {
+    viewerId = "u-rachel";
+    currentDetail = endedConsultationDetail();
+    const html = render("consultee");
+    expect(html).not.toContain(">Sessions<");
+    expect(html).toContain("Report a problem with this session");
+  });
+});

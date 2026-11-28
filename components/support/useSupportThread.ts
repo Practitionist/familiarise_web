@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  hashKey,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { useCaseTimeline } from "./useCaseTimeline";
 import { useZoneClock } from "@/lib/time/use-zone-clock";
@@ -17,6 +22,9 @@ import { supportKeys } from "@/lib/support/support-keys";
  * The per-appointment support conversation: flow options, free text and the
  * hand-off to a person. Resolver actions are only displayed, never executed here.
  */
+
+/** One page's thread entry: a booking's, or one of its sessions'. */
+type ThreadKey = ReturnType<typeof supportKeys.thread>;
 
 export type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -46,6 +54,8 @@ export interface SupportThread {
   activeChannel: string;
   category?: string;
   currentNodeId: string | null;
+  /** The session this thread is about; every later turn names it. */
+  appointmentOccurrenceId?: string | null;
   resolvedAt?: string | null;
   csatRating?: number | null;
   hasMore?: boolean;
@@ -68,10 +78,27 @@ export interface ThreadBooking {
   organizationId: string | null;
 }
 
+/** An ended session a report can be about. */
+export interface ReportSession {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+}
+
+/** An open report the caller filed about one session of the booking. */
+export interface SessionReportLink {
+  caseId: string;
+  occurrenceId: string;
+  startsAt: string;
+}
+
 export interface ThreadData {
   thread: SupportThread | null;
   intents: { category: string; title: string; escalates?: boolean }[];
   booking: ThreadBooking | null;
+  reportSessions?: ReportSession[];
+  /** The booking's open session reports, listed on its page, which never shows one. */
+  sessionReports?: SessionReportLink[];
 }
 
 export type SupportAction =
@@ -92,6 +119,8 @@ interface TurnResult {
   actions: SupportAction[];
   outcomeId?: string | null;
   replyByAt?: string | null;
+  threadId?: string;
+  appointmentOccurrenceId?: string | null;
 }
 
 /** One turn's payload, kept so a failed send can be repeated verbatim. */
@@ -106,23 +135,85 @@ export interface TurnVars {
   reopen?: boolean;
   /** Client-only echo of what was pressed. Never sent. */
   chosenLabel?: string;
+  /** Client-only: what the turn answers, fixed when it is first sent so a retry resends it unchanged. */
+  binding?: TurnBinding;
+}
+
+/** The case and session a turn answers, and whether it is a reply to a person. */
+export interface TurnBinding {
+  caseId?: string;
+  appointmentOccurrenceId?: string;
+  human?: boolean;
+}
+
+/**
+ * A new intent names only the session the page was opened for, so the server's default applies otherwise;
+ * a follow-up names the case and session of the thread it answers.
+ */
+export function bindTurn(
+  vars: TurnVars,
+  thread:
+    | Pick<SupportThread, "id" | "activeChannel" | "appointmentOccurrenceId">
+    | null
+    | undefined,
+  pageOccurrenceId: string | undefined,
+): TurnBinding {
+  if (vars.category)
+    return pageOccurrenceId
+      ? { appointmentOccurrenceId: pageOccurrenceId }
+      : {};
+  if (!thread || thread.id === "local") return {};
+  return {
+    caseId: thread.id,
+    ...(thread.appointmentOccurrenceId
+      ? { appointmentOccurrenceId: thread.appointmentOccurrenceId }
+      : {}),
+    human:
+      thread.activeChannel === "HUMAN" &&
+      !!vars.userMessage &&
+      !vars.chosenOptionId,
+  };
+}
+
+/** The POST body of one turn, carrying its binding. */
+export function supportTurnBody({
+  chosenLabel: _chosenLabel,
+  binding,
+  ...body
+}: TurnVars) {
+  return {
+    ...body,
+    ...(binding?.caseId ? { caseId: binding.caseId } : {}),
+    ...(binding?.appointmentOccurrenceId
+      ? { appointmentOccurrenceId: binding.appointmentOccurrenceId }
+      : {}),
+  };
 }
 
 /** Ids for locally-rendered bubbles; never collide with the server's uuids. */
 let localSeq = 0;
 const nextLocalId = () => `local-${++localSeq}`;
 
-/** The one fetcher for this cache entry, so every reader gets one shape. */
+/** The one fetcher for this cache entry, so every reader gets one shape; `view` names the case or session to show. */
 export async function fetchSupportThread(
   appointmentId: string,
+  view: { caseId?: string; occurrenceId?: string } = {},
 ): Promise<ThreadData> {
-  const res = await fetch(`/api/appointments/${appointmentId}/support`);
+  const query = new URLSearchParams({
+    ...(view.caseId ? { caseId: view.caseId } : {}),
+    ...(view.occurrenceId ? { occurrence: view.occurrenceId } : {}),
+  }).toString();
+  const res = await fetch(
+    `/api/appointments/${appointmentId}/support${query ? `?${query}` : ""}`,
+  );
   if (!res.ok) await throwSupportError(res, "thread load");
   const json = await res.json();
   return {
     thread: json.data,
     intents: json.intents ?? [],
     booking: json.booking ?? null,
+    reportSessions: json.reportSessions ?? [],
+    sessionReports: json.sessionReports ?? [],
   };
 }
 
@@ -207,10 +298,26 @@ export function supportHandoffIndex(
   return isHuman ? messages.length : -1;
 }
 
+/** What one thread's page shows beyond its messages: the last answer's cards and reply-by line, and the turns that did not send. */
+type ThreadPage = {
+  actions: SupportAction[];
+  outcomeId: string | null;
+  replyByAt: string | null;
+  failedTurns: Record<string, { body: string; vars: TurnVars }>;
+};
+
+const EMPTY_PAGE: ThreadPage = {
+  actions: [],
+  outcomeId: null,
+  replyByAt: null,
+  failedTurns: {},
+};
+
 export function useSupportThread(
   appointmentId: string,
   {
     seedCategory,
+    occurrenceId,
     enabled = true,
   }: {
     /**
@@ -220,60 +327,68 @@ export function useSupportThread(
      * the intent is gated out.
      */
     seedCategory?: string;
+    /** The session a retrospective report is about (`?occurrence=`); the server defaults to the last ended one. */
+    occurrenceId?: string;
     enabled?: boolean;
   } = {},
 ) {
-  const [lastActions, setLastActions] = useState<SupportAction[]>([]);
-  const [lastOutcomeId, setLastOutcomeId] = useState<string | null>(null);
-  const [lastReplyByAt, setLastReplyByAt] = useState<string | null>(null);
-  const [failedTurns, setFailedTurns] = useState<
-    Record<string, { body: string; vars: TurnVars }>
-  >({});
+  // Per thread, so a page that moves to another session shows that session's own cards and unsent messages.
+  const [pages, setPages] = useState<Record<string, ThreadPage>>({});
   const { toast } = useToast();
   const clock = useZoneClock();
   const qc = useQueryClient();
-  const queryKey = supportKeys.thread(appointmentId);
+  const queryKey: ThreadKey = supportKeys.thread(appointmentId, occurrenceId);
+  const {
+    actions: lastActions,
+    outcomeId: lastOutcomeId,
+    replyByAt: lastReplyByAt,
+    failedTurns,
+  } = pages[hashKey(queryKey)] ?? EMPTY_PAGE;
+  const patchPage = (key: ThreadKey, patch: (page: ThreadPage) => ThreadPage) =>
+    setPages((all) => ({
+      ...all,
+      [hashKey(key)]: patch(all[hashKey(key)] ?? EMPTY_PAGE),
+    }));
+  // An unsent turn stays with the thread it was sent from, with its retry.
+  const keepFailedTurn = (
+    sentFrom: ThreadKey,
+    id: string,
+    failed: ThreadPage["failedTurns"][string],
+  ) =>
+    patchPage(sentFrom, (page) => ({
+      ...page,
+      failedTurns: { ...page.failedTurns, [id]: failed },
+    }));
 
-  // Undo the optimistic bubble. A turn sent before the first GET resolves has
-  // NO snapshot to restore, so the pending bubble is filtered out instead.
+  // Takes the turn's own pending bubble out of the thread it was sent from, and nothing else:
+  // a message another read brought in meanwhile stays. A thread the bubble alone started goes with it.
   const rollbackOptimistic = (
+    sentFrom: ThreadKey,
     previous: ThreadData | undefined,
     optimisticId: string | undefined,
   ) => {
-    if (previous) {
-      qc.setQueryData(queryKey, previous);
-      return;
-    }
     if (!optimisticId) return;
-    qc.setQueryData<ThreadData>(queryKey, (old) =>
-      old?.thread
-        ? {
-            ...old,
-            thread: {
-              ...old.thread,
-              messages: old.thread.messages.filter(
-                (m) => m.id !== optimisticId,
-              ),
-            },
-          }
-        : old,
-    );
+    qc.setQueryData<ThreadData>(sentFrom, (old) => {
+      if (!old?.thread) return old;
+      const messages = old.thread.messages.filter((m) => m.id !== optimisticId);
+      if (
+        previous?.thread === null &&
+        old.thread.id === "local" &&
+        messages.length === 0
+      ) {
+        return { ...old, thread: null };
+      }
+      return { ...old, thread: { ...old.thread, messages } };
+    });
   };
 
   const turn = useMutation({
-    mutationFn: async ({
-      chosenLabel: _chosenLabel,
-      ...body
-    }: TurnVars): Promise<TurnResult> => {
+    mutationFn: async (vars: TurnVars): Promise<TurnResult> => {
       const current = qc.getQueryData<ThreadData>(queryKey)?.thread;
-      if (
-        current?.activeChannel === "HUMAN" &&
-        current.id !== "local" &&
-        body.userMessage &&
-        !body.category &&
-        !body.chosenOptionId
-      ) {
-        const res = await fetch(`/api/support/cases/${current.id}/messages`, {
+      const body = supportTurnBody(vars);
+      const humanCaseId = vars.binding?.human ? vars.binding.caseId : undefined;
+      if (humanCaseId && body.userMessage) {
+        const res = await fetch(`/api/support/cases/${humanCaseId}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -284,13 +399,15 @@ export function useSupportThread(
         });
         if (!res.ok) await throwSupportError(res, "support reply");
         // A plain reply is a follow-up; only "This didn't fix it" reopens.
+        const shown = current?.id === humanCaseId ? current : undefined;
         return {
+          threadId: humanCaseId,
           status:
-            body.reopen && current.status === "RESOLVED"
+            body.reopen && shown?.status === "RESOLVED"
               ? "OPEN"
-              : current.status,
+              : (shown?.status ?? "OPEN"),
           activeChannel: "HUMAN",
-          currentNodeId: current.currentNodeId,
+          currentNodeId: shown?.currentNodeId ?? null,
           messages: [],
           escalated: false,
           resolved: false,
@@ -309,29 +426,39 @@ export function useSupportThread(
     // Echo the user's turn immediately: two serial round trips on a cold
     // instance otherwise read as the tap having missed.
     onMutate: async (vars) => {
-      await qc.cancelQueries({ queryKey });
+      // Exact: a session's page has its own entry under the booking's key, and its read is not this turn's to cancel.
+      await qc.cancelQueries({ queryKey, exact: true });
       const previous = qc.getQueryData<ThreadData>(queryKey);
       const said = vars.userMessage ?? vars.chosenLabel;
-      let optimisticId: string | undefined;
-      if (said) {
-        optimisticId = nextLocalId();
+      // A retry bound to a case the page no longer shows is echoed nowhere; it keeps its id, so a second failure is still retryable.
+      const shownId = previous?.thread?.id;
+      const forOtherCase = Boolean(
+        vars.binding?.caseId &&
+        shownId &&
+        shownId !== "local" &&
+        vars.binding.caseId !== shownId,
+      );
+      const optimisticId = said ? nextLocalId() : undefined;
+      if (said && !forOtherCase) {
         qc.setQueryData<ThreadData>(queryKey, (old) =>
           appendMessages(old, [
             { id: optimisticId, sender: "USER", body: said, pending: true },
           ]),
         );
       }
-      return { previous, optimisticId };
+      // The thread this turn was sent from: the page may show another session's by the time it completes.
+      return { previous, optimisticId, sentFrom: queryKey };
     },
     onSuccess: (result, vars, context) => {
+      // These callbacks are the latest render's, so `queryKey` is the page shown now, not the sender's.
+      const sentFrom = context?.sentFrom ?? queryKey;
       // The server took the request but refused the write: treat it exactly
       // like a failure, or the bubble sits there looking delivered.
       if (result.accepted === false) {
         const id = context?.optimisticId;
         const said = vars.userMessage ?? vars.chosenLabel;
-        rollbackOptimistic(context?.previous, id);
-        if (id && said)
-          setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
+        rollbackOptimistic(sentFrom, context?.previous, id);
+        if (id && said) keepFailedTurn(sentFrom, id, { body: said, vars });
         toast({
           title: "Support",
           description:
@@ -340,46 +467,80 @@ export function useSupportThread(
         });
         return;
       }
-      setLastActions(result.actions ?? []);
-      if (result.outcomeId !== undefined) {
-        setLastOutcomeId(result.outcomeId ?? null);
+      // A retry bound to a case the page no longer shows leaves the shown thread alone.
+      const shownId = qc.getQueryData<ThreadData>(sentFrom)?.thread?.id;
+      const shownCase = shownId && shownId !== "local" ? shownId : undefined;
+      const forOtherCase = Boolean(
+        vars.binding?.caseId && shownCase && vars.binding.caseId !== shownCase,
+      );
+      // A fresh turn that landed on another case moves the page to that case.
+      const movedTo =
+        !forOtherCase &&
+        result.threadId &&
+        shownCase &&
+        shownCase !== result.threadId
+          ? result.threadId
+          : undefined;
+      // The actions and reply-by line belong to the thread the turn was sent from; another session's page keeps its own.
+      if (!forOtherCase) {
+        patchPage(sentFrom, (page) => ({
+          ...page,
+          actions: result.actions ?? [],
+          ...(result.outcomeId !== undefined && {
+            outcomeId: result.outcomeId ?? null,
+          }),
+          ...(result.replyByAt !== undefined && {
+            replyByAt: result.replyByAt ?? null,
+          }),
+        }));
       }
-      if (result.replyByAt !== undefined) {
-        setLastReplyByAt(result.replyByAt ?? null);
-      }
-      qc.setQueryData<ThreadData>(queryKey, (old) => {
+      const said = vars.userMessage ?? vars.chosenLabel;
+      qc.setQueryData<ThreadData>(sentFrom, (old) => {
+        if (forOtherCase) return old;
         const merged = appendMessages(
-          old,
-          result.messages.map((m) => ({
-            sender: m.sender,
-            body: m.body,
-            metadata: m.metadata ?? null,
-          })),
+          movedTo && old ? { ...old, thread: null } : old,
+          [
+            ...(movedTo && said
+              ? [{ sender: "USER" as const, body: said }]
+              : []),
+            ...result.messages.map((m) => ({
+              sender: m.sender,
+              body: m.body,
+              metadata: m.metadata ?? null,
+            })),
+          ],
         );
         if (!merged.thread) return merged;
         return {
           ...merged,
           thread: {
             ...merged.thread,
+            ...(result.threadId ? { id: result.threadId } : {}),
             status: result.status,
             activeChannel: result.activeChannel,
             currentNodeId: result.currentNodeId,
+            // Kept before the refetch, so an option pressed at once still answers this case and session.
+            ...(result.appointmentOccurrenceId !== undefined
+              ? { appointmentOccurrenceId: result.appointmentOccurrenceId }
+              : {}),
             messages: merged.thread.messages.map((m) =>
               m.pending ? { ...m, pending: false } : m,
             ),
           },
         };
       });
-      void qc.invalidateQueries({ queryKey });
+      void qc.invalidateQueries({ queryKey: sentFrom });
     },
     onError: (e: unknown, vars, context) => {
+      const sentFrom = context?.sentFrom ?? queryKey;
+      const stillShown = hashKey(sentFrom) === hashKey(queryKey);
       // Keep the message where the user put it, marked failed, with a retry.
       // A DEFINITE refusal (403/404/400) is different: a retry returns the
       // same answer, so the bubble goes and the reason is shown instead.
       const id = context?.optimisticId;
       const said = vars.userMessage ?? vars.chosenLabel;
       if (e instanceof SupportRequestError && e.isDefinite) {
-        rollbackOptimistic(context?.previous, id);
+        rollbackOptimistic(sentFrom, context?.previous, id);
         toast({
           title: "Support",
           description: e.message,
@@ -388,9 +549,11 @@ export function useSupportThread(
         return;
       }
       if (id && said) {
-        rollbackOptimistic(context?.previous, id);
-        setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
-      } else {
+        rollbackOptimistic(sentFrom, context?.previous, id);
+        keepFailedTurn(sentFrom, id, { body: said, vars });
+      }
+      // The retry bubble is on the thread it was sent from; a page showing another session is told instead.
+      if (!(id && said && stillShown)) {
         toast({
           title: "Support",
           description: e instanceof Error ? e.message : "Please try again.",
@@ -409,7 +572,14 @@ export function useSupportThread(
       const status = q.state.data?.thread?.status;
       return status === "RESOLVED" || status === "CLOSED" ? false : 15_000;
     },
-    queryFn: () => fetchSupportThread(appointmentId),
+    // A refetch keeps the case the page shows; the first load lets the server choose.
+    queryFn: () => {
+      const shown = qc.getQueryData<ThreadData>(queryKey)?.thread?.id;
+      return fetchSupportThread(appointmentId, {
+        caseId: shown && shown !== "local" ? shown : undefined,
+        occurrenceId,
+      });
+    },
   });
   const data = query.data;
   const thread = data?.thread ?? null;
@@ -473,20 +643,37 @@ export function useSupportThread(
     (vars: TurnVars): boolean => {
       if (inFlight.current) return false;
       inFlight.current = true;
+      // A retry carries its first binding; only a fresh turn binds to the thread shown now.
+      const binding =
+        vars.binding ??
+        bindTurn(
+          vars,
+          qc.getQueryData<ThreadData>(
+            supportKeys.thread(appointmentId, occurrenceId),
+          )?.thread,
+          occurrenceId,
+        );
       mutateTurn(
-        { ...vars, clientTurnId: vars.clientTurnId ?? crypto.randomUUID() },
+        {
+          ...vars,
+          binding,
+          clientTurnId: vars.clientTurnId ?? crypto.randomUUID(),
+        },
         { onSettled: () => (inFlight.current = false) },
       );
       return true;
     },
-    [mutateTurn],
+    [mutateTurn, qc, appointmentId, occurrenceId],
   );
   const retryTurn = (id: string) => {
     const failed = failedTurns[id];
     // Check the in-flight guard BEFORE dropping the entry, or a Retry pressed
     // during another send erases the message and never resends it.
     if (!failed || inFlight.current) return;
-    setFailedTurns(({ [id]: _gone, ...rest }) => rest);
+    patchPage(queryKey, (page) => {
+      const { [id]: _gone, ...rest } = page.failedTurns;
+      return { ...page, failedTurns: rest };
+    });
     submitTurn(failed.vars);
   };
 
@@ -513,6 +700,12 @@ export function useSupportThread(
   return {
     query,
     data,
+    /** The session the page was opened for, when it names one. */
+    occurrenceId,
+    /** The ended sessions a report can be about, newest first. */
+    reportSessions: data?.reportSessions ?? [],
+    /** The booking's open session reports, for its page to link. */
+    sessionReports: data?.sessionReports ?? [],
     thread,
     messages,
     history,

@@ -5,6 +5,8 @@
 
 import type { OccurrenceOutcome, Prisma } from "@prisma/client";
 
+import { classifiedReasons, REPORT_EFFECT } from "./outcome-reports";
+
 /** A cancelled session must be made up, and HELD, within this many days. */
 export const MAKEUP_WINDOW_DAYS = 14;
 
@@ -36,7 +38,7 @@ export const EARNINGS_HOLDING_MISS = {
   appointment: { subscriptionId: null },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
-/** When the session was lost; the make-up window runs from here. */
+/** When the session was lost: the host's cancellation or the void. */
 export const missedAt = (o: {
   hostCancelledAt?: Date | null;
   voidedAt?: Date | null;
@@ -86,15 +88,61 @@ export const isNegativeMoneyOutcome = (
 ): outcome is NegativeMoneyOutcome =>
   outcome !== null && NEGATIVE_SET.has(outcome);
 
+/**
+ * When a miss's 14-day make-up window starts: the host's cancellation, or the void. A void whose
+ * negative verdict waits for a confirmation starts at that confirmation, and has not started (null) before it.
+ */
+export const makeUpWindowStart = (o: {
+  hostCancelledAt?: Date | null;
+  voidedAt?: Date | null;
+  outcome?: OccurrenceOutcome | null;
+  outcomeConfirmedAt?: Date | null;
+}): Date | null => {
+  if (o.hostCancelledAt) return o.hostCancelledAt;
+  if (!o.voidedAt) return null;
+  return isNegativeMoneyOutcome(o.outcome ?? null)
+    ? (o.outcomeConfirmedAt ?? null)
+    : o.voidedAt;
+};
+
+/** The database twin of {@link makeUpWindowStart} for a void: its window started before `before`. Change both together. */
+export function voidWindowStartedBefore(
+  before: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    voidedAt: { not: null },
+    OR: [
+      {
+        outcome: { in: [...NEGATIVE_MONEY_OUTCOMES] },
+        outcomeConfirmedAt: { lt: before },
+      },
+      {
+        voidedAt: { lt: before },
+        OR: [
+          { outcome: null },
+          { outcome: { notIn: [...NEGATIVE_MONEY_OUTCOMES] } },
+        ],
+      },
+    ],
+  };
+}
+
 /** Hours from a negative verdict (`outcomeAt`) to its window's close; must stay <= HOLD_PERIOD_HOURS.CONSULTATION. */
 export const OUTCOME_REPORT_WINDOW_HOURS = 48;
 
-/** A learner-absent verdict nobody confirmed holds its booking's earnings; a subscription's release per tranche. */
+/** A learner-absent verdict nobody confirmed holds its booking's earnings; on a subscription, every tranche of the plan. */
 export const UNCONFIRMED_LEARNER_ABSENT = {
   outcome: "LEARNER_ABSENT",
   outcomeConfirmedAt: null,
   deletedAt: null,
-  appointment: { subscriptionId: null },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A verdict the sweep applied (COMPLETED or VOIDED) that nobody has confirmed. */
+const APPLIED_UNCONFIRMED = {
+  deletedAt: null,
+  isTentative: false,
+  completionStatus: { in: ["COMPLETED", "VOIDED"] },
+  outcomeConfirmedAt: null,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /** An applied negative verdict whose report window closed unconfirmed: the window-close pass judges it, ops decide a weak one. */
@@ -105,16 +153,103 @@ export function unconfirmedClosedVerdictWhere(
     now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000,
   );
   return {
-    deletedAt: null,
-    isTentative: false,
-    completionStatus: { in: ["COMPLETED", "VOIDED"] },
+    ...APPLIED_UNCONFIRMED,
     outcome: { in: [...NEGATIVE_MONEY_OUTCOMES] },
-    outcomeConfirmedAt: null,
     outcomeAt: { lt: closedBefore },
   };
 }
 
-/** The ops needs-human list: the above, a paid trial that was voided (D4), and a closed unconfirmed verdict. */
+/** When a verdict written at `outcomeAt` stops taking reports. */
+export const reportWindowClosesAt = (outcomeAt: Date): Date =>
+  new Date(outcomeAt.getTime() + OUTCOME_REPORT_WINDOW_HOURS * 3_600_000);
+
+/** A linked case whose reason could move this verdict; who filed it and when is judged on the row read. */
+const reportCaseWhere = (
+  reasons: string[],
+): Prisma.SupportCaseListRelationFilter => ({
+  some: {
+    deletedAt: null,
+    ownershipScope: { not: "ORG_OPERATIONS" },
+    flowReason: { in: reasons },
+  },
+});
+
+/** An applied unconfirmed verdict an agreeing report may apply before its window closes. */
+export const AGREED_VERDICT = {
+  ...APPLIED_UNCONFIRMED,
+  outcomeAt: { not: null },
+  OR: NEGATIVE_MONEY_OUTCOMES.filter(
+    (outcome) => REPORT_EFFECT[outcome].agree.length > 0,
+  ).map((outcome) => ({
+    outcome,
+    supportCases: reportCaseWhere([...REPORT_EFFECT[outcome].agree]),
+  })),
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A consultation's host no-show, parked UNVERIFIED until its confirmation runs the no-show claim. */
+export const PROPOSED_CONSULTANT_NO_SHOW = {
+  deletedAt: null,
+  isTentative: false,
+  completionStatus: "UNVERIFIED",
+  outcome: "HOST_ABSENT",
+  outcomeConfirmedAt: null,
+  appointment: { consultationId: { not: null } },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A proposed consultant no-show whose window closed, or that the learner's report agrees with. */
+export function confirmableNoShowWhere(
+  now: Date,
+): Prisma.AppointmentOccurrenceWhereInput {
+  const closedBefore = new Date(
+    now.getTime() - OUTCOME_REPORT_WINDOW_HOURS * 3_600_000,
+  );
+  return {
+    ...PROPOSED_CONSULTANT_NO_SHOW,
+    OR: [
+      { outcomeAt: { lt: closedBefore } },
+      {
+        outcomeAt: { not: null },
+        supportCases: reportCaseWhere([...REPORT_EFFECT.HOST_ABSENT.agree]),
+      },
+    ],
+  };
+}
+
+/** An unsettled void whose negative verdict nobody confirmed: no refund path may settle it yet. */
+export const UNCONFIRMED_NEGATIVE_VOID = {
+  completionStatus: "VOIDED",
+  deletedAt: null,
+  seatsSettledAt: null,
+  outcome: { in: [...NEGATIVE_MONEY_OUTCOMES] },
+  outcomeConfirmedAt: null,
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A void the 14-day refund may settle: any negative verdict on it is confirmed. Explicit about a null outcome, which NOT would read as NULL. */
+export const SETTLEABLE_VOID_VERDICT = {
+  OR: [
+    { outcome: null },
+    { outcome: { notIn: [...NEGATIVE_MONEY_OUTCOMES] } },
+    { outcomeConfirmedAt: { not: null } },
+  ],
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** The in-memory twin of SETTLEABLE_VOID_VERDICT; change both together. */
+export const isSettleableVoidVerdict = (o: {
+  outcome: OccurrenceOutcome | null;
+  outcomeConfirmedAt: Date | null;
+}): boolean =>
+  !isNegativeMoneyOutcome(o.outcome) || o.outcomeConfirmedAt !== null;
+
+/** An applied unconfirmed verdict with a dispute or agreement filed against it: ops see both statements. */
+export const REPORTED_VERDICT = {
+  ...APPLIED_UNCONFIRMED,
+  OR: NEGATIVE_MONEY_OUTCOMES.map((outcome) => ({
+    outcome,
+    supportCases: reportCaseWhere(classifiedReasons(outcome)),
+  })),
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** The ops needs-human list: the above, a paid trial that was voided (D4), a closed unconfirmed verdict and a reported one. */
 export function needsHumanWhere(
   now: Date,
 ): Prisma.AppointmentOccurrenceWhereInput {
@@ -129,6 +264,7 @@ export function needsHumanWhere(
         appointment: { trial: { paymentId: { not: null } } },
       },
       unconfirmedClosedVerdictWhere(now),
+      REPORTED_VERDICT,
     ],
   };
 }

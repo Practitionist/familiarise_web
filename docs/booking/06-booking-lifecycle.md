@@ -1359,8 +1359,9 @@ t=1d       Reschedule proposed -> the old occurrence is released in place: isTen
                             the original slots and request status under the appointment lock (#1846)
 t=call     Meeting on Stream -> reconcile-orphaned-sessions (`25,55 * * * *`, twice hourly) closes the Meeting record
                             against the Stream call state
-             consultant never joined -> detect-consultant-no-shows (`57 * * * *`, hourly): cancels and fully refunds
-                            through `refundBookingPayment`, releases the occurrence
+             consultant never joined -> detect-consultant-no-shows (every 30 min): proposes the no-show
+                            (UNVERIFIED + HOST_ABSENT); the window-close pass or ops Confirm cancels and fully
+                            refunds through the owed-refund front door once it is confirmed
              nobody marked it done -> auto-complete-appointments (`7 * * * *`, hourly); the two jobs share one
                             attendance predicate (`lib/booking/attendance.ts`) so a booking in the no-show shape
                             is never completed out from under the detector

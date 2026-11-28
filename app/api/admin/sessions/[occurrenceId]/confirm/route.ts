@@ -14,11 +14,12 @@ export const POST = withOpsAction(
   { outcome: z.enum(NEGATIVE_MONEY_OUTCOMES) },
   {
     mode: "tx",
-    run: async (tx, { params, body }) => {
+    run: async (tx, { params, body, actor }) => {
       const occurrenceId = params.occurrenceId;
       const result = await confirmSessionOutcome(tx, {
         occurrenceId,
         outcome: body.outcome,
+        actorUserId: actor.userId,
       });
       return {
         target: { kind: "AppointmentOccurrence", id: occurrenceId },
@@ -26,6 +27,7 @@ export const POST = withOpsAction(
         before: result.before,
         after: result.after,
         response: { result: result.after },
+        afterCommit: result.afterCommit,
       };
     },
   },

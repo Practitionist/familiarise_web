@@ -715,6 +715,13 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           leave the series and get the remaining sessions refunded in full.
         </Shell>
       );
+    // A void's verdict is still being confirmed, so the sentence stands in for the exit.
+    case "EXIT_SERIES_WAITS":
+      return (
+        <Shell onHelp={onHelp} actions={null} tone="neutral">
+          {nextAction.label}
+        </Shell>
+      );
     // #1775 C-5 — a paid plan waiting for cycle 1 (or its next cycle).
     case "ALLOCATE":
       if (!decision) return null;

@@ -1,6 +1,8 @@
 /**
- * Confirmed consultant no-shows cancel and refund consultations using the shared
- * session-outcome verdict; multi-session partial refunds are excluded.
+ * A consultant no-show is proposed, never claimed, here: the judged sessions are
+ * parked UNVERIFIED with their verdicts, and the money step
+ * (`lib/booking/consultant-no-show.ts`) runs only once HOST_ABSENT is confirmed.
+ * Multi-session partial refunds are excluded.
  */
 
 import prisma from "../../lib/prisma";
@@ -9,30 +11,11 @@ import { reportStandingFinding } from "../../lib/observability/standing-finding"
 import { settleOccurrenceAttendance } from "../../lib/meetings/settle-attendance";
 import {
   AppointmentStatus,
-  CancellationReason,
   PaymentStatus,
   OccurrenceCompletionStatus,
   type OccurrenceOutcome,
   type Prisma,
 } from "@prisma/client";
-import {
-  notifyAppointmentCancelled,
-  notifyRefundProcessed,
-} from "../../lib/novu/service";
-import { notificationScope } from "../../lib/novu/workflows";
-import { notificationHref } from "../../lib/novu/resolve-href";
-import {
-  EMAIL_BUDGET_MS,
-  refundOnItsWay,
-  sendAppointmentCancelledEmail,
-  sendRefundProcessedEmail,
-} from "../../lib/email";
-import {
-  driveRefundOwed,
-  stampOwedOrHeld,
-  type OwedRefundAlreadyHeld,
-  type RefundOwedMarker,
-} from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   startDeadline,
@@ -42,40 +25,37 @@ import {
   createRunFailureReporter,
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
-import {
-  CANCELLABLE_FROM,
-  transitionConsultationRequest,
-  transitionOccurrenceCompletion,
-} from "@/lib/booking/transitions";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { NO_SHOW_GRACE_MINUTES } from "@/lib/booking/attendance";
 import {
   classifySessionOutcome,
   type OutageWindow,
   type PresenceInterval,
+  type SessionOutcomeVerdict,
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import { recordExpertStrike } from "@/lib/booking/expert-reliability";
+import {
+  DECIDED_OR_PARKED,
+  isOpsOwnedSibling,
+} from "@/lib/booking/consultant-no-show";
 
 export interface NoShowResult {
   success: boolean;
+  /** Consultations whose sessions were proposed as a consultant no-show this run. */
   detected: number;
-  refunded: number;
   /** Candidates skipped because Stream's record of a judged session is not stored yet; the next run retries. */
   unsettled: number;
-  /** No-shows whose payment already owed another door's refund, so this added nothing; top up by hand. */
-  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   timestamp: string;
 }
 
 /**
  * Candidates per bite when the caller passes none. Oldest `updatedAt` first;
- * the CAS claim in `claimConsultantNoShow` moves a consultation out of the
- * cohort (APPROVED/SCHEDULED only), and a candidate a bite read but left in
- * the cohort is excluded from the run's later bites by id.
+ * the proposal moves a consultation's judged sessions out of the cohort
+ * (SCHEDULED only), and a candidate a bite read but left in the cohort is
+ * excluded from the run's later bites by id.
  */
 const MAX_CANDIDATES_PER_BITE = 10;
 
@@ -93,10 +73,7 @@ export async function detectConsultantNoShows(opts?: {
   // A candidate started near that cutoff still finishes its Stream reads inside the ticker's abort.
   const settleDeadlineAt = startedAt + SWEEP_START_DEADLINE_MS;
   // #476 — locked at the core so every entry shares one mutual exclusion.
-  // Fail-closed: this is a money job (auto-refund), so per with-cron-lock.ts it
-  // refuses to run without a real Redis lock rather than risk a silent unlocked
-  // double-run. The CAS claim + refundPayment's refundable-balance guard remain
-  // the correctness backstop; the lock is the mutual-exclusion layer on top.
+  // Fail-closed, as a money-adjacent job; the per-session CAS stays the backstop.
   return withCronLock(
     "detect-consultant-no-shows",
     { failMode: "closed" },
@@ -121,21 +98,6 @@ const JUDGEABLE_SLOT = {
   isTentative: false,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
-// A decided or parked sibling makes the booking ops-owned, so this job must
-// not touch it. A settled incident void is history, not a decision on its rebook.
-const DECIDED_OR_PARKED = {
-  deletedAt: null,
-  OR: [
-    { outcome: { not: null } },
-    { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
-  ],
-  NOT: {
-    completionStatus: OccurrenceCompletionStatus.VOIDED,
-    outcome: "PLATFORM_OUTAGE",
-    seatsSettledAt: { not: null },
-  },
-} satisfies Prisma.AppointmentOccurrenceWhereInput;
-
 /** The in-memory twin of JUDGEABLE_SLOT; change both together. */
 function isJudgeableOccurrence(
   occurrence: {
@@ -153,27 +115,6 @@ function isJudgeableOccurrence(
     occurrence.outcome === null &&
     !occurrence.isTentative &&
     occurrence.endsAt.getTime() < graceCutoff.getTime()
-  );
-}
-
-/** The in-memory twin of DECIDED_OR_PARKED; change both together. */
-function isOpsOwnedSibling(occurrence: {
-  deletedAt: Date | null;
-  completionStatus: OccurrenceCompletionStatus;
-  outcome: OccurrenceOutcome | null;
-  seatsSettledAt: Date | null;
-}): boolean {
-  if (occurrence.deletedAt !== null) return false;
-  if (
-    occurrence.completionStatus === OccurrenceCompletionStatus.VOIDED &&
-    occurrence.outcome === "PLATFORM_OUTAGE" &&
-    occurrence.seatsSettledAt !== null
-  ) {
-    return false;
-  }
-  return (
-    occurrence.outcome !== null ||
-    occurrence.completionStatus === OccurrenceCompletionStatus.UNVERIFIED
   );
 }
 
@@ -249,14 +190,6 @@ function findNoShowCandidates(
       },
       appointment: {
         include: {
-          payment: {
-            select: {
-              id: true,
-              amount: true,
-              currency: true,
-              paymentStatus: true,
-            },
-          },
           occurrences: {
             orderBy: { startsAt: "asc" },
             include: { meeting: true },
@@ -268,18 +201,10 @@ function findNoShowCandidates(
 }
 
 type NoShowCandidate = Awaited<ReturnType<typeof findNoShowCandidates>>[number];
+/** Each judged session's verdict, which the proposal writes. */
 type NoShowParty = {
-  consultantUserId: string;
-  consulteeUserId: string;
-  appointmentId: string;
-  occurrenceIds: string[];
-  /** The judged session that was HOST_ABSENT; the strike is scoped to it. */
-  strikeOccurrenceId: string;
-  startsAt: Date;
+  verdicts: { occurrenceId: string; verdict: SessionOutcomeVerdict }[];
 };
-type PaidPayment = NonNullable<
-  NoShowCandidate["appointment"]
->["payment"][number];
 
 /** The sessions this job may judge: live, undecided and past the grace window. */
 function judgedOccurrences(consultation: NoShowCandidate, graceCutoff: Date) {
@@ -320,12 +245,12 @@ export async function settledJudgedAttendance(
   return intervals;
 }
 
-// Returns the party ids when `consultation` is a confirmed CONSULTANT no-show,
+// Returns the judged sessions' verdicts when `consultation` is a CONSULTANT no-show,
 // or null to skip. The verdict is `classifySessionOutcome` over Stream's settled
 // record, the same one the end + 1 h sweep writes, so the two jobs cannot
-// disagree: some session is HOST_ABSENT and the consultant was present in none.
-// Neither-showed and consultee-no-show cases are excluded — no consultant-fault
-// refund there.
+// disagree: every judged session is HOST_ABSENT and the consultant was present in none.
+// A booking with a neither-showed, no-room or consultee-no-show session is excluded:
+// no automatic consultant-fault refund there.
 export function evaluateConsultantNoShow(
   consultation: NoShowCandidate,
   outages: OutageWindow[],
@@ -358,39 +283,21 @@ export function evaluateConsultantNoShow(
     return null;
   }
 
-  const outcomes = judged.map(
-    (o) =>
-      classifySessionOutcome({
-        startsAt: o.startsAt,
-        endsAt: o.endsAt,
-        hostUserIds: [consultantUserId],
-        intervals: intervals.get(o.id) ?? [],
-        meeting: o.meeting,
-        maintenanceWindows: outages,
-      }).outcome,
-  );
-  const hostNeverPresent = outcomes.every((o) => HOST_NEVER_PRESENT.has(o));
-  if (!outcomes.includes("HOST_ABSENT") || !hostNeverPresent) return null;
-  const strikeOccurrenceId = judged.find(
-    (_, i) => outcomes[i] === "HOST_ABSENT",
-  )?.id;
-  if (!strikeOccurrenceId) return null;
-
-  return {
-    consultantUserId,
-    consulteeUserId,
-    appointmentId,
-    occurrenceIds: judged.map((o) => o.id),
-    strikeOccurrenceId,
-    startsAt: judged[0].startsAt,
-  };
+  const verdicts = judged.map((o) => ({
+    occurrenceId: o.id,
+    verdict: classifySessionOutcome({
+      startsAt: o.startsAt,
+      endsAt: o.endsAt,
+      hostUserIds: [consultantUserId],
+      intervals: intervals.get(o.id) ?? [],
+      meeting: o.meeting,
+      maintenanceWindows: outages,
+    }),
+  }));
+  // Automatic only when every judged session is expert-absent; any other sibling leaves the booking to the slot pass and ops.
+  if (!verdicts.every((v) => v.verdict.outcome === "HOST_ABSENT")) return null;
+  return { verdicts };
 }
-
-const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
-  "HOST_ABSENT",
-  "NOBODY_JOINED",
-  "OFFLINE",
-]);
 
 /** One console finding per run, recorded only when the set has a consultation not already recorded in the window. */
 async function reportOncePerRun(
@@ -405,253 +312,47 @@ async function reportOncePerRun(
   });
 }
 
-// Claim it: CAS active → CANCELLED. This is the idempotency gate — the detection
-// query only reads APPROVED/SCHEDULED, so once flipped a later run (or the
-// auto-complete cron) cannot re-process it. A concurrent cancel landing here wins
-// and this returns false → skip. On a successful claim we also reflect the
-// no-show on the judged slots (no NO_SHOW slot status exists — schema frozen;
-// CANCELLED is the closest; only undecided SCHEDULED slots move).
-async function claimConsultantNoShow(
-  consultationId: string,
-  appointmentId: string,
-  occurrenceIds: string[],
-  strikeOccurrenceId: string,
-  owed: RefundOwedMarker | null,
-  strike: { consultantProfileId: string; organizationId: string | null },
-  failures: RunFailureReporter,
-): Promise<{ held: OwedRefundAlreadyHeld | null } | false> {
-  try {
-    return await prisma.$transaction(async (tx) => {
-      // #1493 — route through the CAS helper so this cancel writes a
-      // BookingStatusHistory row like every other status change; the bare
-      // updateMany left no timeline entry for the no-show path.
-      await transitionConsultationRequest(tx, {
-        where: {
-          id: consultationId,
-          appointment: {
-            occurrences: {
-              some: { id: { in: occurrenceIds }, ...JUDGEABLE_SLOT },
-              none: DECIDED_OR_PARKED,
-            },
-          },
-        },
-        to: AppointmentStatus.CANCELLED,
-        fromIn: CANCELLABLE_FROM,
-        actorUserId: null,
-        reason: "#471 consultant no-show — auto-cancelled + refunded",
-        data: {
-          cancellationReason: CancellationReason.CONSULTANT_UNAVAILABLE,
-          cancellationNotes:
-            "#471 consultant no-show — auto-cancelled + refunded",
-          cancelledAt: new Date(),
-        },
-      });
-
-      // #1583 A-P0-05 — through the helper, tombstoned, with a history row;
-      // the from-set is the one the raw updateMany carried.
-      const moved = await transitionOccurrenceCompletion(tx, {
-        where: { id: { in: occurrenceIds }, ...JUDGEABLE_SLOT },
-        to: OccurrenceCompletionStatus.CANCELLED,
-        fromIn: [OccurrenceCompletionStatus.SCHEDULED],
-        data: { deletedAt: new Date() },
-        allowZero: false,
-        actorUserId: null,
-        reason: "consultant no-show",
-      });
-      // Zero rows or a partial move means a concurrent writer took a session;
-      // throw so the parent cancel rolls back with it.
-      if (moved !== occurrenceIds.length) {
-        throw new IllegalTransitionError(
-          "AppointmentOccurrence",
-          OccurrenceCompletionStatus.CANCELLED,
-        );
-      }
-      // The full refund the no-show owes commits with the claim; one another
-      // door already owes is reported instead (first writer wins).
-      const held = owed ? await stampOwedOrHeld(tx, owed) : null;
-      await recordExpertStrike(tx, {
-        ...strike,
-        cause: "CONSULTANT_NO_SHOW",
-        appointmentId,
-        occurrenceIds: [strikeOccurrenceId],
-      });
-      return { held };
-    });
-  } catch (error) {
-    // Zero rows matched (parent or occurrences) means someone else moved it
-    // between the scan and this claim — the skip branch at the call site.
-    if (error instanceof IllegalTransitionError) {
-      failures.add(
-        "detect-consultant-no-shows",
-        new Error("No-show claim lost its CAS; row skipped"),
-        { consultationId, appointmentId },
-        { expected: true },
-      );
-      return false;
-    }
-    throw error;
-  }
-}
-
-/** The full refund a consultant no-show owes, under the arm's own key. */
-function noShowRefundOwed(paymentId: string): RefundOwedMarker {
-  return {
-    paymentId,
-    amountPaise: null,
-    // Distinct from every expiry arm's key, so a later refund of the same
-    // payment for another reason is a real ALREADY_FULLY_REFUNDED.
-    key: `consultant-no-show:${paymentId}`,
-    reason: "consultant no-show (#471)",
-  };
-}
-
-function paidPaymentOf(consultation: NoShowCandidate): PaidPayment | undefined {
-  return consultation.appointment?.payment?.find(
-    (p) => p.paymentStatus === PaymentStatus.SUCCEEDED,
-  );
-}
-
 /**
- * Drive the full refund the claim stamped, through the booking front door so
- * gateway, org-funded and credit rails each settle correctly. The key makes a
- * second run (a lost lock) and the retry sweep one refund with this one; a
- * failure stays on the marker and is surfaced for ops.
+ * Propose it: every judged session moves SCHEDULED -> UNVERIFIED with its own
+ * verdict and an unconfirmed stamp, by one CAS each in one transaction, so a
+ * session another writer took rolls the whole proposal back. No money moves.
  */
-async function refundNoShowConsultation(
-  consultation: NoShowCandidate,
-  errors: string[],
-  failures: RunFailureReporter,
-): Promise<{
-  refundedPaise: number;
-  succeeded: boolean;
-  paidPayment: PaidPayment | undefined;
-}> {
-  const paidPayment = paidPaymentOf(consultation);
-  if (!paidPayment) {
-    const msg = `No refundable payment for no-show consultation ${consultation.id}`;
-    console.warn(`   ⚠️ ${msg}`);
-    errors.push(msg);
-    return { refundedPaise: 0, succeeded: false, paidPayment: undefined };
-  }
-  const outcome = await driveRefundOwed(noShowRefundOwed(paidPayment.id));
-  if (outcome.kind === "refunded" || outcome.kind === "replayed") {
-    console.log(
-      `   💸 Refunded ${outcome.refund.amountRefundedPaise}p via ${outcome.refund.rail ?? "an earlier run"}`,
-    );
-    return {
-      refundedPaise: outcome.refund.amountRefundedPaise,
-      succeeded: true,
-      paidPayment,
-    };
-  }
-  if (outcome.kind === "settled") {
-    return { refundedPaise: 0, succeeded: true, paidPayment };
-  }
-  const refundErr =
-    outcome.kind === "failed"
-      ? outcome.error
-      : new Error(`payment ${paidPayment.id} has an open dispute`);
-  const msg = `Failed to refund no-show consultation ${consultation.id} (payment ${paidPayment.id}): ${refundErr}`;
-  console.error(`   ❌ ${msg}`);
-  errors.push(msg);
-  // Ops parity with every other refund-failure path: a durable signal, awaited
-  // so the job's exit cannot drop it.
-  const refundError =
-    refundErr instanceof Error ? refundErr : new Error(String(refundErr));
-  failures.add("detect-consultant-no-shows.refund-failed", refundError, {
-    consultationId: consultation.id,
-    paymentId: paidPayment.id,
-  });
-  await recordSystemErrorSafe({
-    organizationId: null,
-    category: "PAYMENT",
-    summary: `No-show refund failed for consultation ${consultation.id}`,
-    err: refundError,
-    context: { paymentId: paidPayment.id },
-    skipSentry: true,
-  });
-  return { refundedPaise: 0, succeeded: false, paidPayment };
-}
-
-// #1654 — awaited notifications (staged, then attempted) reusing the Novu service.
-async function notifyNoShowParties(
+async function proposeConsultantNoShow(
   consultation: NoShowCandidate,
   party: NoShowParty,
-  refundedPaise: number,
-  paidPayment: PaidPayment | undefined,
-): Promise<void> {
-  const consultantName =
-    consultation.consultationPlan?.consultantProfile?.user?.name ??
-    "Consultant";
-  const consulteeName = consultation.requestedBy?.user?.name ?? "Consultee";
-  const planTitle = consultation.consultationPlan?.title ?? "Consultation";
-  const noShowOrgId = consultation.appointment?.organizationId ?? null;
-  const dashboardUrl = notificationHref(noShowOrgId, "appointments");
-
-  await notifyAppointmentCancelled(
-    [party.consultantUserId, party.consulteeUserId],
-    {
-      ...notificationScope(noShowOrgId),
-      appointmentId: party.appointmentId,
-      appointmentType: "consultation",
-      consultantName,
-      consulteeName,
-      planTitle,
-      dashboardUrl,
-      cancelledBy: "system",
-      reason: "Consultant did not attend the scheduled session.",
-    },
-  ).catch((e) => console.error(`[no-show] cancellation notify failed:`, e));
-
-  // #1653 — the email twin of the bell above; the refund line goes to the
-  // consultee alone. The sender never throws, so the catch is the same
-  // belt-and-braces the bell wears.
-  await sendAppointmentCancelledEmail(
-    {
-      appointmentId: party.appointmentId,
-      userIds: [party.consultantUserId, party.consulteeUserId],
-      startsAt: party.startsAt,
-      cancelledBy: "Familiarise",
-      reason: "Consultant did not attend the scheduled session.",
-      refundText:
-        refundedPaise > 0 && paidPayment
-          ? refundOnItsWay(refundedPaise, paidPayment.currency)
-          : undefined,
-      refundUserIds: [party.consulteeUserId],
-      dashboardUrl,
-    },
-    EMAIL_BUDGET_MS.JOB,
-  ).catch((e) => console.error(`[no-show] cancellation email failed:`, e));
-
-  if (refundedPaise > 0 && paidPayment) {
-    await notifyRefundProcessed(party.consulteeUserId, {
-      ...notificationScope(noShowOrgId),
-      amount: refundedPaise,
-      currency: paidPayment.currency,
-      reason: "consultant no-show",
-      appointmentType: "consultation",
-      consultantName,
-      dashboardUrl,
-    }).catch((e) => console.error(`[no-show] refund notify failed:`, e));
-    // #1653 — the email twin; the sender never throws.
-    await sendRefundProcessedEmail(
-      {
-        userId: party.consulteeUserId,
-        paymentId: paidPayment.id,
-        amountPaise: refundedPaise,
-        currency: paidPayment.currency,
-        planTitle,
-      },
-      { budgetMs: EMAIL_BUDGET_MS.JOB },
-    );
+  now: Date,
+): Promise<boolean> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const { occurrenceId, verdict } of party.verdicts) {
+        await transitionOccurrenceCompletion(tx, {
+          where: { id: occurrenceId, ...JUDGEABLE_SLOT },
+          to: OccurrenceCompletionStatus.UNVERIFIED,
+          fromIn: [OccurrenceCompletionStatus.SCHEDULED],
+          data: {
+            outcome: verdict.outcome,
+            outcomeAt: now,
+            outcomeConfirmedAt: null,
+            deliveredMinutes: verdict.deliveredMinutes,
+            lostMinutes: verdict.lostMinutes,
+          },
+          allowZero: false,
+          actorUserId: null,
+          reason: `consultant-no-show:proposed:${verdict.outcome}`,
+          organizationId: consultation.appointment?.organizationId ?? null,
+        });
+      }
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof IllegalTransitionError) return false;
+    throw error;
   }
 }
 
 interface NoShowTally {
   detected: number;
-  refunded: number;
   unsettled: Array<{ consultationId: string }>;
-  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   failures: RunFailureReporter;
   /** Every candidate's Stream reads must answer by the end of the run's start budget. */
@@ -666,7 +367,7 @@ async function handleNoShowCandidate(
   tally: NoShowTally,
 ): Promise<void> {
   try {
-    // Money moves only on Stream's settled record; an unsettled session is retried next run.
+    // A verdict is proposed only on Stream's settled record; an unsettled session is retried next run.
     const intervals = await settledJudgedAttendance(consultation, graceCutoff, {
       failures: tally.failures,
       deadlineAt: tally.settleDeadlineAt,
@@ -683,49 +384,14 @@ async function handleNoShowCandidate(
     );
     if (!party) return;
 
+    if (!(await proposeConsultantNoShow(consultation, party, new Date()))) {
+      console.log(`   ⏭️ Skipped — a session changed since scan`);
+      return;
+    }
     tally.detected++;
-    console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
-    console.log(`   Plan: ${consultation.consultationPlan?.title}`);
-
-    const paid = paidPaymentOf(consultation);
-    const claimed = await claimConsultantNoShow(
-      consultation.id,
-      party.appointmentId,
-      party.occurrenceIds,
-      party.strikeOccurrenceId,
-      paid ? noShowRefundOwed(paid.id) : null,
-      {
-        consultantProfileId: consultation.consultationPlan.consultantProfileId,
-        organizationId: consultation.appointment?.organizationId ?? null,
-      },
-      tally.failures,
+    console.log(
+      `\n🚫 Consultant no-show proposed: consultation ${consultation.id}`,
     );
-    if (!claimed) {
-      console.log(`   ⏭️ Skipped — status changed since scan`);
-      tally.detected--;
-      return;
-    }
-    if (claimed.held) {
-      // Another door's refund is the one owed; the no-show added nothing to it.
-      tally.refundsAlreadyOwed.push(claimed.held);
-      await notifyNoShowParties(
-        consultation,
-        party,
-        0,
-        paidPaymentOf(consultation),
-      );
-      return;
-    }
-
-    const { refundedPaise, succeeded, paidPayment } =
-      await refundNoShowConsultation(
-        consultation,
-        tally.errors,
-        tally.failures,
-      );
-    if (succeeded) tally.refunded++;
-
-    await notifyNoShowParties(consultation, party, refundedPaise, paidPayment);
   } catch (error) {
     const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
     console.error(`   ❌ ${msg}`);
@@ -740,9 +406,7 @@ async function detectConsultantNoShowsUnlocked(
 ): Promise<NoShowResult> {
   const tally: NoShowTally = {
     detected: 0,
-    refunded: 0,
     unsettled: [],
-    refundsAlreadyOwed: [],
     errors: [],
     failures: createRunFailureReporter("bookings"),
     settleDeadlineAt,
@@ -798,8 +462,7 @@ async function detectConsultantNoShowsUnlocked(
   }
 
   console.log("\n📊 No-Show Summary:");
-  console.log(`   Detected: ${tally.detected}`);
-  console.log(`   Refunded: ${tally.refunded}`);
+  console.log(`   Proposed: ${tally.detected}`);
   console.log(`   Waiting on Stream's record: ${tally.unsettled.length}`);
   if (errors.length > 0) {
     console.log("\n⚠️ Errors:");
@@ -809,9 +472,7 @@ async function detectConsultantNoShowsUnlocked(
   return {
     success: errors.length === 0,
     detected: tally.detected,
-    refunded: tally.refunded,
     unsettled: tally.unsettled.length,
-    refundsAlreadyOwed: tally.refundsAlreadyOwed,
     errors,
     timestamp: new Date().toISOString(),
   };

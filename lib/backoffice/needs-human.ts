@@ -19,6 +19,7 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { PARTIAL_CREDIT_CLOSED_PREFIX } from "@/lib/payments/operations/credit-plan-return";
+import { INCIDENT_NO_SHOW_CLAIM_PREFIX } from "@/lib/booking/incident-keys";
 
 /** #1834 — the settle sweep's key for a paid seat still HELD at settle time. */
 export const HELD_PAID_SEAT_PREFIX = "held-paid-seat:";
@@ -198,7 +199,10 @@ function contextString(ctx: unknown, key: string): string | null {
   return typeof v === "string" ? v : null;
 }
 
-function toItem(e: EventRow, kind: "credit" | "held-paid-seat") {
+function toItem(
+  e: EventRow,
+  kind: "credit" | "held-paid-seat" | "incident-no-show-claim",
+) {
   const unit = (e.context as { unitPaise?: unknown } | null)?.unitPaise;
   return {
     id: e.id,
@@ -672,11 +676,25 @@ export async function readRefundNeedsHuman() {
   const held = await dropAnsweredHeldSeats(
     heldEvents.map((e) => toItem(e, "held-paid-seat")),
   );
+  // A no-show claim refunded and struck inside an incident: reviewed by hand, listed for 30 days.
+  const incidentClaims = await prisma.systemEvent.findMany({
+    where: {
+      correlationId: { startsWith: INCIDENT_NO_SHOW_CLAIM_PREFIX },
+      createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) },
+    },
+    orderBy: { createdAt: "desc" },
+    select: EVENT_SELECT,
+  });
   const stuck = await readStuckOwedRefunds();
   const owedHeld = await readOwedAlreadyHeld();
   const unsent = await readUnsentSupportRefunds();
-  const items = [...credit, ...held, ...stuck, ...owedHeld, ...unsent].sort(
-    (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-  );
+  const items = [
+    ...credit,
+    ...held,
+    ...incidentClaims.map((e) => toItem(e, "incident-no-show-claim")),
+    ...stuck,
+    ...owedHeld,
+    ...unsent,
+  ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   return items;
 }

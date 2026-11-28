@@ -36,6 +36,32 @@ const reportSentryError = jest.fn();
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: (...a: unknown[]) => reportSentryError(...a),
 }));
+/** The appointment lock as the pass takes it: what was asked, and what the lock answers. */
+const lockAsks: { appointmentId: string; config: unknown }[] = [];
+const mockLock: { refuse: Error | null; events: string[] } = {
+  refuse: null,
+  events: [],
+};
+jest.mock("../../utils/appointmentlock", () => {
+  const actual = jest.requireActual("../../utils/appointmentlock");
+  return {
+    ...actual,
+    withAppointmentLock: async (
+      appointmentId: string,
+      fn: () => Promise<unknown>,
+      config: unknown,
+    ) => {
+      lockAsks.push({ appointmentId, config });
+      if (mockLock.refuse) throw mockLock.refuse;
+      mockLock.events.push("locked");
+      try {
+        return await fn();
+      } finally {
+        mockLock.events.push("released");
+      }
+    },
+  };
+});
 const recording = { current: null as { id: string } | null };
 const seatUpdate = jest.fn().mockResolvedValue({ count: 1 });
 jest.mock("../../lib/prisma", () => {
@@ -120,7 +146,83 @@ const slot = (hostLeaves: number): OutcomeSlot => {
   } as unknown as OutcomeSlot;
 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  lockAsks.length = 0;
+  mockLock.refuse = null;
+  mockLock.events = [];
+});
+
+describe("a void and the booking's doors take turns", () => {
+  it("writes a void under the booking's appointment lock, each lock call bounded by the run's time left; a held session takes no lock", async () => {
+    transition.mockImplementationOnce(async () => {
+      mockLock.events.push("write");
+      return 1;
+    });
+    const deadlineAt = Date.now() + 10_000;
+
+    const d = await decideSlotOutcome(slot(30), {
+      now: at(120),
+      outages: [],
+      settleDeadlineAt: deadlineAt,
+    });
+
+    expect(d).toMatchObject({ kind: "written", to: "VOIDED", moved: true });
+    expect(mockLock.events).toEqual(["locked", "write", "released"]);
+    expect(lockAsks).toEqual([
+      {
+        appointmentId: "apt-1",
+        config: expect.objectContaining({ deadlineAt }),
+      },
+    ]);
+
+    lockAsks.length = 0;
+    await decideSlotOutcome(slot(60), { now: at(120), outages: [] });
+    expect(lockAsks).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a door holds the booking",
+      () =>
+        new (jest.requireActual(
+          "../../utils/appointmentlock",
+        ).AppointmentBusyError)("apt-1"),
+    ],
+    [
+      "the lock service does not answer",
+      () =>
+        new (jest.requireActual(
+          "../../utils/appointmentlock",
+        ).BookingLockUnavailableError)("appointment"),
+    ],
+  ])(
+    "while %s the void is not written: the session stays SCHEDULED for the next run",
+    async (_label, refusal) => {
+      mockLock.refuse = refusal();
+
+      const d = await decideSlotOutcome(slot(30), {
+        now: at(120),
+        outages: [],
+      });
+
+      expect(d).toEqual({ kind: "deferred", reason: "appointment-busy" });
+      expect(transition).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not ask for the lock once the run's time is spent", async () => {
+    const d = await decideSlotOutcome(slot(30), {
+      now: at(120),
+      outages: [],
+      settleDeadlineAt: Date.now() - 1,
+    });
+
+    expect(d).toEqual({ kind: "deferred", reason: "appointment-busy" });
+    expect(lockAsks).toEqual([]);
+    expect(transition).not.toHaveBeenCalled();
+  });
+});
 
 it("a room rotated while its record was settled leaves the session SCHEDULED: the write fences on the call id loaded before the settle", async () => {
   const db = jest.requireMock("../../lib/prisma").default as {

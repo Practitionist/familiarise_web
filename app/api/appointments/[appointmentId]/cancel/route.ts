@@ -75,7 +75,12 @@ import {
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
 import { cancelWindowRefusal } from "@/lib/booking/session-window";
-import { isRefusal } from "@/lib/errors/refusal";
+import { isRefusal, Refusal } from "@/lib/errors/refusal";
+import {
+  anySeatCarriesMoney,
+  pendingVoidCancelAction,
+  pendingVoidRefusal,
+} from "@/lib/booking/pending-void-gate";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   classSeriesLedgers,
@@ -228,6 +233,18 @@ class PlanRefundLandedError extends Error {
       "A refund changed this plan while you were cancelling it. Check the new amount and confirm again.",
     );
     this.name = "PlanRefundLandedError";
+  }
+}
+
+/** Another door settled a voided session this cancel had priced; nothing commits and the next click re-quotes. */
+class VoidSettledElsewhereError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly code = "BOOKING_CHANGED" as const;
+  constructor() {
+    super(
+      "This booking changed while you were cancelling it. Refresh to see where it stands, then try again.",
+    );
+    this.name = "VoidSettledElsewhereError";
   }
 }
 
@@ -934,7 +951,28 @@ export async function POST(
                 isConsultantInitiated ? "host" : "buyer",
               );
               if (windowRefusal) throw windowRefusal;
+              // A void whose negative verdict is unconfirmed may yet be held, so a class's, a
+              // consultation's or a plan's cancel waits for it; a booking that cost nothing cancels.
               const paidPayment = bookingCtx?.paidPayment ?? null;
+              const waitsOnVerdict = appointment.class
+                ? await anySeatCarriesMoney(tx, appointmentId)
+                : isExclusiveType &&
+                  paidPayment !== null &&
+                  !isPriceFreePayment(paidPayment);
+              if (waitsOnVerdict) {
+                const pending = await pendingVoidRefusal(tx, {
+                  appointmentId,
+                  readerUserId: session.user.id,
+                  action: pendingVoidCancelAction(appointment),
+                });
+                if (pending) {
+                  throw new Refusal({
+                    code: "CANCEL_WAITS_FOR_VERDICT",
+                    userMessage: pending,
+                    context: { appointmentId },
+                  });
+                }
+              }
               // The quote is pure and runs before the CAS, so a click bound to a
               // stale figure is refused with nothing committed.
               const quoted =
@@ -950,6 +988,7 @@ export async function POST(
                       scheduledStarts: bookingCtx.scheduledStarts,
                       nowMs: bookingCtx.quotedAtMs,
                       alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
+                      unsettledVoid: bookingCtx.unsettledVoidIds.length > 0,
                       isSubscription: !!appointment.subscription,
                       isConsultantInitiated,
                       // Both halves are load-bearing: `free_` with a
@@ -1112,6 +1151,23 @@ export async function POST(
                 throw await heldMarkerRefusal(tx, owed.paymentId, {
                   appointmentId,
                 });
+              }
+              // The voided session this cancel priced in full is settled in the same
+              // commit, so the day-14 sweep and the ops door pay nothing more for it.
+              const voidIds = bookingCtx?.unsettledVoidIds ?? [];
+              if (voidIds.length > 0) {
+                const settled = await tx.appointmentOccurrence.updateMany({
+                  where: {
+                    id: { in: voidIds },
+                    completionStatus: "VOIDED",
+                    seatsSettledAt: null,
+                    deletedAt: null,
+                  },
+                  data: { seatsSettledAt: cancellationData.cancelledAt },
+                });
+                if (settled.count !== voidIds.length) {
+                  throw new VoidSettledElsewhereError();
+                }
               }
               // The undelivered share of a credit-funded plan is returned by
               // hand; the durable row commits with the cancel.

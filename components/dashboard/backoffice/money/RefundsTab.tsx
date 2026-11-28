@@ -28,6 +28,7 @@ const NeedsHumanList = z.object({
         .enum([
           "credit",
           "held-paid-seat",
+          "incident-no-show-claim",
           "stuck-owed-refund",
           "owed-already-held",
           "support-recommendation",
@@ -185,6 +186,8 @@ export function RefundDoorsPanel() {
                     </Button>
                   )}
                   {item.kind !== "support-recommendation" &&
+                    // The refund already went; ops review the strike and the earnings by hand.
+                    item.kind !== "incident-no-show-claim" &&
                     item.paymentId &&
                     // A settled top-up only waits for its hold release, on the earning.
                     !(

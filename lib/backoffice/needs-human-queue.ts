@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 
 import { meetingEndReasonSchema } from "@/lib/meetings/end-reasons";
+import { SupportFlowReasonEnum } from "@/schemas/enums";
 
 export const NEEDS_HUMAN_PAGE_SIZE = 20;
 
@@ -96,6 +97,14 @@ const personSchema = z.object({
   email: z.string().nullable(),
 });
 
+/** A participant's report that counts against or for the verdict, with the case it was filed on. */
+const reportSchema = z.object({
+  caseId: z.string(),
+  side: z.enum(["HOST", "LEARNER"]),
+  reason: SupportFlowReasonEnum,
+});
+export type NeedsHumanReport = z.infer<typeof reportSchema>;
+
 /** One parked session with the booking it belongs to, as the route returns it. */
 export const needsHumanItemSchema = z.object({
   id: z.string(),
@@ -113,6 +122,8 @@ export const needsHumanItemSchema = z.object({
   canRereadAttendance: z.boolean(),
   /** A negative verdict nobody has confirmed yet; ops may confirm it as it stands. */
   canConfirm: z.boolean(),
+  /** Counted disputes and agreements on a negative verdict, oldest first. */
+  reports: z.array(reportSchema),
   booking: z.object({
     type: z.nativeEnum(AppointmentsType),
     title: z.string(),

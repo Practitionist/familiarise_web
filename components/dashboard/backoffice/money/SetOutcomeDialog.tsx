@@ -12,7 +12,8 @@ const OUTCOMES = Object.keys(SESSION_OUTCOME_LABEL) as OccurrenceOutcome[];
 
 /**
  * #1569 A-10 — the `session.set-outcome` door for one session. A void that was
- * already made up or refunded is refused by the server.
+ * already made up or refunded is refused by the server; expert absent on a
+ * consultation cancels the whole booking or voids the one session, with a strike.
  */
 export function SetOutcomeDialog({
   occurrenceId,
@@ -36,7 +37,7 @@ export function SetOutcomeDialog({
       open
       onOpenChange={(o) => !o && onClose()}
       title="Set this session's outcome"
-      description="A voided outcome owes the learner a make-up or a refund; a held or forfeit one does not."
+      description={`A voided outcome owes the learner a make-up or a refund; a held or forfeit one does not. On a 1:1 consultation, "${SESSION_OUTCOME_LABEL.HOST_ABSENT}" records a strike for the expert and refunds the booking in full now. A booking still running, whose every live session is expert absent, is cancelled with that refund. A consultation that already completed, or whose session was already voided, is not cancelled: the session is voided and the booking is refunded in full now. An unpaid booking has nothing to refund, and a cancelled one keeps what its cancellation paid. Where none of these fits, the door refuses and says why.`}
       confirmLabel="Set outcome"
       pending={door.isPending}
       onConfirm={(reason) =>
