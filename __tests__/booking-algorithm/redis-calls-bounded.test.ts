@@ -176,6 +176,23 @@ describe("a call the request deadline cuts short is out of time, not an outage",
   });
 });
 
+it("a SET that lands after its acquire gave up is given back", async () => {
+  const realSet = client.set.bind(client);
+  jest
+    .spyOn(client, "set")
+    .mockImplementation(
+      (...args: Parameters<typeof realSet>) =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(realSet(...args)), CALL_BOUND_MS + 500),
+        ),
+    );
+  expect(await after(lockConsulteeBooking("user-1"), CALL_BOUND_MS)).toEqual({
+    error: "BookingLockUnavailableError",
+  });
+  await jest.advanceTimersByTimeAsync(1_000);
+  expect(await client.get("consultee-booking:user-1")).toBeNull();
+});
+
 describe("a lifecycle door's tiers share the request deadline", () => {
   it("the event tier stops waiting at the deadline and never runs the door", async () => {
     await client.set("event-checkout:WEBINAR:w-1", "a-buyer", { px: 600_000 });

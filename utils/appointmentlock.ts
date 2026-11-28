@@ -268,11 +268,10 @@ async function acquireLockWithRetry(
     if (bound <= 0) {
       throw new LockContentionError(key, attempt);
     }
+    let pending: Promise<unknown> | null = null;
     try {
-      const result = await withCallTimeout(
-        client.set(key, value, { nx: true, px: effectiveTTL }),
-        bound,
-      );
+      pending = client.set(key, value, { nx: true, px: effectiveTTL });
+      const result = await withCallTimeout(pending, bound);
 
       if (result === "OK") {
         const duration = Date.now() - startTime;
@@ -331,6 +330,11 @@ async function acquireLockWithRetry(
       // The SET may have landed before the error: delete it only if it is ours,
       // so neither the retry nor the next caller meets our own key as contention.
       await releaseIfOurs(client, key, value, config.deadlineAt);
+      // An abandoned SET may land after that release: give the key back when it settles.
+      if (error instanceof RedisCallTimeout && pending) {
+        const release = () => releaseIfOurs(client, key, value);
+        void pending.then(release, release);
+      }
 
       // A call cut short by the deadline, not by its own bound, is out of time: no breaker failure.
       if (error instanceof RedisCallTimeout && byDeadline) {
