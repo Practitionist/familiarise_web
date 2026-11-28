@@ -26,6 +26,12 @@ import {
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
+import {
+  prepareProposedOutcomeNotices,
+  stageOutcomeNotices,
+  type PreparedOutcomeNotices,
+} from "@/lib/booking/outcome-notices";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { NO_SHOW_GRACE_MINUTES } from "@/lib/booking/attendance";
 import {
@@ -203,7 +209,13 @@ function findNoShowCandidates(
 type NoShowCandidate = Awaited<ReturnType<typeof findNoShowCandidates>>[number];
 /** Each judged session's verdict, which the proposal writes. */
 type NoShowParty = {
-  verdicts: { occurrenceId: string; verdict: SessionOutcomeVerdict }[];
+  appointmentId: string;
+  verdicts: {
+    occurrenceId: string;
+    startsAt: Date;
+    endsAt: Date;
+    verdict: SessionOutcomeVerdict;
+  }[];
 };
 
 /** The sessions this job may judge: live, undecided and past the grace window. */
@@ -285,6 +297,8 @@ export function evaluateConsultantNoShow(
 
   const verdicts = judged.map((o) => ({
     occurrenceId: o.id,
+    startsAt: o.startsAt,
+    endsAt: o.endsAt,
     verdict: classifySessionOutcome({
       startsAt: o.startsAt,
       endsAt: o.endsAt,
@@ -296,7 +310,7 @@ export function evaluateConsultantNoShow(
   }));
   // Automatic only when every judged session is expert-absent; any other sibling leaves the booking to the slot pass and ops.
   if (!verdicts.every((v) => v.verdict.outcome === "HOST_ABSENT")) return null;
-  return { verdicts };
+  return { appointmentId, verdicts };
 }
 
 /** One console finding per run, recorded only when the set has a consultation not already recorded in the window. */
@@ -316,14 +330,29 @@ async function reportOncePerRun(
  * Propose it: every judged session moves SCHEDULED -> UNVERIFIED with its own
  * verdict and an unconfirmed stamp, by one CAS each in one transaction, so a
  * session another writer took rolls the whole proposal back. No money moves.
+ * Both sides' notices are rendered first and staged in that transaction, so a
+ * report window never starts unannounced; a notice that cannot be prepared throws
+ * and the candidate waits for the next run.
  */
 async function proposeConsultantNoShow(
   consultation: NoShowCandidate,
   party: NoShowParty,
   now: Date,
 ): Promise<boolean> {
+  const notices: PreparedOutcomeNotices[] = [];
+  for (const session of party.verdicts) {
+    const prepared = await prepareProposedOutcomeNotices({
+      occurrenceId: session.occurrenceId,
+      appointmentId: party.appointmentId,
+      startsAt: session.startsAt,
+      endsAt: session.endsAt,
+      outcome: "HOST_ABSENT",
+      outcomeAt: now,
+    });
+    if (prepared) notices.push(prepared);
+  }
   try {
-    await prisma.$transaction(async (tx) => {
+    const staged = await prisma.$transaction(async (tx) => {
       for (const { occurrenceId, verdict } of party.verdicts) {
         await transitionOccurrenceCompletion(tx, {
           where: { id: occurrenceId, ...JUDGEABLE_SLOT },
@@ -342,7 +371,24 @@ async function proposeConsultantNoShow(
           organizationId: consultation.appointment?.organizationId ?? null,
         });
       }
+      const rows = [];
+      for (const prepared of notices) {
+        rows.push(await stageOutcomeNotices(tx, prepared));
+      }
+      return rows;
     });
+    await flushNotificationsAfter(
+      {
+        bells: staged.flatMap((n) => n.bells),
+        emails: [
+          {
+            rows: staged.flatMap((n) => n.emails),
+            emailType: "SESSION_OUTCOME_PROPOSED",
+          },
+        ],
+      },
+      "detect-consultant-no-shows",
+    );
     return true;
   } catch (error) {
     if (error instanceof IllegalTransitionError) return false;

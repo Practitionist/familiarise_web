@@ -121,6 +121,28 @@ jest.mock("../../lib/support/create-ticket", () => ({
   createSupportTicket: jest.fn(async () => ({ id: "ticket-1" })),
 }));
 
+// The proposed-verdict notices: rendered before the proposal's transaction, staged inside it.
+const mockPrepareNotices = jest.fn(
+  async (session: { occurrenceId: string }) => ({
+    entityRef: `appointment:${session.occurrenceId}`,
+    bells: [],
+    emails: null,
+  }),
+);
+const mockStageNotices = jest.fn(async (..._a: unknown[]) => ({
+  bells: [{ id: "bell-1" }],
+  emails: [{ id: "email-1" }],
+}));
+jest.mock("../../lib/booking/outcome-notices", () => ({
+  prepareProposedOutcomeNotices: (session: { occurrenceId: string }) =>
+    mockPrepareNotices(session),
+  stageOutcomeNotices: (...a: unknown[]) => mockStageNotices(...a),
+}));
+const mockFlushNotices = jest.fn(async (..._a: unknown[]) => undefined);
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: (...a: unknown[]) => mockFlushNotices(...a),
+}));
+
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   __esModule: true,
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
@@ -334,6 +356,77 @@ describe("consultant no-show refunds", () => {
     expect(prisma.payment.updateMany).not.toHaveBeenCalled();
     expect(prisma.systemEvent.create).not.toHaveBeenCalled();
     expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("tells both sides of the proposal with the write that makes it: prepared before, staged in its transaction, sent after", async () => {
+    const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([candidate]);
+
+    await detectConsultantNoShows();
+
+    const [session] = candidate.appointment.occurrences;
+    expect(mockPrepareNotices).toHaveBeenCalledTimes(1);
+    expect(mockPrepareNotices).toHaveBeenCalledWith({
+      occurrenceId: "occ-1",
+      appointmentId: "apt-1",
+      startsAt: session.startsAt,
+      endsAt: session.endsAt,
+      outcome: "HOST_ABSENT",
+      outcomeAt: expect.any(Date),
+    });
+    // The notice names the verdict's own time, which the window is counted from.
+    const [write] = proposalWrites();
+    expect(mockPrepareNotices.mock.calls[0][0]).toMatchObject({
+      outcomeAt: write.data.outcomeAt,
+    });
+    expect(mockStageNotices).toHaveBeenCalledTimes(1);
+    expect(mockStageNotices.mock.calls[0][0]).toBe(prisma);
+    expect(mockFlushNotices).toHaveBeenCalledWith(
+      {
+        bells: [{ id: "bell-1" }],
+        emails: [
+          {
+            rows: [{ id: "email-1" }],
+            emailType: "SESSION_OUTCOME_PROPOSED",
+          },
+        ],
+      },
+      "detect-consultant-no-shows",
+    );
+  });
+
+  it("proposes nothing when the notices cannot be prepared, so no report window starts unannounced; the next run proposes with them", async () => {
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+      noShowCandidate({ id: "pay-1", amount: 150000 }),
+    ]);
+    mockPrepareNotices.mockRejectedValueOnce(new Error("renderer down"));
+
+    const first = await detectConsultantNoShows();
+
+    expect(first.detected).toBe(0);
+    expect(proposalWrites()).toEqual([]);
+    expect(mockStageNotices).not.toHaveBeenCalled();
+
+    const next = await detectConsultantNoShows();
+
+    expect(next.detected).toBe(1);
+    expect(proposalWrites()).toHaveLength(1);
+    expect(mockStageNotices).toHaveBeenCalledTimes(1);
+  });
+
+  it("stages no notice for a proposal another writer beat to the session", async () => {
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+      noShowCandidate({ id: "pay-1", amount: 150000 }),
+    ]);
+    (
+      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
+    ).mockResolvedValueOnce([]);
+
+    const result = await detectConsultantNoShows();
+
+    expect(result.detected).toBe(0);
+    expect(mockStageNotices).not.toHaveBeenCalled();
+    expect(mockFlushNotices).not.toHaveBeenCalled();
   });
 
   it("the confirmed claim refunds through the front door, never the raw gateway path", async () => {

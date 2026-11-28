@@ -30,6 +30,17 @@ import {
   waitFor,
 } from "./harness-rooms";
 
+// @react-email/render needs --experimental-vm-modules under Jest; the static markup is the same tree.
+jest.mock("../../../lib/email/render", () => {
+  const { renderToStaticMarkup } =
+    jest.requireActual<typeof import("react-dom/server")>("react-dom/server");
+  return {
+    renderEmail: async (element: import("react").ReactElement) => {
+      const html = renderToStaticMarkup(element);
+      return { html, text: html };
+    },
+  };
+});
 jest.mock(
   "../../../lib/stream-client",
   () => jest.requireActual("./harness-stream").fakeStreamClient,
