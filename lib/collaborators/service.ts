@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 import {
   hostBatchEntries,
+  lockHostBatchInTx,
   HostTimeHeldError,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
@@ -734,18 +735,23 @@ async function acceptInvitation(
   const committed = await withHostSlotBatch(
     hostBatchEntries([args.consultantProfileId], heldWindows),
     (renewHostBatch) =>
-      withSerializableRetry(() =>
-        prisma.$transaction(
+      withSerializableRetry(async () => {
+        // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+        await renewHostBatch();
+        return prisma.$transaction(
           async (tx) => {
-            await renewHostBatch();
+            await lockHostBatchInTx(
+              tx,
+              hostBatchEntries([args.consultantProfileId], heldWindows),
+            );
             return acceptInTx(tx, args, ref, seenTerms, heldWindows);
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             timeout: 10000,
           },
-        ),
-      ),
+        );
+      }),
   ).catch((error: unknown) => {
     if (error instanceof CollaborationError) throw error;
     // Only a held atom is transient; a standing clash was answered inside the transaction.

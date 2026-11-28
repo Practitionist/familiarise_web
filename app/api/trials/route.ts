@@ -11,6 +11,7 @@ import { persistTrialPayLink } from "@/lib/trials/pay-link";
 import {
   bookTrialInTx,
   lockTrialPick,
+  lockTrialPickInTx,
   TrialDailyLimitError,
   TrialPairHeldError,
   TrialTimeRefusedError,
@@ -52,8 +53,11 @@ import { apiError } from "@/lib/errors/api-error";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
 import {
   BookingLockUnavailableError,
+  ConsulteeBookingBusyError,
   lockRequestCap,
+  renewRequestCap,
   RequestCapBusyError,
+  requestLockBudget,
   unlockRequestCap,
 } from "@/utils/appointmentlock";
 import {
@@ -340,6 +344,13 @@ export async function GET(request: NextRequest) {
  * POST /api/trials
  * Request a new trial session
  */
+/** A paused expert takes no new 1:1 booking or trial. */
+const expertPausedError = () =>
+  new BookingRuleError(
+    "NOT_ACCEPTING_BOOKINGS",
+    "This expert is not taking new 1:1 bookings or trials right now. Pick another expert, or try again later.",
+  );
+
 export async function POST(request: NextRequest) {
   try {
     const authResult = await requireApiAuth();
@@ -439,12 +450,7 @@ export async function POST(request: NextRequest) {
 
     // A paused expert takes no new booking, a trial included.
     if (subscriptionPlan.consultantProfile.acceptingRequests === false) {
-      return bookingRuleResponse(
-        new BookingRuleError(
-          "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new 1:1 bookings or trials right now. Pick another expert, or try again later.",
-        ),
-      );
+      return bookingRuleResponse(expertPausedError());
     }
 
     if (!subscriptionPlan.trialEnabled) {
@@ -560,9 +566,15 @@ export async function POST(request: NextRequest) {
     // under it), then the consultee, then the slot atoms — checkout's order.
     // A rival request for the pair that passed the read above is refused by
     // the in-transaction recheck or the pair index, with the same 409.
+    // One deadline for all three tiers: a wait on one is not available to the next.
+    const lockBudget = requestLockBudget();
     let capLock: Awaited<ReturnType<typeof lockRequestCap>>;
     try {
-      capLock = await lockRequestCap(consultantProfileId);
+      capLock = await lockRequestCap(
+        consultantProfileId,
+        undefined,
+        lockBudget,
+      );
     } catch (error) {
       if (error instanceof RequestCapBusyError) {
         return NextResponse.json(
@@ -591,6 +603,7 @@ export async function POST(request: NextRequest) {
         buyerConsultantProfileId: buyerConsultantProfile?.id,
         startsAt,
         endsAt,
+        lockBudget,
       });
       try {
         // Read and rendered before the transaction: a free trial stages only its rows.
@@ -605,19 +618,34 @@ export async function POST(request: NextRequest) {
               planTitle: subscriptionPlan.title,
               startsAt,
             });
+        // Re-armed for this one attempt; a lease that is no longer ours writes nothing.
+        await renewRequestCap(capLock);
         const booked = await prisma
           .$transaction(
             async (tx) => {
+              await lockTrialPickInTx(tx, {
+                consulteeUserId,
+                consultantProfileId,
+                buyerConsultantProfileId: buyerConsultantProfile?.id,
+                startsAt,
+                endsAt,
+              });
               // Read under a share lock, so a reject that lands meanwhile waits for this write.
-              await assertExpertStandsInTx(
+              const standing = await assertExpertStandsInTx(
                 tx,
                 consultantProfileId,
                 "This trial",
               );
-              const atCapacity = await capacityRefusal(
-                tx,
-                subscriptionPlan.consultantProfile,
-              );
+              // The pause and the cap are the locked row's: a change committed
+              // while this request waited for its locks decides.
+              const settings = standing ?? subscriptionPlan.consultantProfile;
+              if (settings.acceptingRequests === false) {
+                throw expertPausedError();
+              }
+              const atCapacity = await capacityRefusal(tx, {
+                id: consultantProfileId,
+                maxOpenRequests: settings.maxOpenRequests,
+              });
               if (atCapacity) {
                 throw new Refusal({
                   code: atCapacity.code,
@@ -697,6 +725,20 @@ export async function POST(request: NextRequest) {
             code: "SLOT_TAKEN",
           },
           { status: 409 },
+        );
+      }
+      // The buyer's own key is held or out of time, or the cap lease was lost.
+      if (
+        error instanceof ConsulteeBookingBusyError ||
+        error instanceof RequestCapBusyError
+      ) {
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            retryAfter: error.retryAfterSeconds,
+          },
+          { status: error.httpStatus },
         );
       }
       if (error instanceof SlotLockError) {

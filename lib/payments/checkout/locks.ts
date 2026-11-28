@@ -27,6 +27,7 @@ import {
   EventCheckoutBusyError,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
+  type LockRetryConfig,
   type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
@@ -40,6 +41,7 @@ export async function lockBuyerSeatAtoms(
   userId: string,
   appointmentType: "WEBINAR" | "CLASS",
   eventId: string,
+  lockBudget: LockRetryConfig = CHECKOUT_WAIT_RETRY_CONFIG,
 ): Promise<SlotBatchGrant | null> {
   const buyer = await prisma.consultantProfile.findUnique({
     where: { userId },
@@ -61,7 +63,7 @@ export async function lockBuyerSeatAtoms(
   return lockSlotBatch(
     sessions.map((s) => ({ consultantProfileId: buyer.id, ...s })),
     CHECKOUT_LOCK_TTL_MS[appointmentType],
-    CHECKOUT_WAIT_RETRY_CONFIG,
+    lockBudget,
   );
 }
 
@@ -72,11 +74,13 @@ export async function lockBuyerSeatAtoms(
  */
 export async function lockExpertPlanSales(
   consultantProfileId: string,
+  lockBudget: LockRetryConfig = CHECKOUT_WAIT_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   try {
     return await lockRequestCap(
       consultantProfileId,
       CHECKOUT_LOCK_TTL_MS.SUBSCRIPTION,
+      lockBudget,
     );
   } catch (error) {
     if (error instanceof RequestCapBusyError) {
@@ -198,6 +202,8 @@ export async function acquireCheckoutLock(
   planData: { consultantProfile?: { id: string } },
   /** The buyer's own expert profile: an expert booking another expert is busy on both calendars. */
   buyerConsultantProfileId: string | null = null,
+  /** The checkout's shared lock deadline across its tiers. */
+  lockBudget: LockRetryConfig = CHECKOUT_WAIT_RETRY_CONFIG,
 ): Promise<ApprovalLock | ApprovalLock[] | null> {
   const appointmentType = data.appointmentType;
 
@@ -245,6 +251,7 @@ export async function acquireCheckoutLock(
           : []),
       ],
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
+      lockBudget,
     );
   }
 
@@ -280,7 +287,7 @@ export async function acquireCheckoutLock(
       appointmentType,
       data.eventId,
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
-      CHECKOUT_WAIT_RETRY_CONFIG, // B4 — fail fast, never queue past the ceiling
+      lockBudget, // B4 — fail fast, never queue past the ceiling
     );
   }
 
@@ -300,7 +307,7 @@ export async function acquireCheckoutLock(
       appointmentType,
       data.planId,
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
-      CHECKOUT_WAIT_RETRY_CONFIG,
+      lockBudget,
     );
   }
 

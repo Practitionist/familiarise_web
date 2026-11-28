@@ -8,6 +8,7 @@
  * days; the third miss flags the class once.
  */
 
+import "../fixtures/host-time-locks-free";
 import { Prisma } from "@prisma/client";
 
 const transition = jest.fn();

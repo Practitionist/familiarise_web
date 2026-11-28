@@ -161,7 +161,10 @@ describe("bound 1: checkout counts sold-but-unplaced plans", () => {
     await expect(lockExpertPlanSales("cp-1")).rejects.toBeInstanceOf(
       EventCheckoutBusyError,
     );
-    expect(lockRequestCap).toHaveBeenCalledWith("cp-1", 45_000);
+    expect(jest.mocked(lockRequestCap).mock.calls[0].slice(0, 2)).toEqual([
+      "cp-1",
+      45_000,
+    ]);
   });
 });
 

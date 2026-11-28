@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { NOT_COLLABORATOR_ROW } from "@/lib/booking/participants";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import {
@@ -27,6 +27,7 @@ import { getPlatformVideoConfig } from "@/lib/stream/video-config";
 import {
   hostBatchEntries,
   HostTimeNotRetainedError,
+  lockHostBatchInTx,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
 import {
@@ -151,6 +152,7 @@ function resolveAppointmentType(
 
 /** Checked against the room end; the overlap EXCLUDE index sees only booked ends, never extensions. */
 async function hasExtensionScheduleConflict(
+  db: PrismaLike,
   occurrence: {
     id: string;
     appointmentId: string;
@@ -184,7 +186,7 @@ async function hasExtensionScheduleConflict(
       participantUserIds,
     );
 
-    const conflictingOccurrence = await prisma.appointmentOccurrence.findFirst({
+    const conflictingOccurrence = await db.appointmentOccurrence.findFirst({
       where: {
         id: { not: occurrence.id },
         ...conflictScope,
@@ -206,7 +208,7 @@ async function hasExtensionScheduleConflict(
     [];
   for (const collab of presenterCollaborators) {
     try {
-      await assertConsultantAvailableForWindows(prisma, {
+      await assertConsultantAvailableForWindows(db, {
         consultantProfileId: collab.consultantProfileId,
         consultantUserId: collab.consultantProfile?.userId ?? undefined,
         windows: [{ startsAt: slotStartsAt, endsAt: conflictHorizon }],
@@ -525,38 +527,53 @@ export async function POST(
       startsAt: new Date(Math.max(currentRoomEndsAt.getTime(), Date.now())),
       endsAt: conflictHorizon,
     };
+    const extensionEntries = hostBatchEntries(
+      consultantProfileId
+        ? [consultantProfileId, ...presenterProfileIds]
+        : presenterProfileIds,
+      [extensionWindow],
+    );
     let refusal: NextResponse | null;
     try {
       refusal = await withHostSlotBatch(
-        hostBatchEntries(
-          consultantProfileId
-            ? [consultantProfileId, ...presenterProfileIds]
-            : presenterProfileIds,
-          [extensionWindow],
-        ),
+        extensionEntries,
         async (_renew, retainUntil) => {
-          const conflicted = await hasExtensionScheduleConflict(
-            occurrence,
-            consultantProfileId,
-            participantUserIds,
-            startsAt,
-            conflictHorizon,
-          );
-          if (conflicted) return nextTimeBookedResponse();
-
-          // No occurrence row carries the extra minutes, so their atoms must be
-          // held to the room's new end before the extension is saved.
+          // No occurrence row carries the extra minutes, so their atoms are
+          // held to the room's new end before the extension is saved; a
+          // refused claim below gives them back.
           const keep = await retainUntil(conflictHorizon);
 
-          const claimed = await prisma.meeting.updateMany({
-            where: extendableWhere(meetingRow.id, meetingRow.extensionsUsed),
-            data: {
-              extendedSeconds: { increment: MEETING_EXTENSION_SECONDS },
-              extensionsUsed: { increment: 1 },
-            },
-          });
-          if (claimed.count === 0) {
-            const latest = await prisma.meeting.findUnique({
+          // The probe and the claim share one transaction behind the
+          // database's locks on the same atoms.
+          const refused = await prisma.$transaction(async (tx) => {
+            await lockHostBatchInTx(
+              tx,
+              extensionEntries,
+              // A 1:1 learner's extra minutes are theirs alone; a group seat's are not held.
+              participantUserIds.map((userId) => ({
+                userId,
+                ...extensionWindow,
+              })),
+            );
+            const conflicted = await hasExtensionScheduleConflict(
+              tx,
+              occurrence,
+              consultantProfileId,
+              participantUserIds,
+              startsAt,
+              conflictHorizon,
+            );
+            if (conflicted) return nextTimeBookedResponse();
+
+            const claimed = await tx.meeting.updateMany({
+              where: extendableWhere(meetingRow.id, meetingRow.extensionsUsed),
+              data: {
+                extendedSeconds: { increment: MEETING_EXTENSION_SECONDS },
+                extensionsUsed: { increment: 1 },
+              },
+            });
+            if (claimed.count > 0) return null;
+            const latest = await tx.meeting.findUnique({
               where: { id: meetingRow.id },
               select: { extensionsUsed: true, extendedSeconds: true },
             });
@@ -565,7 +582,8 @@ export async function POST(
                   resolveRoomEndsAt(bookedEndsAt, latest.extendedSeconds),
                 )
               : notExtendableResponse();
-          }
+          });
+          if (refused) return refused;
 
           keep();
           return null;

@@ -2,6 +2,7 @@
  * #1012 — expectedTentativeSlotCount stale-tab reschedule precondition.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // The in-transaction availability re-read has its own suite; these isolate the allocator.
@@ -39,6 +40,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),

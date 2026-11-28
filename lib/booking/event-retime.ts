@@ -11,10 +11,7 @@
 import prisma from "@/lib/prisma";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
-import {
-  withAppointmentLock,
-  withEventCheckoutLock,
-} from "@/utils/appointmentlock";
+import { requestLockTiers } from "@/utils/appointmentlock";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -31,6 +28,7 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
@@ -144,6 +142,8 @@ export async function retimeWebinar(args: {
   ];
 
   const dashboardUrl = notificationHref(pre.organizationId, "appointments");
+  // Both lock tiers share one deadline, minted when the door starts acquiring.
+  const { withEventCheckoutLock, withAppointmentLock } = requestLockTiers();
   const result = await withEventCheckoutLock(
     { appointmentType: "WEBINAR", eventId: webinar.id },
     () =>
@@ -152,6 +152,10 @@ export async function retimeWebinar(args: {
           hostBatchEntries(profiles, [{ startsAt, endsAt }]),
           () =>
             prisma.$transaction(async (tx) => {
+              await lockHostBatchInTx(
+                tx,
+                hostBatchEntries(profiles, [{ startsAt, endsAt }]),
+              );
               await lockPlanForMove(tx, "WEBINAR", plan.id, profiles);
               await verifyCohostsFreeForMove(
                 tx,

@@ -8,6 +8,7 @@
  * so a regression into the replan path throws instead of quietly passing.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // The in-transaction availability re-read has its own suite; these isolate the allocator.
@@ -38,6 +39,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),

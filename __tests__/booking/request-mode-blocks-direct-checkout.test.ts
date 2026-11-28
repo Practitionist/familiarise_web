@@ -184,3 +184,83 @@ describe.each([
     expect(consultationsCreated()).toBe(1);
   });
 });
+
+// The database's locks are the commit's first statement; a held atom is the checkout's own refusal.
+describe("a 1:1 checkout that meets a held time in the database", () => {
+  const { lockHostTimeInTx } = jest.requireMock(
+    "../../lib/booking/allocation/host-time-locks",
+  ) as { lockHostTimeInTx: jest.Mock };
+
+  function stageBookable() {
+    const plan = planFor("INSTANT");
+    resetDouble({
+      "user.findUnique": () => buyerRow(),
+      "consultationPlan.findUnique": () => plan,
+      "cancellationPolicy.findUnique": () => ({ id: "platform-policy" }),
+      "availabilityWindowCustom.findUnique": () => ({
+        consultantProfile: plan.consultantProfile,
+      }),
+      "consultantProfile.findUnique": () => ({
+        scheduleType: "CUSTOM",
+        deletedAt: null,
+      }),
+      "availabilityWindowCustom.findMany": () => [
+        { startsAt: START, endsAt: new Date(START.getTime() + 3600_000) },
+      ],
+    });
+    createPaymentIntent.mockResolvedValue({
+      id: "order_1",
+      client_secret: "s",
+    });
+  }
+  const checkout = () =>
+    handleCheckout(
+      buildCheckoutInput({
+        appointmentType: "CONSULTATION",
+        availabilityWindowCustomId: "row-1",
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+      }),
+      "buyer",
+    );
+
+  it.each([
+    [
+      "the buyer's own time",
+      { learnerUserId: "buyer", consultantProfileId: null },
+      /already have a session booked/i,
+    ],
+    [
+      "the expert's time",
+      { learnerUserId: null, consultantProfileId: "cons-profile" },
+      /already booked/i,
+    ],
+  ])(
+    "%s held: refused, and no booking is written",
+    async (_label, held, message) => {
+      stageBookable();
+      let learnerTimes: unknown;
+      lockHostTimeInTx.mockImplementationOnce(
+        async (
+          _tx: unknown,
+          _entries: unknown,
+          refusal: (held: object) => Error,
+          learner: unknown,
+        ) => {
+          learnerTimes = learner;
+          throw refusal({ ...held, startsAt: START, endsAt: START });
+        },
+      );
+
+      await expect(checkout()).rejects.toThrow(message);
+
+      // The buyer's own window rides with the expert's atoms.
+      expect(learnerTimes).toEqual([
+        { userId: "buyer", startsAt: slot.startsAt, endsAt: slot.endsAt },
+      ]);
+      expect(
+        calls.filter((c) => c.path === "consultation.create"),
+      ).toHaveLength(0);
+    },
+  );
+});

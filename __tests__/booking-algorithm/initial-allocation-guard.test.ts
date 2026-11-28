@@ -9,6 +9,7 @@
  * Without the flag, replace/reschedule semantics are preserved.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 import fs from "fs";
 import { errorSentence } from "../../components/dashboard/shared/requests/labels";
@@ -54,6 +55,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   // allocate() takes an existing booking's appointment lock first.
   withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
     fn({ key: "appointment-lock" }),

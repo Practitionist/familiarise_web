@@ -10,6 +10,7 @@
  * calendar.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 import { allocationTx } from "../fixtures/allocation-tx";
 
@@ -38,6 +39,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),

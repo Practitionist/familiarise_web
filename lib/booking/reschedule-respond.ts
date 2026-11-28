@@ -78,6 +78,18 @@ export type RespondOutcome = { done: true } | { done: false; reason: string };
 export type DeclineOutcome =
   { done: true; restoredFully: boolean } | { done: false; reason: string };
 
+/** Still unanswered past its deadline: an acceptance that moved nothing missed on the deadline. */
+async function lapsedUnanswered(rescheduleRequestId: string): Promise<boolean> {
+  const after = await prisma.rescheduleRequest.findUnique({
+    where: { id: rescheduleRequestId },
+    select: { status: true, expiresAt: true },
+  });
+  return (
+    after?.status === "PENDING_REVIEW" &&
+    after.expiresAt.getTime() <= Date.now()
+  );
+}
+
 export async function acceptProposal(args: {
   rescheduleRequestId: string;
   eventType: EventType;
@@ -139,6 +151,9 @@ export async function acceptProposal(args: {
         where: { id: request.id },
         to: "ACCEPTED",
         data: { resolvedById: args.resolvedById },
+        // The deadline is part of the write: an acceptance that reaches its
+        // commit after the proposal lapsed moves nothing.
+        whereAnd: { expiresAt: { gt: new Date() } },
       });
       // The reallocation buffer lasts only while the proposal is open.
       await restoreEarningsHold(tx, request.appointmentId);
@@ -153,6 +168,12 @@ export async function acceptProposal(args: {
   });
   if (!result.success) {
     // Nothing was written; the proposal stays open unless it was closed under us.
+    if (
+      result.errorCode === "RESCHEDULE_NO_LONGER_OPEN" &&
+      (await lapsedUnanswered(request.id))
+    ) {
+      return { done: false, reason: "PROPOSAL_EXPIRED" };
+    }
     return { done: false, reason: result.errorCode ?? "VALIDATION_FAILED" };
   }
 

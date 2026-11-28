@@ -9,6 +9,7 @@
  * debited by a session booked months later.
  */
 
+import "../fixtures/host-time-locks-free";
 import "../booking-algorithm/setup";
 
 // The in-transaction availability re-read has its own suite; this isolates the allocator.
@@ -36,6 +37,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   // allocate() takes an existing booking's appointment lock first.
   withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
     fn({ key: "appointment-lock" }),

@@ -43,6 +43,7 @@ export {
   notifyFeedbackReceived,
   notifyNewReview,
   // Trials
+  prepareNewBookingRequestBell,
   prepareTrialScheduledBells,
   stagePreparedBells,
   notifyTrialCompleted,
@@ -51,7 +52,6 @@ export {
   notifySubscriptionStarted,
   notifySubscriptionRenewed,
   // Consultant
-  notifyNewBookingRequest,
   notifyUnscheduledSubscriptionNudge,
   notifyVerificationStatusChanged,
   notifyPayoutProcessed,

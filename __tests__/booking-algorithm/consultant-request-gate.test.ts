@@ -14,6 +14,10 @@
 
 import { requestDoorProfile } from "../fixtures/request-door-db";
 
+// The database's host-time locks are pinned in host-time-locks.test.ts.
+jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
+  lockHostTimeInTx: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(async () => ({ user: { id: "user_consultee" } })),
 }));
@@ -25,18 +29,35 @@ jest.mock("../../lib/rate-limit", () => ({
 jest.mock("../../lib/profiles/ensure-consultee-profile", () => ({
   ensureConsulteeProfile: jest.fn(async () => undefined),
 }));
-const mockLockSlotBooking = jest.fn(async () => ({ key: "slot" }));
-const mockLockRequestCap = jest.fn(async () => ({ key: "request-cap" }));
+const mockLockSlotBooking = jest.fn(async (..._args: unknown[]) => ({
+  key: "slot",
+}));
+const mockLockRequestCap = jest.fn(async (..._args: unknown[]) => ({
+  key: "request-cap",
+}));
+const mockLockConsulteeBooking = jest.fn(async (..._args: unknown[]) => ({
+  key: "consultee",
+}));
+const mockRenewRequestCap = jest.fn(async (..._args: unknown[]) => undefined);
+const MOCK_LOCK_BUDGET = { deadlineAt: 1 };
 jest.mock("../../utils/appointmentlock", () => ({
   lockSlotBatch: (...a: unknown[]) => mockLockSlotBooking(...(a as [])),
   unlockSlotInterval: jest.fn(async () => undefined),
-  lockConsulteeBooking: jest.fn(async () => ({ key: "consultee" })),
+  lockConsulteeBooking: (...a: unknown[]) =>
+    mockLockConsulteeBooking(...(a as [])),
   unlockConsulteeBooking: jest.fn(async () => undefined),
+  renewConsulteeBooking: jest.fn(async () => undefined),
   lockRequestCap: (...a: unknown[]) => mockLockRequestCap(...(a as [])),
+  renewRequestCap: (...a: unknown[]) => mockRenewRequestCap(...(a as [])),
   unlockRequestCap: jest.fn(async () => undefined),
+  requestLockBudget: () => MOCK_LOCK_BUDGET,
   BookingLockUnavailableError: class extends Error {},
+  ConsulteeBookingBusyError: class ConsulteeBookingBusyError extends Error {},
   LockContentionError: class extends Error {},
-  RequestCapBusyError: class extends Error {},
+  RequestCapBusyError: class extends Error {
+    readonly httpStatus = 409;
+    readonly code = "REQUEST_CAP_BUSY";
+  },
 }));
 const mockCheckSlotAvailability = jest.fn(async () => ({
   isValid: true,
@@ -53,8 +74,24 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 jest.mock("../../lib/booking/allocation/coverage", () =>
   jest.requireActual("../fixtures/request-door-hours"),
 );
-jest.mock("../../lib/novu", () => ({
-  notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/novu", () => ({}));
+// The expert's notices: prepared before the transaction, staged inside it.
+const PREPARED_NOTICES = { bells: [], emails: { prepared: {}, screened: [] } };
+const STAGED_NOTICES = {
+  bells: [{ id: "bell_1" }],
+  emails: [{ staged: { id: "mail_1" } }],
+};
+const mockPrepareNotices = jest.fn(
+  async (..._args: unknown[]) => PREPARED_NOTICES,
+);
+const mockStageNotices = jest.fn(async (..._args: unknown[]) => STAGED_NOTICES);
+jest.mock("../../lib/booking/request-notices", () => ({
+  prepareNewRequestNotices: (...a: unknown[]) => mockPrepareNotices(...a),
+  stageNewRequestNotices: (...a: unknown[]) => mockStageNotices(...a),
+}));
+const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: (...a: unknown[]) => mockFlush(...a),
 }));
 jest.mock("../../lib/novu/workflows", () => ({
   ...jest.requireActual("../../lib/novu/workflows"),
@@ -175,6 +212,30 @@ describe("consultant request gate", () => {
     expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
   });
 
+  it("a pause committed while the request waits for its lock → 409 CONSULTANT_PAUSED, nothing written", async () => {
+    mockLockRequestCap.mockImplementationOnce(async () => {
+      mockProfile.acceptingRequests = false;
+      return { key: "request-cap" };
+    });
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONSULTANT_PAUSED");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+  });
+
+  it("a cap lowered while the request waits is the cap that decides", async () => {
+    mockLockRequestCap.mockImplementationOnce(async () => {
+      mockProfile.maxOpenRequests = 1;
+      return { key: "request-cap" };
+    });
+    // The per-consultee count answers first (0), then the consultant count.
+    mockConsultationCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONSULTANT_AT_CAPACITY");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+  });
+
   it("at cap → 409 CONSULTANT_AT_CAPACITY, counted inside the slot lock", async () => {
     mockProfile.maxOpenRequests = 3;
     // The per-consultee count answers first (0), then the consultant count.
@@ -186,7 +247,7 @@ describe("consultant request gate", () => {
     expect(mockLockSlotBooking).toHaveBeenCalledTimes(1);
     // The consultant count runs under the expert's request-cap lock and after
     // the slot batch, inside the insert's own transaction.
-    expect(mockLockRequestCap).toHaveBeenCalledWith("cp_1");
+    expect(mockLockRequestCap.mock.calls[0][0]).toBe("cp_1");
     expect(mockConsultationCount.mock.invocationCallOrder[1]).toBeGreaterThan(
       mockLockSlotBooking.mock.invocationCallOrder[0],
     );
@@ -242,6 +303,61 @@ describe("consultant request gate", () => {
 
 // #1583 B-P1-06 / E-P1-03 — the Zod edge refuses off-grid and too-soon
 // starts with a typed code, and the in-lock check sees the consultee too.
+describe("request-for-approval learner time", () => {
+  it("takes the requester's own time with the expert's, in the write transaction", async () => {
+    const { lockHostTimeInTx } = jest.requireMock(
+      "../../lib/booking/allocation/host-time-locks",
+    ) as { lockHostTimeInTx: jest.Mock };
+    const res = await POST(request());
+    expect(res.status).toBe(201);
+    expect(lockHostTimeInTx.mock.calls[0][3]).toEqual([
+      {
+        userId: "user_consultee",
+        startsAt: "2030-01-01T10:00:00.000Z",
+        endsAt: "2030-01-01T11:00:00.000Z",
+      },
+    ]);
+  });
+});
+
+describe("request-for-approval lock tiers", () => {
+  it("passes one deadline to the cap, consultee and slot tiers", async () => {
+    await POST(request());
+    expect(mockLockRequestCap.mock.calls[0]).toEqual([
+      "cp_1",
+      undefined,
+      MOCK_LOCK_BUDGET,
+    ]);
+    expect(mockLockConsulteeBooking.mock.calls[0][2]).toBe(MOCK_LOCK_BUDGET);
+    expect(mockLockSlotBooking.mock.calls[0][2]).toBe(MOCK_LOCK_BUDGET);
+  });
+
+  it("a cap lease lost before the write → the cap's busy 409, nothing written", async () => {
+    const { RequestCapBusyError } = jest.requireMock(
+      "../../utils/appointmentlock",
+    );
+    mockRenewRequestCap.mockRejectedValueOnce(new RequestCapBusyError());
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_CAP_BUSY");
+    expect(mockRenewRequestCap).toHaveBeenCalledWith({ key: "request-cap" });
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+  });
+
+  it("a consultee key held by another booking → 409 with a retry, never a 500", async () => {
+    const { ConsulteeBookingBusyError } = jest.requireMock(
+      "../../utils/appointmentlock",
+    );
+    mockLockConsulteeBooking.mockRejectedValueOnce(
+      new ConsulteeBookingBusyError(),
+    );
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).retryAfter).toBe(30);
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("request-for-approval slot edge (#1583)", () => {
   it("10:07Z → 400 SLOT_NOT_ON_GRID before any lock", async () => {
     const res = await POST(request("2030-01-01T10:07:00.000Z"));
@@ -298,6 +414,53 @@ describe("request-for-approval consultant projection", () => {
   });
 });
 
+describe("request-for-approval expert notices", () => {
+  it("stages the notices in the request's transaction, keyed by the request, and sends them after the commit", async () => {
+    const transaction = (mockedPrisma as unknown as { $transaction: jest.Mock })
+      .$transaction;
+    // A transaction client distinct from the global one, with the same models.
+    const tx: unknown = Object.create(mockedPrisma);
+    transaction.mockImplementationOnce(
+      async (fn: (client: unknown) => unknown) => fn(tx),
+    );
+
+    const res = await POST(request());
+    expect(res.status).toBe(201);
+
+    // Read and rendered before the transaction opens; staged on its client.
+    expect(mockPrepareNotices.mock.invocationCallOrder[0]).toBeLessThan(
+      transaction.mock.invocationCallOrder[0],
+    );
+    expect(mockPrepareNotices.mock.calls[0][0]).toMatchObject({
+      consultantUserId: "user_consultant",
+      planTitle: "Plan",
+      organizationId: null,
+    });
+    expect(mockStageNotices).toHaveBeenCalledTimes(1);
+    // Written on the transaction's client, never the global one.
+    const [client, requestId, prepared] = mockStageNotices.mock.calls[0];
+    expect(client).toBe(tx);
+    expect(client).not.toBe(mockedPrisma);
+    expect(requestId).toBe("req_1");
+    expect(prepared).toBe(PREPARED_NOTICES);
+    expect(mockFlush.mock.calls[0][0]).toMatchObject({
+      bells: STAGED_NOTICES.bells,
+      emails: [
+        { rows: STAGED_NOTICES.emails, emailType: "NEW_BOOKING_REQUEST" },
+      ],
+    });
+  });
+
+  it("a refused request stages and sends nothing", async () => {
+    mockProfile.maxOpenRequests = 1;
+    mockConsultationCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect(mockStageNotices).not.toHaveBeenCalled();
+    expect(mockFlush).not.toHaveBeenCalled();
+  });
+});
+
 describe("request-for-approval Idempotency-Key", () => {
   const SLOT = "2030-01-01T10:00:00.000Z";
   const original = () => ({
@@ -329,6 +492,9 @@ describe("request-for-approval Idempotency-Key", () => {
     );
     expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
     expect(mockLockSlotBooking).not.toHaveBeenCalled();
+    // The first submit staged the expert's notices; a replay sends nothing again.
+    expect(mockStageNotices).not.toHaveBeenCalled();
+    expect(mockFlush).not.toHaveBeenCalled();
   });
 
   it("the same key with another time is refused, not replayed", async () => {

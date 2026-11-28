@@ -11,12 +11,13 @@ import {
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import {
-  CHECKOUT_WAIT_RETRY_CONFIG,
+  requestLockBudget,
   lockConsulteeBooking,
   unlockConsulteeBooking,
   unlockRequestCap,
   extendLock,
   extendSlotInterval,
+  slotGrantEntries,
   unlockSlotInterval,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
@@ -273,15 +274,16 @@ export async function handleCheckout(
       appointmentType === "SUBSCRIPTION"
         ? planData.consultantProfile?.id
         : undefined;
+    // One deadline for every lock tier below: a wait on one is not available to the next.
+    const lockBudget = requestLockBudget();
     if (isSlotBasedCheckout) {
       if (planSalesProfileId) {
-        planSalesLock = await lockExpertPlanSales(planSalesProfileId);
+        planSalesLock = await lockExpertPlanSales(
+          planSalesProfileId,
+          lockBudget,
+        );
       }
-      consulteeLock = await lockConsulteeBooking(
-        userId,
-        undefined,
-        CHECKOUT_WAIT_RETRY_CONFIG,
-      );
+      consulteeLock = await lockConsulteeBooking(userId, undefined, lockBudget);
     }
     const buyerProfile = isSlotBasedCheckout
       ? await prisma.consultantProfile.findUnique({
@@ -293,17 +295,17 @@ export async function handleCheckout(
       validatedData,
       planData,
       buyerProfile?.id ?? null,
+      lockBudget,
     );
     lockType = validatedData.startsAt ? "slot-based" : "event-based";
     if (!isSlotBasedCheckout) {
       if (planSalesProfileId) {
-        planSalesLock = await lockExpertPlanSales(planSalesProfileId);
+        planSalesLock = await lockExpertPlanSales(
+          planSalesProfileId,
+          lockBudget,
+        );
       }
-      consulteeLock = await lockConsulteeBooking(
-        userId,
-        undefined,
-        CHECKOUT_WAIT_RETRY_CONFIG,
-      );
+      consulteeLock = await lockConsulteeBooking(userId, undefined, lockBudget);
       if (
         (appointmentType === "WEBINAR" || appointmentType === "CLASS") &&
         validatedData.eventId
@@ -312,6 +314,7 @@ export async function handleCheckout(
           userId,
           appointmentType,
           validatedData.eventId,
+          lockBudget,
         );
       }
     }
@@ -679,6 +682,20 @@ export async function handleCheckout(
         mintedOrder,
         holdExpiresAt,
         renewOrAbort,
+        hostTimeEntries: [
+          ...(Array.isArray(lock) ? slotGrantEntries(lock) : []),
+          ...(buyerSeatGrant ? slotGrantEntries(buyerSeatGrant) : []),
+        ],
+        learnerTimes:
+          validatedData.startsAt && validatedData.endsAt
+            ? [
+                {
+                  userId,
+                  startsAt: validatedData.startsAt,
+                  endsAt: validatedData.endsAt,
+                },
+              ]
+            : [],
         perAttemptTtl,
         checkoutTxTimeoutMs,
         organizationId,

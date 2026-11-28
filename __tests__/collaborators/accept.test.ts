@@ -169,6 +169,7 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 
+import "../fixtures/host-time-locks-free";
 import {
   hostBatchEntries,
   HostTimeHeldError,

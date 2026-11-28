@@ -76,6 +76,7 @@ jest.mock("../../lib/topics", () => ({
   transformNestedPlanTopics: jest.fn((row: unknown) => row),
 }));
 
+import "../fixtures/host-time-locks-free";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { POST, PATCH } from "@/app/api/bookings/classes/crud-with-plan/route";

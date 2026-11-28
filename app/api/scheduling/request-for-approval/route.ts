@@ -11,23 +11,26 @@ import {
   unlockConsulteeBooking,
   lockRequestCap,
   unlockRequestCap,
+  renewConsulteeBooking,
+  renewRequestCap,
+  requestLockBudget,
   BookingLockUnavailableError,
+  ConsulteeBookingBusyError,
   LockContentionError,
   RequestCapBusyError,
   type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
+import { lockHostTimeInTx } from "@/lib/booking/allocation/host-time-locks";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { notifyNewBookingRequest } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import type { StagedTrigger } from "@/lib/novu/outbox";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import {
-  stageNewBookingRequestEmail,
-  type StagedRecipientEmail,
-} from "@/lib/email/senders/booking";
+  prepareNewRequestNotices,
+  stageNewRequestNotices,
+  type StagedRequestNotices,
+} from "@/lib/booking/request-notices";
 import { PENDING_CONSULTATION_EXPIRATION_HOURS } from "@/scripts/appointments/expire-stale-requests";
-import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { recordParticipants } from "@/lib/booking/participants";
@@ -304,6 +307,8 @@ export async function POST(req: NextRequest) {
     await ensureConsulteeProfile(prisma, session.user.id);
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },
+      // The name the expert's notice shows.
+      include: { user: { select: { name: true } } },
     });
 
     if (!consulteeProfile) {
@@ -328,7 +333,8 @@ export async function POST(req: NextRequest) {
             maxOpenRequests: true,
             verificationStatus: true,
             deletedAt: true,
-            user: { select: { id: true } },
+            // The id seats the expert; the name greets them in the request's notice.
+            user: { select: { id: true, name: true } },
           },
         },
       },
@@ -464,16 +470,25 @@ export async function POST(req: NextRequest) {
     let consulteeLock: Awaited<ReturnType<typeof lockConsulteeBooking>> | null =
       null;
     let lock: SlotBatchGrant | undefined;
-    let stagedBell: StagedTrigger | undefined;
-    let stagedEmailRows: StagedRecipientEmail[] = [];
+    let stagedNotices: StagedRequestNotices | undefined;
     let createdConsultation:
       Awaited<ReturnType<typeof prisma.consultation.create>> | undefined;
 
     try {
       // Lock order: request cap (consultant tier) → consultee → slot batch.
       // The cap's count and the insert below both run under it.
-      requestCapLock = await lockRequestCap(consultantProfileId);
-      consulteeLock = await lockConsulteeBooking(session.user.id);
+      // One deadline for all three tiers: a wait on one is not available to the next.
+      const lockBudget = requestLockBudget();
+      requestCapLock = await lockRequestCap(
+        consultantProfileId,
+        undefined,
+        lockBudget,
+      );
+      consulteeLock = await lockConsulteeBooking(
+        session.user.id,
+        undefined,
+        lockBudget,
+      );
 
       // Under the consultee lock, so a concurrent same-key retry sees the first commit.
       const replayedInLock = await replayRequest(
@@ -507,7 +522,7 @@ export async function POST(req: NextRequest) {
         // per 30-min atom, so overlapping requests with different starts collide)
         // Use default 60s TTL (15s was too short for slow database operations)
         // An expert booking another expert also holds their own calendar's atoms.
-        lock = await lockSlotBatch([
+        const slotEntries = [
           { consultantProfileId, startsAt, endsAt },
           ...(session.user.consultantProfileId &&
           session.user.consultantProfileId !== consultantProfileId
@@ -519,7 +534,8 @@ export async function POST(req: NextRequest) {
                 },
               ]
             : []),
-        ]);
+        ];
+        lock = await lockSlotBatch(slotEntries, undefined, lockBudget);
 
         console.log(
           JSON.stringify({
@@ -556,29 +572,77 @@ export async function POST(req: NextRequest) {
         // say about. The nested create was already atomic on its own; the
         // transaction is what extends that atomicity to the audit row. The
         // budget sits well inside the 60 s slot lock held above.
-        const consultation = await prisma.$transaction(
+        // The expert's notices are read and rendered here, outside the
+        // transaction, and staged inside it. ADR 23: one recipient with a
+        // known side gets a precise route.
+        const reviewUrl = scopedHref({
+          organizationId: organizationId ?? null,
+          surface: "requests",
+          personal: { kind: "consultant", profileId: consultantProfileId },
+        });
+        const sweepExpiry = new Date(
+          Date.now() + PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
+        );
+        const preparedNotices = await prepareNewRequestNotices({
+          consultantUserId: consultationPlan.consultantProfile.user.id,
+          consultantName:
+            consultationPlan.consultantProfile.user.name || "Consultant",
+          consulteeName: consulteeProfile.user.name || "A consultee",
+          planTitle: consultationPlan.title,
+          organizationId: organizationId ?? null,
+          startsAt: startTime,
+          respondBy: sweepExpiry < startTime ? sweepExpiry : startTime,
+          reviewUrl,
+        });
+
+        // Re-armed for this one attempt; a grant that is no longer ours writes nothing.
+        await renewRequestCap(requestCapLock);
+        await renewConsulteeBooking(consulteeLock);
+        const requested = await prisma.$transaction(
           async (tx) => {
+            // The database arbitrates the window before any row is locked or read.
+            await lockHostTimeInTx(
+              tx,
+              slotEntries,
+              (held) =>
+                new RequestRefusal(409, {
+                  error:
+                    held.consultantProfileId === consultantProfileId
+                      ? "Slot no longer available"
+                      : "You already have a session booked during this time.",
+                  code: "SLOT_TAKEN",
+                  conflicts: 1,
+                }),
+              // The requester's own time, whoever the expert is.
+              [{ userId: session.user.id, startsAt, endsAt }],
+            );
             // Standing, mode, cap and availability are read on this transaction, after
             // every lock, so the insert below commits against what they saw.
-            await assertExpertStandsInTx(
+            const standing = await assertExpertStandsInTx(
               tx,
               consultantProfileId,
               "This consultation",
             );
-            const mode = await tx.consultantProfile.findUnique({
-              where: { id: consultantProfileId },
-              select: { bookingMode: true },
-            });
-            if (mode?.bookingMode !== "REQUEST") {
+            // The pause, the mode and the cap are the locked row's: a change
+            // committed while this request waited for its locks decides.
+            const settings = standing ?? consultationPlan.consultantProfile;
+            const pausedNow = pausedRefusal(settings);
+            if (pausedNow) {
+              throw new RequestRefusal(409, {
+                error: pausedNow.message,
+                code: pausedNow.code,
+              });
+            }
+            if (settings.bookingMode !== "REQUEST") {
               throw new RequestRefusal(409, {
                 error: REQUEST_NOT_OFFERED_MESSAGE,
                 code: "REQUEST_NOT_OFFERED",
               });
             }
-            const atCapacity = await capacityRefusal(
-              tx,
-              consultationPlan.consultantProfile,
-            );
+            const atCapacity = await capacityRefusal(tx, {
+              id: consultantProfileId,
+              maxOpenRequests: settings.maxOpenRequests,
+            });
             if (atCapacity) {
               throw new RequestRefusal(409, {
                 error: atCapacity.message,
@@ -690,10 +754,18 @@ export async function POST(req: NextRequest) {
                 organizationId: created.appointment?.organizationId ?? null,
               },
             );
-            return created;
+            // The notices commit with the request, keyed by it.
+            const notices = await stageNewRequestNotices(
+              tx,
+              created.id,
+              preparedNotices,
+            );
+            return { created, notices };
           },
           { maxWait: 10_000, timeout: 15_000 },
         );
+        const consultation = requested.created;
+        stagedNotices = requested.notices;
 
         console.log(
           JSON.stringify({
@@ -706,51 +778,6 @@ export async function POST(req: NextRequest) {
           }),
         );
 
-        // ADR 23 — single recipient with a known side resolves to a precise route rather than the /dashboard bounce.
-        const requestOrgId = consultation.appointment?.organizationId ?? null;
-        const reviewUrl = scopedHref({
-          organizationId: requestOrgId,
-          surface: "requests",
-          personal: {
-            kind: "consultant",
-            profileId: consultation.consultationPlan.consultantProfile.id,
-          },
-        });
-        const sweepExpiry = new Date(
-          consultation.requestedAt.getTime() +
-            PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
-        );
-        const [bellResult, emailRows] = await Promise.all([
-          notifyNewBookingRequest(
-            consultation.consultationPlan.consultantProfile.user.id,
-            {
-              ...notificationScope(requestOrgId),
-              consulteeName:
-                consultation.requestedBy.user.name || "A consultee",
-              planTitle: consultation.consultationPlan.title,
-              appointmentType: "CONSULTATION",
-              requestedDateTime: startTime.toISOString(),
-              dashboardUrl: reviewUrl,
-            },
-            { deferAttempt: true },
-          ),
-          stageNewBookingRequestEmail({
-            requestId: consultation.id,
-            consultantUserId:
-              consultation.consultationPlan.consultantProfile.user.id,
-            consultantName:
-              consultation.consultationPlan.consultantProfile.user.name ||
-              "Consultant",
-            consulteeName: consultation.requestedBy.user.name || "A consultee",
-            planTitle: consultation.consultationPlan.title,
-            appointmentType: "CONSULTATION",
-            requestedAt: startTime,
-            respondBy: sweepExpiry < startTime ? sweepExpiry : startTime,
-            reviewUrl,
-          }).catch(() => []),
-        ]);
-        stagedBell = bellResult?.staged;
-        stagedEmailRows = emailRows;
         createdConsultation = consultation;
       } catch (lockError) {
         if (lockError instanceof RequestRefusal) {
@@ -802,6 +829,9 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        // The consultee key's busy answer is mapped by the outer handler.
+        if (lockError instanceof ConsulteeBookingBusyError) throw lockError;
+
         Sentry.captureException(
           lockError instanceof Error ? lockError : new Error(String(lockError)),
           { tags: { subsystem: "scheduling" } },
@@ -834,10 +864,10 @@ export async function POST(req: NextRequest) {
 
     await flushNotificationsAfter(
       {
-        bells: [stagedBell],
+        bells: stagedNotices?.bells ?? [],
         emails: [
           {
-            rows: stagedEmailRows,
+            rows: stagedNotices?.emails ?? [],
             emailType: "NEW_BOOKING_REQUEST",
             budgetMs: EMAIL_BUDGET_MS.REQUEST,
           },
@@ -875,6 +905,7 @@ export async function POST(req: NextRequest) {
       );
     }
     if (
+      error instanceof ConsulteeBookingBusyError ||
       error instanceof LockContentionError ||
       error instanceof SlotLockError
     ) {

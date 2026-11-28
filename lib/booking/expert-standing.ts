@@ -1,4 +1,8 @@
-import { ConsultantVerificationStatus, Prisma } from "@prisma/client";
+import {
+  BookingMode,
+  ConsultantVerificationStatus,
+  Prisma,
+} from "@prisma/client";
 import { z } from "zod";
 
 import type { Tx } from "@/lib/prisma";
@@ -9,17 +13,27 @@ const StandingRowsSchema = z.array(
   z.object({
     verificationStatus: z.nativeEnum(ConsultantVerificationStatus),
     deletedAt: z.date().nullable(),
+    acceptingRequests: z.boolean(),
+    bookingMode: z.nativeEnum(BookingMode),
+    maxOpenRequests: z.number().int().nullable(),
   }),
 );
 
-/** The expert's standing read under a share lock, so a profile write waits for this transaction. */
+/** The expert's row as the share-locked read returns it: standing and intake settings. */
+export type ExpertStanding = z.infer<typeof StandingRowsSchema>[number];
+
+/**
+ * The expert's standing and intake settings (pause, booking mode, open-request
+ * cap) read under a share lock, so a profile write waits for this transaction
+ * and a door decides on what the row holds now, not on what it read earlier.
+ */
 export async function readExpertStandingForShare(
   tx: Pick<Tx, "$queryRaw">,
   consultantProfileId: string,
-): Promise<z.infer<typeof StandingRowsSchema>[number] | null> {
+): Promise<ExpertStanding | null> {
   const [row] = StandingRowsSchema.parse(
     await tx.$queryRaw(
-      Prisma.sql`SELECT "verificationStatus", "deletedAt" FROM "ConsultantProfile" WHERE "id" = ${consultantProfileId} FOR SHARE`,
+      Prisma.sql`SELECT "verificationStatus", "deletedAt", "acceptingRequests", "bookingMode", "maxOpenRequests" FROM "ConsultantProfile" WHERE "id" = ${consultantProfileId} FOR SHARE`,
     ),
   );
   return row ?? null;
@@ -29,14 +43,16 @@ export async function readExpertStandingForShare(
  * Refuses a sale for an expert who is not verified or is deleted, reading the
  * profile under a share lock: a reject's profile write waits for this
  * transaction, so the unpaid-sale ending that follows it sees what this wrote.
+ * Returns the locked row for a door that also decides on the intake settings.
  */
 export async function assertExpertStandsInTx(
   tx: Pick<Tx, "$queryRaw">,
   consultantProfileId: string,
   label: string,
-): Promise<void> {
+): Promise<ExpertStanding | null> {
   const row = await readExpertStandingForShare(tx, consultantProfileId);
   if (row && !isPublicExpertProfile(row)) throw expertNotVerifiedError(label);
+  return row;
 }
 
 /** The refusal copy each checkout type answers with. */

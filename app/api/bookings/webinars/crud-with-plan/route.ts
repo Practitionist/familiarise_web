@@ -10,7 +10,9 @@ import {
 } from "@/utils/appointmentlock";
 import {
   acceptedCohostProfileIds,
+  assertBatchCoversSessions,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
@@ -65,7 +67,10 @@ import {
   buildOccurrence,
   replaceOccurrence,
 } from "@/lib/appointments/occurrences";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 
 /**
  * Nested include for "what is the current live run?".
@@ -291,10 +296,15 @@ export async function POST(request: NextRequest) {
     const result = await withHostSlotBatch(
       hostBatchEntries([consultantProfileId], hostWindows),
       (renewHostBatch) =>
-        withSerializableRetry(() =>
-          prisma.$transaction(
+        withSerializableRetry(async () => {
+          // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+          await renewHostBatch();
+          return prisma.$transaction(
             async (tx) => {
-              await renewHostBatch();
+              await lockHostBatchInTx(
+                tx,
+                hostBatchEntries([consultantProfileId], hostWindows),
+              );
               // Topics are already created/found by findOrCreateTopics, no verification needed
 
               // 1. Create the webinar plan using validated data
@@ -445,8 +455,8 @@ export async function POST(request: NextRequest) {
               maxWait: 5000, // 5 second max wait
               isolationLevel: "Serializable", // Highest isolation level
             },
-          ),
-        ),
+          );
+        }),
     );
 
     console.log("Transaction completed successfully. Returning webinar data.");
@@ -812,15 +822,31 @@ export async function PATCH(request: NextRequest) {
         withHostSlotBatch(
           hostBatchEntries(batchProfiles, batchWindows),
           (renewHostBatch) =>
-            withSerializableRetry(() =>
-              prisma.$transaction(
+            withSerializableRetry(async () => {
+              // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+              await renewEventLock();
+              await renewHostBatch();
+              return prisma.$transaction(
                 async (tx) => {
-                  await renewEventLock();
-                  await renewHostBatch();
+                  await lockHostBatchInTx(
+                    tx,
+                    hostBatchEntries(batchProfiles, batchWindows),
+                  );
                   // An edit that takes host time queues behind a team change on
                   // the plan, then refuses a team its batch did not cover.
                   if (batchProfiles.length > 0) {
                     await lockPlanForMove(tx, "WEBINAR", id, batchProfiles);
+                    // With no new time sent, the run this edit publishes is the one its batch holds.
+                    if (!(startTime && endTime) && webinarToUpdate) {
+                      await assertBatchCoversSessions(
+                        tx,
+                        {
+                          appointment: { webinarId: webinarToUpdate.id },
+                          ...liveOccurrenceWhere,
+                        },
+                        batchWindows,
+                      );
+                    }
                   }
                   // -> Use topics from existingPlan fetched *before* the transaction
                   const currentTopicIdsFromOuterScope = existingPlan.topics.map(
@@ -1299,8 +1325,8 @@ export async function PATCH(request: NextRequest) {
                   maxWait: 5000, // 5 second max wait
                   isolationLevel: "Serializable", // Highest isolation level
                 },
-              ),
-            ),
+              );
+            }),
         ),
     );
 

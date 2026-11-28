@@ -19,6 +19,7 @@ import {
   unlockAutoAllocate,
   ALLOCATOR_LOCK_RETRY_CONFIG,
   lockConsulteeBooking,
+  renewConsulteeBooking,
   unlockConsulteeBooking,
   tryLockSlotBatch,
   unlockSlotInterval,
@@ -32,6 +33,7 @@ import {
   allocationBatchEntries,
   allocationBatchProfiles,
   heldSlotStartsOf,
+  lockAllocationTimesInTx,
   renewAllocationBatch,
 } from "@/lib/booking/allocation/slot-batch";
 import type { FreedWindow } from "@/lib/booking/class-series";
@@ -522,7 +524,13 @@ export async function autoAllocate(
     // the route's eventMutationLimiter).
     return await bookingTransaction(
       async (tx) => {
-        await renewAllocationBatch(slotGrant);
+        await lockAllocationTimesInTx(
+          tx,
+          selectedSlots,
+          batchProfiles,
+          consulteeUserId,
+          () => new AllocationRaceError(),
+        );
         // #1692 — per-event serialisation first, so every re-check below
         // reads what the previous writer committed; a same-key double
         // submit replays instead of 409ing (see guardAllocationInTx).
@@ -726,6 +734,11 @@ export async function autoAllocate(
       {
         maxWait: ALLOCATION_TX_MAX_WAIT_MS,
         timeout: ALLOCATION_TX_TIMEOUT_MS,
+        // Outside the transaction, ahead of every attempt: a lost grant writes nothing.
+        beforeAttempt: async () => {
+          await renewConsulteeBooking(consulteeLock);
+          await renewAllocationBatch(slotGrant);
+        },
       },
     );
   } finally {

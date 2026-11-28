@@ -90,6 +90,7 @@ jest.mock("../../../lib/rate-limit", () => ({
   eventMutationLimiter: {},
 }));
 jest.mock("../../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../../fixtures/lock-mocks").lockDoubles(),
   __esModule: true,
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},

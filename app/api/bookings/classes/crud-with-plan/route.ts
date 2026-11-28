@@ -65,7 +65,9 @@ import {
 } from "@/utils/appointmentlock";
 import {
   acceptedCohostProfileIds,
+  assertBatchCoversSessions,
   hostBatchEntries,
+  lockHostBatchInTx,
   lockPlanForMove,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
@@ -332,10 +334,15 @@ export async function POST(request: NextRequest) {
     const result = await withHostSlotBatch(
       hostBatchEntries([consultantProfileId], hostWindows),
       (renewHostBatch) =>
-        withSerializableRetry(() =>
-          prisma.$transaction(
+        withSerializableRetry(async () => {
+          // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+          await renewHostBatch();
+          return prisma.$transaction(
             async (tx) => {
-              await renewHostBatch();
+              await lockHostBatchInTx(
+                tx,
+                hostBatchEntries([consultantProfileId], hostWindows),
+              );
               // 1. Create the class plan using validated data
               const classPlan = await tx.classPlan.create({
                 data: {
@@ -479,8 +486,8 @@ export async function POST(request: NextRequest) {
               maxWait: 5000,
               isolationLevel: "Serializable",
             },
-          ),
-        ),
+          );
+        }),
     );
 
     // Transform topics to strings in response
@@ -776,13 +783,16 @@ export async function PATCH(request: NextRequest) {
       endDateString !== undefined ||
       (consultantProfileId !== undefined &&
         consultantProfileId !== existingPlan.consultantProfileId);
+    const liveSessionsWhere = classToUpdate
+      ? {
+          appointment: { classId: classToUpdate.id, deletedAt: null },
+          deletedAt: null,
+        }
+      : null;
     const batchWindows =
-      classToUpdate && touchesHostTime
+      liveSessionsWhere && touchesHostTime
         ? await prisma.appointmentOccurrence.findMany({
-            where: {
-              appointment: { classId: classToUpdate.id, deletedAt: null },
-              deletedAt: null,
-            },
+            where: liveSessionsWhere,
             select: { startsAt: true, endsAt: true },
           })
         : [];
@@ -800,15 +810,28 @@ export async function PATCH(request: NextRequest) {
         withHostSlotBatch(
           hostBatchEntries(batchProfiles, batchWindows),
           (renewHostBatch) =>
-            withSerializableRetry(() =>
-              prisma.$transaction(
+            withSerializableRetry(async () => {
+              // Re-armed ahead of each attempt, outside the transaction: a lost grant writes nothing.
+              await renewEventLock();
+              await renewHostBatch();
+              return prisma.$transaction(
                 async (tx) => {
-                  await renewEventLock();
-                  await renewHostBatch();
+                  await lockHostBatchInTx(
+                    tx,
+                    hostBatchEntries(batchProfiles, batchWindows),
+                  );
                   // An edit that takes host time queues behind a team change on
                   // the plan, then refuses a team its batch did not cover.
                   if (batchProfiles.length > 0) {
                     await lockPlanForMove(tx, "CLASS", id, batchProfiles);
+                    // The sessions this edit publishes are the ones its batch holds.
+                    if (liveSessionsWhere) {
+                      await assertBatchCoversSessions(
+                        tx,
+                        liveSessionsWhere,
+                        batchWindows,
+                      );
+                    }
                   }
                   // Use topics from existingPlan fetched *before* the transaction
                   const currentTopicIdsFromOuterScope = existingPlan.topics.map(
@@ -1282,8 +1305,8 @@ export async function PATCH(request: NextRequest) {
                   maxWait: 5000, // 5 second max wait
                   isolationLevel: "Serializable", // Highest isolation level
                 },
-              ),
-            ),
+              );
+            }),
         ),
     );
 

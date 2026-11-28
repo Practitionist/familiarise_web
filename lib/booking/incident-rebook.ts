@@ -28,12 +28,14 @@ import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleVal
 import {
   lockConsulteeBooking,
   lockSlotBatch,
+  requestLockBudget,
   unlockConsulteeBooking,
   unlockSlotInterval,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import { BookingRuleError } from "./booking-rule-error";
 import { createMakeUpOccurrence } from "./class-sessions";
+import { lockHostTimeInTx } from "./allocation/host-time-locks";
 import { incidentRefundKey, isRebookableParent } from "./incident-keys";
 import { rescheduleNotificationVariant } from "./reschedule-proposals";
 import { transitionConsultationRequest, transitionTrial } from "./transitions";
@@ -494,22 +496,50 @@ export async function rebookIncidentRemedy(args: {
     (id, i, all): id is string => !!id && all.indexOf(id) === i,
   );
   // Global lock order: appointment, then consultee, then one all-or-nothing slot batch.
+  // One deadline for all three tiers: a wait on one is not available to the next.
+  const lockBudget = requestLockBudget();
   const committed = await withAppointmentLock(
     voided.appointmentId,
     async () => {
-      const consulteeLock = await lockConsulteeBooking(args.userId);
+      const consulteeLock = await lockConsulteeBooking(
+        args.userId,
+        undefined,
+        lockBudget,
+      );
       try {
+        const slotEntries = slotProfileIds.map((consultantProfileId) => ({
+          consultantProfileId,
+          startsAt: ctx.startsAt,
+          endsAt: ctx.endsAt,
+        }));
         const slotLocks = await lockSlotBatch(
-          slotProfileIds.map((consultantProfileId) => ({
-            consultantProfileId,
-            startsAt: ctx.startsAt,
-            endsAt: ctx.endsAt,
-          })),
+          slotEntries,
+          undefined,
+          lockBudget,
         );
         try {
-          return await prisma.$transaction((tx) => commitRebook(tx, ctx), {
-            timeout: 15_000,
-          });
+          return await prisma.$transaction(
+            async (tx) => {
+              await lockHostTimeInTx(
+                tx,
+                slotEntries,
+                () =>
+                  slotUnavailable(
+                    "That time is no longer free for both of you. Pick another time.",
+                  ),
+                // The learner's own time, whoever the expert is.
+                [
+                  {
+                    userId: ctx.userId,
+                    startsAt: ctx.startsAt,
+                    endsAt: ctx.endsAt,
+                  },
+                ],
+              );
+              return commitRebook(tx, ctx);
+            },
+            { timeout: 15_000 },
+          );
         } finally {
           await unlockSlotInterval(slotLocks);
         }
@@ -517,6 +547,7 @@ export async function rebookIncidentRemedy(args: {
         await unlockConsulteeBooking(consulteeLock);
       }
     },
+    lockBudget,
   );
   await notifyRebooked(ctx);
   return {

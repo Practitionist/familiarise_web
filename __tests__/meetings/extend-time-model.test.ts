@@ -60,6 +60,10 @@ function resetStore() {
   };
 }
 
+// The database's host-time locks are pinned in host-time-locks.test.ts.
+jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
+  lockHostTimeInTx: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/meetings/route-guard", () => ({
   guardMeetingRoute: async () => ({
     ok: true,
@@ -228,6 +232,35 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
     expect(verdict).toMatchObject({ outcome: "HELD", lostMinutes: 0 });
   });
 
+  it("a 1:1 extension takes the learner's extra minutes with the host's; a group event's takes none", async () => {
+    const { lockHostTimeInTx } = jest.requireMock(
+      "../../lib/booking/allocation/host-time-locks",
+    ) as { lockHostTimeInTx: jest.Mock };
+    expect((await extend()).status).toBe(200);
+    const [, [hostEntry], , learnerTimes] = lockHostTimeInTx.mock.calls[0];
+    expect(learnerTimes).toEqual([
+      {
+        userId: "learner",
+        startsAt: hostEntry.startsAt,
+        endsAt: hostEntry.endsAt,
+      },
+    ]);
+
+    resetStore();
+    getMockRedis().clear();
+    lockHostTimeInTx.mockClear();
+    mockStore.occurrence = {
+      ...mockStore.occurrence,
+      appointment: {
+        participants: [{ userId: "learner" }],
+        webinar: { webinarPlan: { collaborators: [] } },
+        class: null,
+      },
+    };
+    expect((await extend()).status).toBe(200);
+    expect(lockHostTimeInTx.mock.calls[0][3]).toEqual([]);
+  });
+
   it("grants exactly one extension to two concurrent requests", async () => {
     const statuses = (await Promise.all([extend(), extend()]))
       .map((r) => r.status)
@@ -318,4 +351,58 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
     expect(mockStore.stream.updates).toBe(0);
     expect((await tryLockSlotBatch(extraMinutes())).ok).toBe(true);
   });
+  it.each([
+    ["the next time is booked", "booked"],
+    ["another write holds the extra minutes in the database", "held"],
+  ] as const)(
+    "refused because %s: nothing is saved and the retained atoms are released",
+    async (_label, why) => {
+      const prisma = jest.requireMock("../../lib/prisma").default as {
+        appointmentOccurrence: { findFirst: () => Promise<unknown> };
+      };
+      const { lockHostTimeInTx } = jest.requireMock(
+        "../../lib/booking/allocation/host-time-locks",
+      ) as { lockHostTimeInTx: jest.Mock };
+      const realFindFirst = prisma.appointmentOccurrence.findFirst;
+      if (why === "booked") {
+        prisma.appointmentOccurrence.findFirst = async () => ({
+          id: "occ-next",
+          startsAt: BOOKED_END,
+        });
+      } else {
+        lockHostTimeInTx.mockImplementationOnce(
+          async (
+            _tx: unknown,
+            _entries: unknown,
+            refusal: (h: object) => Error,
+          ) => {
+            throw refusal({
+              consultantProfileId: "cp-host",
+              learnerUserId: null,
+              startsAt: BOOKED_END,
+              endsAt: BOOKED_END,
+            });
+          },
+        );
+      }
+      try {
+        const res = await extend();
+        expect(res.status).toBe(409);
+        expect(await res.json()).toMatchObject({
+          extended: false,
+          hasConflictingNextBooking: true,
+        });
+      } finally {
+        prisma.appointmentOccurrence.findFirst = realFindFirst;
+      }
+
+      expect(mockStore.meeting).toMatchObject({
+        extendedSeconds: 0,
+        extensionsUsed: 0,
+      });
+      expect(mockStore.stream.updates).toBe(0);
+      expect(mockUnlockSlotInterval).toHaveBeenCalledTimes(1);
+      expect((await tryLockSlotBatch(extraMinutes())).ok).toBe(true);
+    },
+  );
 });

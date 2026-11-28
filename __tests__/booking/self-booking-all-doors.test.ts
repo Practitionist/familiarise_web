@@ -9,6 +9,7 @@
  * Collaborators are boundary-mocked as in consultant-request-gate.test.ts.
  */
 
+import "../fixtures/host-time-locks-free";
 import { requestDoorProfile } from "../fixtures/request-door-db";
 
 jest.mock("../../lib/auth-server", () => ({
@@ -25,6 +26,7 @@ jest.mock("../../lib/profiles/ensure-consultee-profile", () => ({
 const mockLockSlotBooking = jest.fn(async () => ({ key: "slot" }));
 const mockLockRequestCap = jest.fn(async () => ({ key: "request-cap" }));
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   lockSlotBatch: (...a: unknown[]) => mockLockSlotBooking(...(a as [])),
   unlockSlotInterval: jest.fn(async () => undefined),
   lockConsulteeBooking: jest.fn(async () => ({ key: "consultee" })),
@@ -47,9 +49,12 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
       mockCheckSlotAvailability(...(a as []));
   },
 }));
-jest.mock("../../lib/novu", () => ({
-  notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
+// The expert's notices are pinned in consultant-request-gate.test.ts.
+jest.mock("../../lib/booking/request-notices", () => ({
+  prepareNewRequestNotices: jest.fn(async () => ({})),
+  stageNewRequestNotices: jest.fn(async () => ({ bells: [], emails: [] })),
 }));
+jest.mock("../../lib/novu", () => ({}));
 jest.mock("../../lib/novu/workflows", () => ({
   ...jest.requireActual("../../lib/novu/workflows"),
   notificationScope: () => ({ organizationId: null, scope: "personal" }),
