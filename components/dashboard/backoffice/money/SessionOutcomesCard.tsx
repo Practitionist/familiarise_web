@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import { formatPerson } from "@/lib/backoffice/person";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -39,7 +40,10 @@ import {
   operatorEndKind,
 } from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
-import { ConfirmOutcomeDialog } from "./ConfirmOutcomeDialog";
+import {
+  ConfirmOutcomeDialog,
+  type ConfirmSession,
+} from "./ConfirmOutcomeDialog";
 import { RereadAttendanceDialog } from "./RereadAttendanceDialog";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
@@ -56,7 +60,24 @@ function toQueueSort(sort: TableSort): NeedsHumanSort | null {
 
 const QUEUE_KEY = ["sessions-needs-human"] as const;
 
-type ConfirmTarget = { id: string; outcome: NegativeMoneyOutcome };
+type ConfirmTarget = {
+  id: string;
+  outcome: NegativeMoneyOutcome;
+  session: ConfirmSession;
+};
+
+/** The row's own words for its session, so the dialog names what the operator clicked. */
+function confirmSessionOf(s: NeedsHumanItem): ConfirmSession {
+  return {
+    title: s.booking.title || "Booking",
+    expert: formatPerson(s.booking.expert).primary,
+    learner: s.booking.attendeeLabel ?? formatPerson(s.booking.learner).primary,
+    startsAt: s.startsAt,
+    bookingType: s.booking.type,
+    proposal:
+      s.completionStatus === "UNVERIFIED" && s.outcome === "HOST_ABSENT",
+  };
+}
 
 // One line in the table; a phone card wraps the time rather than clip it.
 const NOWRAP = "md:whitespace-nowrap";
@@ -80,7 +101,7 @@ function ConfirmButton({
       aria-label={`Confirm outcome for ${s.booking.title || "booking"}, ${formatOperatorInstant(s.startsAt)}`}
       onClick={(e) => {
         e.stopPropagation();
-        onConfirm({ id: s.id, outcome });
+        onConfirm({ id: s.id, outcome, session: confirmSessionOf(s) });
       }}
     >
       Confirm
@@ -360,6 +381,7 @@ export function SessionOutcomesCard({
           key={confirmTarget.id}
           occurrenceId={confirmTarget.id}
           outcome={confirmTarget.outcome}
+          session={confirmTarget.session}
           invalidate={[QUEUE_KEY, ["booking-ops"]]}
           onClose={() => setConfirmTarget(null)}
         />

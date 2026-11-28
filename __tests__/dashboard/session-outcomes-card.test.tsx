@@ -244,6 +244,49 @@ it("the confirm door posts the outcome the row shows and a reason the route's sc
   });
 });
 
+it.each([
+  [
+    "a learner absence",
+    { completionStatus: "COMPLETED", outcome: "LEARNER_ABSENT" },
+    "The session stays counted as held, with no refund to the learner. Confirming lets the expert's earning for it be released; on a plan, it also stops this verdict holding back the plan's payments.",
+  ],
+  [
+    "a consultation's proposed expert absence",
+    { completionStatus: "UNVERIFIED", outcome: "HOST_ABSENT" },
+    "Confirming cancels the booking, refunds the learner in full and records a strike for the expert.",
+  ],
+  [
+    "a voided session",
+    { completionStatus: "VOIDED", outcome: "CUT_SHORT" },
+    "Confirming starts this voided session's 14 days, after which the booking is refunded in full.",
+  ],
+] as const)(
+  "the Confirm dialog names the session and says what confirming %s does",
+  async (_label, verdict, effect) => {
+    const row: NeedsHumanItem = { ...item, ...verdict, canConfirm: true };
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ items: [row], total: 1, page: 1, pageSize: 20 }),
+    }));
+    renderCard();
+    fireEvent.click(
+      (
+        await screen.findAllByRole("button", { name: /^Confirm outcome for/ })
+      )[0],
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      `${effect} To change the outcome, use Set outcome instead.`,
+    );
+    // The booking, both people and the session's start in India time, from the row clicked.
+    expect(dialog).toHaveTextContent("BookingCareer chat");
+    expect(dialog).toHaveTextContent("ExpertAsha");
+    expect(dialog).toHaveTextContent("Learnerr@x.test");
+    expect(dialog).toHaveTextContent("Session1 Nov 2026, 3:30 pm IST");
+  },
+);
+
 it("offers no Confirm on a row the reader did not mark confirmable", async () => {
   renderCard();
   expect((await screen.findAllByText("Career chat")).length).toBeGreaterThan(0);
