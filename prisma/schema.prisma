@@ -6460,6 +6460,10 @@ enum RefundStatus {
 model Dispute {
   id                  String         @id @default(uuid())
   amountPaise         BigInt // Disputed amount in paise
+  /// What the bank took when the dispute closed against the platform, in paise.
+  /// Null while the dispute is open, when it closed with nothing taken, and when
+  /// the gateway reported no figure; readers then fall back to `amountPaise`.
+  deductedAmountPaise BigInt?
   currency            Currency       @default(INR)
   reason              String // Dispute reason from gateway
   status              DisputeStatus
