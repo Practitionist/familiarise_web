@@ -27,7 +27,7 @@ import { mapDisputeStatus } from "@/lib/payments/dispute-status";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { startDeadline } from "@/lib/cron/run-deadline";
+import { startDeadline, startDeadlineShare } from "@/lib/cron/run-deadline";
 import {
   discoverGatewayDisputes,
   type DisputeDiscoveryRun,
@@ -193,7 +193,10 @@ async function reconcileDisputesUnlocked(opts: {
   limit?: number;
   startedAt?: number;
 }): Promise<DisputeReconciliationResult> {
-  const pastDeadline = startDeadline(opts.startedAt ?? Date.now());
+  const startedAt = opts.startedAt ?? Date.now();
+  const pastDeadline = startDeadline(startedAt);
+  // The poll stops starting disputes at half the run's start budget, so it never starves discovery.
+  const pollOutOfTime = startDeadlineShare(0.5, startedAt);
   const approachingDeadline = new Date(Date.now() + APPROACHING_DEADLINE_MS);
   const staleThreshold = new Date(Date.now() - STALE_THRESHOLD_MS);
   const urgentThreshold = new Date(Date.now() + 48 * 60 * 60 * 1000);
@@ -303,7 +306,11 @@ async function reconcileDisputesUnlocked(opts: {
     return true;
   }
 
+  let polled = 0;
   for (const dispute of disputesToReconcile) {
+    // A dispute not started keeps its updatedAt, so the next run takes it first.
+    if (pollOutOfTime()) break;
+    polled++;
     try {
       // Check if dispute is urgent
       if (
@@ -429,7 +436,7 @@ async function reconcileDisputesUnlocked(opts: {
 
   return {
     success: errors.length === 0,
-    totalProcessed: disputesToReconcile.length,
+    totalProcessed: polled,
     reconciledCount,
     urgentCount,
     razorpayManualReviewCount,

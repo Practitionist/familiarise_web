@@ -63,6 +63,49 @@ beforeEach(() => {
   mockDiscover.mockResolvedValue(quietDisputeDiscovery());
 });
 
+describe("the poll leaves discovery its share of the run", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("stops starting polls at half the run's start budget, leaves the rest untouched for the next run, and discovery still starts in time", async () => {
+    const startedAt = 1_800_000_000_000;
+    let clock = startedAt;
+    jest.spyOn(Date, "now").mockImplementation(() => clock);
+    findMany
+      .mockImplementationOnce(async () => [])
+      .mockImplementationOnce(async () => [
+        row("dp_1"),
+        row("dp_2"),
+        row("dp_3"),
+      ]);
+    // Each poll of the gateway takes nine seconds.
+    mockGetRazorpayDispute.mockImplementation(async () => {
+      clock += 9_000;
+      return {
+        paymentId: "pay_1",
+        status: "under_review",
+        evidence: {},
+        isChargeRefundable: true,
+        dueBy: null,
+      };
+    });
+
+    const result = await reconcileDisputes({ limit: 10, startedAt });
+
+    expect(mockGetRazorpayDispute.mock.calls.map((c) => c[0])).toEqual([
+      "dp_1",
+    ]);
+    expect(result.totalProcessed).toBe(1);
+    const touched = updateMany.mock.calls.map(
+      ([args]) => (args as { where: { disputeId?: string } }).where.disputeId,
+    );
+    expect(touched).toEqual(["dp_1"]);
+    const outOfTime = mockDiscover.mock.calls[0][0] as () => boolean;
+    expect(outOfTime()).toBe(false);
+  });
+});
+
 describe("the discovery pass runs after the poll", () => {
   it("returns the pass's counts, keeps its position as the run's checkpoint, and fails the run on its errors", async () => {
     findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
