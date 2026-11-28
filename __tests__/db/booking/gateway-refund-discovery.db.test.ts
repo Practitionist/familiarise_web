@@ -31,6 +31,18 @@ const refundsOf = (paymentId: string) =>
     select: { id: true, refundId: true, status: true, cascadedAt: true },
   });
 
+/** The app's own ₹200 reservation, as the refund door leaves it before the gateway answers. */
+const pendingReservation = (paymentId: string) =>
+  prisma.refund.create({
+    data: {
+      paymentId,
+      amountPaise: BigInt(20_000),
+      status: "PENDING",
+      refundId: `pending_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+    },
+  });
+
 const deliverProcessed = (
   gatewayRefundId: string,
   orderId: string,
@@ -108,15 +120,7 @@ it("leaves the row a webhook already wrote as the only row when the list shows t
 
 it("settles the app's own reservation when the listed refund names it, instead of adding a row", async () => {
   const { payment, gatewayPaymentId } = await seedCapturedConsultation();
-  const reservation = await prisma.refund.create({
-    data: {
-      paymentId: payment.id,
-      amountPaise: BigInt(20_000),
-      status: "PENDING",
-      refundId: `pending_${randomUUID()}`,
-      paymentGateway: "RAZORPAY",
-    },
-  });
+  const reservation = await pendingReservation(payment.id);
   const gatewayRefundId = `rfnd_dbtier_${randomUUID()}`;
   gatewayReads.listRefunds.mockResolvedValue([
     listedRefund(gatewayRefundId, gatewayPaymentId, {
@@ -139,15 +143,7 @@ it("settles the app's own reservation when the listed refund names it, instead o
 
 it("fails nothing: a refund the gateway lists as failed leaves its reservation PENDING", async () => {
   const { payment, gatewayPaymentId } = await seedCapturedConsultation();
-  const reservation = await prisma.refund.create({
-    data: {
-      paymentId: payment.id,
-      amountPaise: BigInt(20_000),
-      status: "PENDING",
-      refundId: `pending_${randomUUID()}`,
-      paymentGateway: "RAZORPAY",
-    },
-  });
+  const reservation = await pendingReservation(payment.id);
   gatewayReads.listRefunds.mockResolvedValue([
     listedRefund(`rfnd_dbtier_${randomUUID()}`, gatewayPaymentId, {
       status: "failed",
