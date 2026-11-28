@@ -7,10 +7,6 @@ const mockStageNotices = jest.fn(async (..._args: unknown[]) => ({}));
 const mockGrant = jest.fn(async (..._args: unknown[]) => undefined);
 const mockSendOwed = jest.fn(async (..._args: unknown[]) => undefined);
 const mockWithHostSlotBatch = jest.fn();
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("@/lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("@/lib/collaborators/notifications", () => ({
   stageCollaboratorNotifications: (...args: unknown[]) =>
@@ -173,6 +169,7 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 
+import "../fixtures/host-time-locks-free";
 import {
   hostBatchEntries,
   HostTimeHeldError,

@@ -20,10 +20,6 @@ const state = {
   buyerProfileId: null as string | null,
 };
 
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
     incidentRemedy: {
@@ -91,9 +87,7 @@ jest.mock("../../lib/prisma", () => {
 });
 const lockSlotBatch = jest.fn(async (..._a: unknown[]) => []);
 jest.mock("../../utils/appointmentlock", () => ({
-  requestLockBudget: () => ({}),
-  renewConsulteeBooking: jest.fn(async () => undefined),
-  ConsulteeBookingBusyError: class extends Error {},
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
   lockConsulteeBooking: jest.fn(async () => ({})),
   unlockConsulteeBooking: jest.fn(),
@@ -127,6 +121,7 @@ jest.mock("../../lib/email/senders/booking", () => ({
     stageEmail(...(a as [])),
 }));
 
+import "../fixtures/host-time-locks-free";
 import prisma from "../../lib/prisma";
 import {
   bringIncidentRefundForward,

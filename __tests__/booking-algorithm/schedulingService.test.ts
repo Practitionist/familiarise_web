@@ -13,6 +13,7 @@
  * - Error handling and edge cases
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // ─── Module Mocks ───────────────────────────────────────────────────────────
@@ -22,10 +23,6 @@ import "./setup";
 // base mock carries appointment.findMany too. beforeEach points these read fns
 // at the same mockTx instances so existing per-test wiring still drives them.
 // The in-transaction availability re-read has its own suite; these isolate the allocator.
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/booking/allocation/coverage", () => ({
   assertSlotsStillPublished: jest.fn(async () => undefined),
 }));
@@ -54,9 +51,7 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
-  requestLockBudget: () => ({}),
-  renewConsulteeBooking: jest.fn(async () => undefined),
-  ConsulteeBookingBusyError: class extends Error {},
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   // allocate() takes a webinar's or class's checkout key, then the appointment lock.
   withEventCheckoutLock: (
     _key: unknown,

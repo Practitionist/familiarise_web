@@ -9,16 +9,13 @@
  * Without the flag, replace/reschedule semantics are preserved.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 import fs from "fs";
 import { errorSentence } from "../../components/dashboard/shared/requests/labels";
 import { ALREADY_SCHEDULED_COPY } from "../../lib/scheduling/allocationMessages";
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -58,9 +55,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
-  requestLockBudget: () => ({}),
-  renewConsulteeBooking: jest.fn(async () => undefined),
-  ConsulteeBookingBusyError: class extends Error {},
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   // allocate() takes an existing booking's appointment lock first.
   withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
     fn({ key: "appointment-lock" }),

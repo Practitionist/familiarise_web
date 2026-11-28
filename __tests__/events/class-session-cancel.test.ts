@@ -8,13 +8,10 @@
  * days; the third miss flags the class once.
  */
 
+import "../fixtures/host-time-locks-free";
 import { Prisma } from "@prisma/client";
 
 const transition = jest.fn();
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/booking/transitions", () => ({
   transitionOccurrenceCompletion: (...a: unknown[]) => transition(...a),
 }));

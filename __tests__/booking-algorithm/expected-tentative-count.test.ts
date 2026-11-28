@@ -2,13 +2,10 @@
  * #1012 — expectedTentativeSlotCount stale-tab reschedule precondition.
  */
 
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // The in-transaction availability re-read has its own suite; these isolate the allocator.
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/booking/allocation/coverage", () => ({
   assertSlotsStillPublished: jest.fn(async () => undefined),
 }));
@@ -43,9 +40,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
-  requestLockBudget: () => ({}),
-  renewConsulteeBooking: jest.fn(async () => undefined),
-  ConsulteeBookingBusyError: class extends Error {},
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),

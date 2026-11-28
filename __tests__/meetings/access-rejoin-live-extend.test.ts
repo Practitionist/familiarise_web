@@ -25,10 +25,6 @@ const mockUserFindUnique = jest.fn();
 
 let sequence: string[] = [];
 
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/auth", () => ({
   auth: { api: { getSession: (...a: unknown[]) => mockGetSession(...a) } },
 }));
@@ -141,6 +137,7 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,
 }));
 
+import "../fixtures/host-time-locks-free";
 import {
   getOccurrenceJoinState,
   getOccurrenceVMJoinState,

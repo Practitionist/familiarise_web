@@ -95,13 +95,8 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../utils/appointmentlock", () => ({
-  requestLockBudget: () => ({}),
-  renewConsulteeBooking: jest.fn(async () => undefined),
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   __esModule: true,
   LockContentionError: class extends Error {},
   EventCheckoutLockUnavailableError: class extends Error {},
@@ -256,6 +251,7 @@ jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
   resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
 }));
 
+import "../fixtures/host-time-locks-free";
 import prisma from "../../lib/prisma";
 import {
   cancelPaymentIntent,

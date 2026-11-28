@@ -38,10 +38,6 @@ const mockTx = new Proxy(
   },
 );
 
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -77,6 +73,7 @@ jest.mock("../../lib/topics", () => ({
   transformNestedPlanTopics: jest.fn((row: unknown) => row),
 }));
 
+import "../fixtures/host-time-locks-free";
 import prisma from "@/lib/prisma";
 import { PATCH as patchClass } from "@/app/api/bookings/classes/crud-with-plan/route";
 import { PATCH as patchWebinar } from "@/app/api/bookings/webinars/crud-with-plan/route";

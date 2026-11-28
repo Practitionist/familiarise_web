@@ -1,5 +1,6 @@
 // Module mocks and fixtures for driving handleCheckout end to end; import before the module under test.
 
+import "../../../../fixtures/host-time-locks-free";
 import type { CheckoutInput } from "../../../../../schemas/checkout";
 
 export const mockCreatePaymentIntent = jest.fn();
@@ -16,10 +17,6 @@ jest.mock("../../../../../lib/payments/index", () => ({
   __esModule: true,
   createPaymentIntent: (...a: unknown[]) => mockCreatePaymentIntent(...a),
   cancelPaymentIntent: jest.fn(),
-}));
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../../../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
 }));
 jest.mock("../../../../../utils/appointmentlock", () => ({
   __esModule: true,

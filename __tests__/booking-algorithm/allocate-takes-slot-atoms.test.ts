@@ -5,13 +5,10 @@
  * ALLOCATION_RACE. The consultee lock is held only from the batch to the
  * write, never across a search, and the batch is released after the write.
  */
+import "../fixtures/host-time-locks-free";
 import "./setup";
 
 // The in-transaction availability re-read has its own suite; these isolate the allocator.
-// The database's host-time locks are pinned in host-time-locks.test.ts.
-jest.mock("../../lib/booking/allocation/host-time-locks", () => ({
-  lockHostTimeInTx: jest.fn(async () => undefined),
-}));
 jest.mock("../../lib/booking/allocation/coverage", () => ({
   assertSlotsStillPublished: jest.fn(async () => undefined),
 }));
@@ -28,9 +25,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
-  requestLockBudget: () => ({}),
-  renewConsulteeBooking: jest.fn(async () => undefined),
-  ConsulteeBookingBusyError: class extends Error {},
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   lockAutoAllocate: jest.fn().mockResolvedValue({ key: "auto" }),
   unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
   lockConsulteeBooking: jest.fn().mockResolvedValue({ key: "consultee" }),

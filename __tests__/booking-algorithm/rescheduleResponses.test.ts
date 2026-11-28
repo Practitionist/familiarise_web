@@ -35,14 +35,7 @@ jest.mock("../../lib/rate-limit", () => ({
   rescheduleAppointmentLimiter: {},
 }));
 jest.mock("../../utils/appointmentlock", () => ({
-  // A door takes its tiers through this; it hands back the doubles above.
-  requestLockTiers: () => {
-    const locks = jest.requireMock("../../utils/appointmentlock");
-    return {
-      withEventCheckoutLock: locks.withEventCheckoutLock,
-      withAppointmentLock: locks.withAppointmentLock,
-    };
-  },
+  ...jest.requireActual("../fixtures/lock-mocks").lockDoubles(),
   __esModule: true,
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),
