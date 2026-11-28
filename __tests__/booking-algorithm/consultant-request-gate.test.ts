@@ -38,6 +38,7 @@ const mockLockRequestCap = jest.fn(async (..._args: unknown[]) => ({
 const mockLockConsulteeBooking = jest.fn(async (..._args: unknown[]) => ({
   key: "consultee",
 }));
+const mockRenewRequestCap = jest.fn(async (..._args: unknown[]) => undefined);
 const MOCK_LOCK_BUDGET = { deadlineAt: 1 };
 jest.mock("../../utils/appointmentlock", () => ({
   lockSlotBatch: (...a: unknown[]) => mockLockSlotBooking(...(a as [])),
@@ -47,12 +48,16 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(async () => undefined),
   renewConsulteeBooking: jest.fn(async () => undefined),
   lockRequestCap: (...a: unknown[]) => mockLockRequestCap(...(a as [])),
+  renewRequestCap: (...a: unknown[]) => mockRenewRequestCap(...(a as [])),
   unlockRequestCap: jest.fn(async () => undefined),
   requestLockBudget: () => MOCK_LOCK_BUDGET,
   BookingLockUnavailableError: class extends Error {},
   ConsulteeBookingBusyError: class ConsulteeBookingBusyError extends Error {},
   LockContentionError: class extends Error {},
-  RequestCapBusyError: class extends Error {},
+  RequestCapBusyError: class extends Error {
+    readonly httpStatus = 409;
+    readonly code = "REQUEST_CAP_BUSY";
+  },
 }));
 const mockCheckSlotAvailability = jest.fn(async () => ({
   isValid: true,
@@ -325,6 +330,18 @@ describe("request-for-approval lock tiers", () => {
     ]);
     expect(mockLockConsulteeBooking.mock.calls[0][2]).toBe(MOCK_LOCK_BUDGET);
     expect(mockLockSlotBooking.mock.calls[0][2]).toBe(MOCK_LOCK_BUDGET);
+  });
+
+  it("a cap lease lost before the write → the cap's busy 409, nothing written", async () => {
+    const { RequestCapBusyError } = jest.requireMock(
+      "../../utils/appointmentlock",
+    );
+    mockRenewRequestCap.mockRejectedValueOnce(new RequestCapBusyError());
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_CAP_BUSY");
+    expect(mockRenewRequestCap).toHaveBeenCalledWith({ key: "request-cap" });
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
   });
 
   it("a consultee key held by another booking → 409 with a retry, never a 500", async () => {

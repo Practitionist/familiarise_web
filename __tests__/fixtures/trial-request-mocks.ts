@@ -46,9 +46,14 @@ export function flushNotificationsModule(): object {
 export function requestCapLockModule(): object {
   return {
     lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
+    renewRequestCap: jest.fn(async () => undefined),
     unlockRequestCap: jest.fn(async () => undefined),
     requestLockBudget: () => ({}),
-    RequestCapBusyError: class extends Error {},
+    RequestCapBusyError: class extends Error {
+      readonly httpStatus = 409;
+      readonly retryAfterSeconds = 5;
+      readonly code = "REQUEST_CAP_BUSY";
+    },
     BookingLockUnavailableError: class extends Error {},
     // The consultee key's busy answer, with the real one's status and code.
     ConsulteeBookingBusyError: class extends Error {

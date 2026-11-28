@@ -257,6 +257,18 @@ it("a busy consultee key answers its retryable 409, not a 500", async () => {
   expect(bookTrial).not.toHaveBeenCalled();
 });
 
+it("a cap lease lost before the write answers the cap's busy 409, nothing booked", async () => {
+  const locks = jest.requireMock("../../utils/appointmentlock");
+  locks.renewRequestCap.mockRejectedValueOnce(new locks.RequestCapBusyError());
+  const res = await post();
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({
+    code: "REQUEST_CAP_BUSY",
+    retryAfter: 5,
+  });
+  expect(bookTrial).not.toHaveBeenCalled();
+});
+
 // Nothing accepts or declines a trial: its PATCH takes only COMPLETED, CONVERTED and CANCELLED.
 it("the trial PATCH has no accept or decline door", () => {
   const route = jest

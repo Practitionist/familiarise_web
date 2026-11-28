@@ -11,6 +11,7 @@ export function lockDoubles() {
   return {
     requestLockBudget: () => ({}),
     renewConsulteeBooking: jest.fn(async () => undefined),
+    renewRequestCap: jest.fn(async () => undefined),
     ConsulteeBookingBusyError: class extends Error {},
     // A door takes its tiers through this; it hands back the suite's own doubles.
     requestLockTiers: () => {

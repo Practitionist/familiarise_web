@@ -61,6 +61,7 @@ jest.mock("../../utils/appointmentlock", () => {
     RequestCapBusyError,
     BookingLockUnavailableError,
     requestLockBudget: () => ({}),
+    renewRequestCap: jest.fn(async () => undefined),
     lockRequestCap: jest.fn(async (cp: string) => {
       if (lock.busy) throw new RequestCapBusyError("busy");
       lock.events.push(`lock:${cp}`);

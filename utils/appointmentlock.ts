@@ -1246,10 +1246,13 @@ export class RequestCapBusyError extends Error {
   }
 }
 
+/** One request attempt plus slack; the door renews it before its write. */
+const REQUEST_CAP_TTL_MS = 60_000;
+
 /** One expert's open-request cap: held across its count and the request insert. */
 export async function lockRequestCap(
   consultantProfileId: string,
-  ttl: number = 60_000,
+  ttl: number = REQUEST_CAP_TTL_MS,
   retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `request-cap:${consultantProfileId}`;
@@ -1263,6 +1266,17 @@ export async function lockRequestCap(
 
 export async function unlockRequestCap(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
+}
+
+/**
+ * Re-arm the cap lease ahead of the write, outside its transaction. A lease
+ * that is no longer ours answers the cap's busy 409, so no count runs uncovered.
+ */
+export async function renewRequestCap(
+  lock: ApprovalLock,
+  ttl: number = REQUEST_CAP_TTL_MS,
+): Promise<void> {
+  if (!(await extendLock(lock, ttl))) throw new RequestCapBusyError();
 }
 
 /** One booking attempt plus slack; a writer renews it before each attempt it makes. */

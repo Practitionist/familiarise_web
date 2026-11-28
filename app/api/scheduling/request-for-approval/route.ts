@@ -12,6 +12,7 @@ import {
   lockRequestCap,
   unlockRequestCap,
   renewConsulteeBooking,
+  renewRequestCap,
   requestLockBudget,
   BookingLockUnavailableError,
   ConsulteeBookingBusyError,
@@ -595,6 +596,7 @@ export async function POST(req: NextRequest) {
         });
 
         // Re-armed for this one attempt; a grant that is no longer ours writes nothing.
+        await renewRequestCap(requestCapLock);
         await renewConsulteeBooking(consulteeLock);
         const requested = await prisma.$transaction(
           async (tx) => {

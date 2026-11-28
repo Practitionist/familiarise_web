@@ -55,6 +55,7 @@ import {
   BookingLockUnavailableError,
   ConsulteeBookingBusyError,
   lockRequestCap,
+  renewRequestCap,
   RequestCapBusyError,
   requestLockBudget,
   unlockRequestCap,
@@ -617,6 +618,8 @@ export async function POST(request: NextRequest) {
               planTitle: subscriptionPlan.title,
               startsAt,
             });
+        // Re-armed for this one attempt; a lease that is no longer ours writes nothing.
+        await renewRequestCap(capLock);
         const booked = await prisma
           .$transaction(
             async (tx) => {
@@ -724,8 +727,11 @@ export async function POST(request: NextRequest) {
           { status: 409 },
         );
       }
-      // The buyer's own key is held, or the shared lock deadline ran out on it.
-      if (error instanceof ConsulteeBookingBusyError) {
+      // The buyer's own key is held or out of time, or the cap lease was lost.
+      if (
+        error instanceof ConsulteeBookingBusyError ||
+        error instanceof RequestCapBusyError
+      ) {
         return NextResponse.json(
           {
             error: error.message,
