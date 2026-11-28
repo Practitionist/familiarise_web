@@ -12,6 +12,7 @@ import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
+  ConsulteeBookingBusyError,
   withAppointmentLock,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
@@ -288,7 +289,8 @@ export async function confirmTrialProposal(args: {
     }
     if (
       error instanceof SlotLockError ||
-      error instanceof AppointmentBusyError
+      error instanceof AppointmentBusyError ||
+      error instanceof ConsulteeBookingBusyError
     ) {
       return { confirmed: false, reason: "APPOINTMENT_BUSY" };
     }

@@ -53,6 +53,7 @@ import { apiError } from "@/lib/errors/api-error";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
 import {
   BookingLockUnavailableError,
+  ConsulteeBookingBusyError,
   lockRequestCap,
   RequestCapBusyError,
   requestLockBudget,
@@ -721,6 +722,17 @@ export async function POST(request: NextRequest) {
             code: "SLOT_TAKEN",
           },
           { status: 409 },
+        );
+      }
+      // The buyer's own key is held, or the shared lock deadline ran out on it.
+      if (error instanceof ConsulteeBookingBusyError) {
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            retryAfter: error.retryAfterSeconds,
+          },
+          { status: error.httpStatus },
         );
       }
       if (error instanceof SlotLockError) {

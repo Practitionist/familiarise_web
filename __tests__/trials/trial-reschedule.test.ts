@@ -51,6 +51,7 @@ jest.mock("../../utils/appointmentlock", () => ({
   ),
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
+  ConsulteeBookingBusyError: class extends Error {},
 }));
 jest.mock("../../lib/novu/service", () => ({
   notifyAppointmentRescheduled: jest.fn(async () => []),
@@ -269,6 +270,20 @@ describe("confirmTrialProposal", () => {
       now: NOW,
     });
     expect(out).toEqual({ confirmed: false, reason: "VALIDATION_FAILED" });
+  });
+
+  it("a busy consultee key answers APPOINTMENT_BUSY and moves nothing", async () => {
+    const { ConsulteeBookingBusyError } = jest.requireMock(
+      "../../utils/appointmentlock",
+    );
+    lockTrialPick.mockRejectedValueOnce(new ConsulteeBookingBusyError());
+    const out = await confirmTrialProposal({
+      rescheduleRequestId: "rr-1",
+      to: "AUTO_ACCEPTED",
+      now: NOW,
+    });
+    expect(out).toEqual({ confirmed: false, reason: "APPOINTMENT_BUSY" });
+    expect(transitionOccurrenceCompletion).not.toHaveBeenCalled();
   });
 
   it("a lapsed proposal is not answerable", async () => {

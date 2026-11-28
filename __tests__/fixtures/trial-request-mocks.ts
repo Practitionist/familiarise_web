@@ -50,5 +50,11 @@ export function requestCapLockModule(): object {
     requestLockBudget: () => ({}),
     RequestCapBusyError: class extends Error {},
     BookingLockUnavailableError: class extends Error {},
+    // The consultee key's busy answer, with the real one's status and code.
+    ConsulteeBookingBusyError: class extends Error {
+      readonly httpStatus = 409;
+      readonly retryAfterSeconds = 30;
+      readonly code = "CONSULTEE_BOOKING_BUSY";
+    },
   };
 }
