@@ -222,10 +222,12 @@ export default function RefundPolicyPage() {
                     <li>
                       One-on-one consultation: a host no-show or a session cut
                       short by the host is refunded in full, automatically, for
-                      the amount you paid (see Section 6). We apply it after a
-                      48-hour window from our record of the session, or sooner
-                      if you confirm the host didn&apos;t join; the notice we
-                      send you gives the exact date.
+                      the amount you paid (see Section 6). We confirm what we
+                      recorded after a 48-hour window from our record of the
+                      session, or sooner if you confirm it; the notice we send
+                      you gives the date that window closes. A host no-show is
+                      then cancelled and refunded. A session cut short is
+                      refunded 14 days after that.
                     </li>
                     <li>
                       Either side can report a problem with the record inside
