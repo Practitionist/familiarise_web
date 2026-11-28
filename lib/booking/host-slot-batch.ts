@@ -11,6 +11,7 @@ import {
   extendSlotInterval,
   tryLockSlotBatch,
   unlockSlotInterval,
+  type LearnerTimeEntry,
   type SlotBatchEntry,
 } from "@/utils/appointmentlock";
 
@@ -94,14 +95,21 @@ export function hostBatchEntries(
 
 /**
  * The first statement of a host-time write transaction, before the plan row
- * lock: Postgres try-locks over the atoms of the Redis batch. A held atom is
- * the same transient schedule conflict.
+ * lock: Postgres try-locks over the atoms of the Redis batch, and over a 1:1
+ * learner's own time when the writer passes it. A held atom is the same
+ * transient schedule conflict.
  */
 export async function lockHostBatchInTx(
   tx: Pick<Tx, "$queryRaw">,
   entries: readonly SlotBatchEntry[],
+  learnerTimes: readonly LearnerTimeEntry[] = [],
 ): Promise<void> {
-  await lockHostTimeInTx(tx, entries, () => new HostTimeHeldError());
+  await lockHostTimeInTx(
+    tx,
+    entries,
+    () => new HostTimeHeldError(),
+    learnerTimes,
+  );
 }
 
 /** The held atoms could not be extended to cover the time a write is about to claim. */

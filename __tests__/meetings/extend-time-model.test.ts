@@ -232,6 +232,30 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
     expect(verdict).toMatchObject({ outcome: "HELD", lostMinutes: 0 });
   });
 
+  it("a 1:1 extension takes the learner's extra minutes with the host's; a group event's takes none", async () => {
+    const { lockHostTimeInTx } = jest.requireMock(
+      "../../lib/booking/allocation/host-time-locks",
+    ) as { lockHostTimeInTx: jest.Mock };
+    expect((await extend()).status).toBe(200);
+    const [, [hostEntry], , learnerTimes] = lockHostTimeInTx.mock.calls[0];
+    expect(learnerTimes).toEqual([
+      {
+        userId: "learner",
+        startsAt: hostEntry.startsAt,
+        endsAt: hostEntry.endsAt,
+      },
+    ]);
+
+    resetStore();
+    getMockRedis().clear();
+    lockHostTimeInTx.mockClear();
+    mockStore.occurrence.appointment.webinar = {
+      webinarPlan: { collaborators: [] },
+    };
+    expect((await extend()).status).toBe(200);
+    expect(lockHostTimeInTx.mock.calls[0][3]).toEqual([]);
+  });
+
   it("grants exactly one extension to two concurrent requests", async () => {
     const statuses = (await Promise.all([extend(), extend()]))
       .map((r) => r.status)

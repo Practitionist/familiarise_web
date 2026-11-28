@@ -546,7 +546,15 @@ export async function POST(
           // The probe and the claim share one transaction behind the
           // database's locks on the same atoms.
           const refused = await prisma.$transaction(async (tx) => {
-            await lockHostBatchInTx(tx, extensionEntries);
+            await lockHostBatchInTx(
+              tx,
+              extensionEntries,
+              // A 1:1 learner's extra minutes are theirs alone; a group seat's are not held.
+              participantUserIds.map((userId) => ({
+                userId,
+                ...extensionWindow,
+              })),
+            );
             const conflicted = await hasExtensionScheduleConflict(
               tx,
               occurrence,
