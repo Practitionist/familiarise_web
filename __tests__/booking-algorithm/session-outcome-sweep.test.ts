@@ -351,6 +351,7 @@ it("a proposed negative verdict stages both sides' notices once, inside the writ
     occurrenceId: "occ-1",
     appointmentId: "apt-1",
     startsAt: at(0),
+    endsAt: at(60),
     outcome: "CUT_SHORT",
     outcomeAt: at(120),
   });
