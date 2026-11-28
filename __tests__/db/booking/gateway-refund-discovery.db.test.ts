@@ -167,6 +167,62 @@ it("fails nothing: a refund the gateway lists as failed leaves its reservation P
   });
 });
 
+it("retries a refund deferred while its payment awaited capture from the job's checkpoint, and imports it once the capture is recorded", async () => {
+  const { payment, gatewayPaymentId } = await seedCapturedConsultation();
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: { paymentStatus: "PENDING" },
+  });
+  const gatewayRefundId = `rfnd_dbtier_${randomUUID()}`;
+  const createdAt = Math.floor(Date.now() / 1000) - 3 * 24 * 3600;
+  gatewayReads.listRefunds.mockResolvedValue([
+    listedRefund(gatewayRefundId, gatewayPaymentId, { created_at: createdAt }),
+  ]);
+
+  const first = await discoverGatewayRefunds(never);
+
+  expect(first).toMatchObject({ unknownPayment: 1, imported: 0, errors: [] });
+  expect(await refundsOf(payment.id)).toHaveLength(0);
+
+  // The job's finished run keeps the position, as the cron lock writes it.
+  const jobName = "reconcile-pending-refunds";
+  const finishedRun = await prisma.systemJobExecution.create({
+    data: {
+      jobId: jobName,
+      jobName,
+      status: "COMPLETED",
+      startedAt: new Date(),
+      endedAt: new Date(),
+      result: { outcome: "completed", checkpoint: first.checkpoint },
+    },
+  });
+  try {
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { paymentStatus: "SUCCEEDED" },
+    });
+
+    const second = await discoverGatewayRefunds(never);
+
+    expect(gatewayReads.listRefunds.mock.calls.at(-1)?.[0]).toMatchObject({
+      from: createdAt - 1,
+    });
+    expect(second).toMatchObject({ imported: 1, unknownPayment: 0 });
+    const rows = await refundsOf(payment.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      refundId: gatewayRefundId,
+      status: "SUCCEEDED",
+    });
+    expect(rows[0].cascadedAt).not.toBeNull();
+    expect(JSON.parse(second.checkpoint ?? "{}")).toMatchObject({
+      deferred: [],
+    });
+  } finally {
+    await prisma.systemJobExecution.delete({ where: { id: finishedRun.id } });
+  }
+});
+
 it("writes no refund and no refusal for a refund whose payment the database does not know", async () => {
   const gatewayPaymentId = `pay_dbtier_${randomUUID()}`;
   const orderId = `order_dbtier_${randomUUID()}`;

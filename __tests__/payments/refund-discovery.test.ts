@@ -17,7 +17,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     refund: { findMany: jest.fn(), findUnique: jest.fn() },
-    payment: { findFirst: jest.fn() },
+    payment: { findMany: jest.fn() },
   },
 }));
 
@@ -60,14 +60,25 @@ import { discoverGatewayRefunds } from "../../lib/payments/discovery/refund-disc
 
 interface DiscoveryPrismaMock {
   refund: { findMany: jest.Mock; findUnique: jest.Mock };
-  payment: { findFirst: jest.Mock };
+  payment: { findMany: jest.Mock };
 }
 const db = prisma as unknown as DiscoveryPrismaMock;
 
 const NOW = new Date("2026-11-27T12:00:00.000Z");
 const NOW_S = Math.floor(NOW.getTime() / 1000);
 const DAY_S = 24 * 60 * 60;
+const HOUR_S = 60 * 60;
 const never = () => false;
+const minutesLater = (minutes: number) =>
+  new Date(NOW.getTime() + minutes * 60_000);
+
+/** A row holds the listed capture id, so the hand-over needs no gateway read. */
+const paymentHeld = () =>
+  db.payment.findMany.mockResolvedValue([
+    { gatewayPaymentId: "pay_cap1", paymentIntent: "order_1" },
+  ]);
+const noPaymentHeld = () => db.payment.findMany.mockResolvedValue([]);
+const deferral = () => new MockDeferSignal("refund-before-capture");
 
 const listed = (id: string, over: Record<string, unknown> = {}) => ({
   id,
@@ -98,6 +109,7 @@ const positionOf = (run: { checkpoint?: string }) =>
     since: number | null;
     window: { from: number; to: number; skip: number } | null;
     cutRuns: number;
+    deferred: { id: string; createdAt: number; triedAt: number }[];
   };
 
 beforeEach(() => {
@@ -107,7 +119,7 @@ beforeEach(() => {
   mockList.mockResolvedValue([]);
   db.refund.findMany.mockResolvedValue([]);
   db.refund.findUnique.mockResolvedValue({ id: "row_1" });
-  db.payment.findFirst.mockResolvedValue({ paymentIntent: "order_1" });
+  paymentHeld();
   mockHandleRefundCreated.mockResolvedValue(undefined);
 });
 
@@ -145,7 +157,7 @@ describe("what reaches the refund webhook's handler", () => {
 
   it("reads the gateway payment when no row holds its id, and passes on its order and whether it was captured", async () => {
     mockList.mockResolvedValue([listed("rfnd_new", { payment_id: "pay_x" })]);
-    db.payment.findFirst.mockResolvedValue(null);
+    noPaymentHeld();
     mockFetchPayment.mockResolvedValue({
       id: "pay_x",
       order_id: "order_x",
@@ -193,7 +205,11 @@ describe("what reaches the refund webhook's handler", () => {
       }),
     );
     expect(db.refund.findUnique).not.toHaveBeenCalled();
-    expect(positionOf(run)).toEqual({ since: NOW_S, window: null, cutRuns: 0 });
+    expect(positionOf(run)).toMatchObject({
+      since: NOW_S,
+      window: null,
+      cutRuns: 0,
+    });
   });
 
   it("counts a refund the handler booked without a Refund row apart from an import", async () => {
@@ -203,6 +219,183 @@ describe("what reaches the refund webhook's handler", () => {
     const run = await discoverGatewayRefunds(never, NOW);
 
     expect(run).toMatchObject({ imported: 0, noRefundRow: 1 });
+  });
+});
+
+describe("a refund the handler defers", () => {
+  const CREATED = NOW_S - 3 * DAY_S;
+  const early = (over: Record<string, unknown> = {}) =>
+    listed("rfnd_early", { created_at: CREATED, ...over });
+  const resume = (run: { checkpoint?: string }) =>
+    mockReadCheckpoint.mockResolvedValue(run.checkpoint);
+
+  it("keeps the next window open back to its creation and is imported once its payment is recorded", async () => {
+    mockList.mockResolvedValue([early()]);
+    mockHandleRefundCreated.mockResolvedValue(deferral());
+
+    const first = await discoverGatewayRefunds(never, NOW);
+
+    expect(first).toMatchObject({ unknownPayment: 1, imported: 0 });
+    expect(positionOf(first)).toEqual({
+      since: NOW_S,
+      window: null,
+      cutRuns: 0,
+      deferred: [{ id: "rfnd_early", createdAt: CREATED, triedAt: NOW_S }],
+    });
+
+    // The capture is recorded; the next run's window still reaches the refund.
+    mockHandleRefundCreated.mockResolvedValue(undefined);
+    resume(first);
+    const second = await discoverGatewayRefunds(never, minutesLater(15));
+
+    expect(mockList).toHaveBeenLastCalledWith(
+      { from: CREATED - 1, to: NOW_S + 900 },
+      100,
+      0,
+    );
+    expect(mockHandleRefundCreated).toHaveBeenCalledTimes(2);
+    expect(second).toMatchObject({ imported: 1, unknownPayment: 0 });
+    expect(positionOf(second).deferred).toEqual([]);
+
+    resume(second);
+    await discoverGatewayRefunds(never, minutesLater(30));
+
+    expect(mockList).toHaveBeenLastCalledWith(
+      { from: NOW_S + 900 - DAY_S, to: NOW_S + 1800 },
+      100,
+      0,
+    );
+  });
+
+  it("holds the window without a gateway read on every run when no row holds its capture id: the next try is six hours later", async () => {
+    noPaymentHeld();
+    mockFetchPayment.mockResolvedValue({ id: "pay_cap1", order_id: "order_x" });
+    mockList.mockResolvedValue([early()]);
+    mockHandleRefundCreated.mockResolvedValue(deferral());
+
+    const first = await discoverGatewayRefunds(never, NOW);
+    resume(first);
+    const soon = await discoverGatewayRefunds(never, minutesLater(15));
+
+    expect(mockFetchPayment).toHaveBeenCalledTimes(1);
+    expect(mockHandleRefundCreated).toHaveBeenCalledTimes(1);
+    expect(soon).toMatchObject({ waiting: 1, unknownPayment: 0 });
+    expect(positionOf(soon).deferred).toEqual([
+      { id: "rfnd_early", createdAt: CREATED, triedAt: NOW_S },
+    ]);
+    expect(mockStanding).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        key: "reconcile-pending-refunds:discovery-unknown-payment",
+        ids: ["rfnd_early"],
+      }),
+    );
+
+    resume(soon);
+    await discoverGatewayRefunds(never, minutesLater(6 * 60));
+
+    expect(mockFetchPayment).toHaveBeenCalledTimes(2);
+    expect(mockList).toHaveBeenLastCalledWith(
+      { from: CREATED - 1, to: NOW_S + 6 * HOUR_S },
+      100,
+      0,
+    );
+  });
+
+  it("starts at most five gateway-read hand-overs a run and remembers the rest as due", async () => {
+    noPaymentHeld();
+    mockFetchPayment.mockResolvedValue({ id: "pay_cap1", order_id: "order_x" });
+    mockList.mockResolvedValue(
+      Array.from({ length: 6 }, (_, i) => listed(`rfnd_orphan_${i}`)),
+    );
+    mockHandleRefundCreated.mockResolvedValue(deferral());
+
+    const run = await discoverGatewayRefunds(never, NOW);
+
+    expect(mockFetchPayment).toHaveBeenCalledTimes(5);
+    expect(run).toMatchObject({ unknownPayment: 5, waiting: 1, notHeld: 0 });
+    expect(positionOf(run).deferred).toHaveLength(6);
+    expect(positionOf(run).since).toBe(NOW_S);
+  });
+
+  it("stops holding the window seven days after the gateway created it, and is reported once as no longer retried", async () => {
+    const created = NOW_S - 7 * DAY_S + 600;
+    storedState({
+      since: NOW_S - 900,
+      window: null,
+      cutRuns: 0,
+      deferred: [{ id: "rfnd_old", createdAt: created, triedAt: NOW_S - 900 }],
+    });
+    mockList.mockResolvedValue([listed("rfnd_old", { created_at: created })]);
+    mockHandleRefundCreated.mockResolvedValue(deferral());
+
+    const run = await discoverGatewayRefunds(never, minutesLater(15));
+
+    expect(mockList).toHaveBeenCalledWith(
+      { from: created - 1, to: NOW_S + 900 },
+      100,
+      0,
+    );
+    expect(run).toMatchObject({ unknownPayment: 1, notHeld: 1 });
+    expect(positionOf(run)).toEqual({
+      since: NOW_S + 900,
+      window: null,
+      cutRuns: 0,
+      deferred: [],
+    });
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-pending-refunds:discovery-not-held",
+        ids: ["rfnd_old"],
+      }),
+    );
+  });
+
+  it("is not held, and is reported, when a hundred deferrals are already remembered", async () => {
+    storedState({
+      since: NOW_S - 900,
+      window: null,
+      cutRuns: 0,
+      deferred: Array.from({ length: 100 }, (_, i) => ({
+        id: `rfnd_held_${i}`,
+        createdAt: NOW_S - 1200,
+        triedAt: NOW_S - 900,
+      })),
+    });
+    mockList.mockResolvedValue([listed("rfnd_extra")]);
+    mockHandleRefundCreated.mockResolvedValue(deferral());
+
+    const run = await discoverGatewayRefunds(never, NOW);
+
+    expect(run).toMatchObject({ unknownPayment: 1, notHeld: 1 });
+    expect(positionOf(run).deferred).toHaveLength(100);
+    expect(mockStanding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "reconcile-pending-refunds:discovery-not-held",
+        ids: ["rfnd_extra"],
+      }),
+    );
+  });
+
+  it("is forgotten when the list later shows it failed or a row already holds it", async () => {
+    storedState({
+      since: NOW_S - 900,
+      window: null,
+      cutRuns: 0,
+      deferred: [
+        { id: "rfnd_failed", createdAt: NOW_S - 1200, triedAt: NOW_S - 900 },
+        { id: "rfnd_known", createdAt: NOW_S - 1200, triedAt: NOW_S - 900 },
+      ],
+    });
+    mockList.mockResolvedValue([
+      listed("rfnd_failed", { status: "failed" }),
+      listed("rfnd_known"),
+    ]);
+    db.refund.findMany.mockResolvedValue([{ refundId: "rfnd_known" }]);
+
+    const run = await discoverGatewayRefunds(never, NOW);
+
+    expect(mockHandleRefundCreated).not.toHaveBeenCalled();
+    expect(positionOf(run).deferred).toEqual([]);
   });
 });
 
@@ -218,7 +411,12 @@ describe("the window and its position", () => {
       100,
       0,
     );
-    expect(positionOf(run)).toEqual({ since: NOW_S, window: null, cutRuns: 0 });
+    expect(positionOf(run)).toEqual({
+      since: NOW_S,
+      window: null,
+      cutRuns: 0,
+      deferred: [],
+    });
   });
 
   it("re-reads the day behind the stored position", async () => {
@@ -247,6 +445,7 @@ describe("the window and its position", () => {
       since: null,
       window: { from: NOW_S - 7 * DAY_S, to: NOW_S, skip: 300 },
       cutRuns: 1,
+      deferred: [],
     });
 
     mockList.mockClear();
@@ -265,6 +464,7 @@ describe("the window and its position", () => {
       since: NOW_S,
       window: null,
       cutRuns: 0,
+      deferred: [],
     });
   });
 
@@ -283,6 +483,7 @@ describe("the window and its position", () => {
       since: null,
       window: { from: NOW_S - 7 * DAY_S, to: NOW_S, skip: 0 },
       cutRuns: 1,
+      deferred: [],
     });
   });
 
@@ -301,6 +502,7 @@ describe("the window and its position", () => {
       since: null,
       window: { from: NOW_S - 7 * DAY_S, to: NOW_S, skip: 0 },
       cutRuns: 0,
+      deferred: [],
     });
   });
 
@@ -317,6 +519,7 @@ describe("the window and its position", () => {
       since: NOW_S - 900,
       window: { from: NOW_S - 900 - DAY_S, to: NOW_S, skip: 0 },
       cutRuns: 0,
+      deferred: [],
     });
   });
 

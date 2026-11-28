@@ -104,7 +104,7 @@ From [Official Razorpay Refund Entity Docs](https://razorpay.com/docs/api/refund
 An unknown-id or 404 answer (`isRazorpayUnknownRefundIdError`, `isRazorpayUnknownOrderError`) never fails a row in either pass, because an id of the other key mode gets the same answer: the row stays `PENDING` and the run raises one standing finding.
 
 3. **Pass 3 (`redriveStrandedRefunds`)**: Replays `SUCCEEDED` rows with `cascadedAt: null` (>10 min old) through `applyRefundCascade`.
-4. **Discovery pass (`discoverGatewayRefunds`, `lib/payments/discovery/refund-discovery.ts`)**: lists the account's refunds created since the job's checkpoint (section 7) and hands each one with no `Refund` row under its gateway id to `handleRefundCreated`, so a dashboard refund or one whose webhook was lost is imported as its webhook would have imported it. It never hands over a gateway-`failed` refund and never creates a refund. `docs/finance/30-refunds-disputes/01-refunds.md` has the window, bounds and reporting.
+4. **Discovery pass (`discoverGatewayRefunds`, `lib/payments/discovery/refund-discovery.ts`)**: lists the account's refunds created since the job's checkpoint (section 7) and hands each one with no `Refund` row under its gateway id to `handleRefundCreated`, so a dashboard refund or one whose webhook was lost is imported as its webhook would have imported it. It never hands over a gateway-`failed` refund and never creates a refund. A refund the handler defers is remembered in the checkpoint and keeps the next window open back to its `created_at` for up to 7 days. `docs/finance/30-refunds-disputes/01-refunds.md` has the window, bounds and reporting.
 
 ---
 

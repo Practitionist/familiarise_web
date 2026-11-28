@@ -10,11 +10,13 @@ export const quietRefundDiscovery = (): RefundDiscoveryRun => ({
   imported: 0,
   alreadyKnown: 0,
   unknownPayment: 0,
+  waiting: 0,
+  notHeld: 0,
   gatewayFailed: 0,
   noRefundRow: 0,
   errors: [],
   stoppedShort: null,
-  checkpoint: '{"since":1764244800,"window":null,"cutRuns":0}',
+  checkpoint: '{"since":1764244800,"window":null,"cutRuns":0,"deferred":[]}',
 });
 
 export const quietDisputeDiscovery = (): DisputeDiscoveryRun => ({

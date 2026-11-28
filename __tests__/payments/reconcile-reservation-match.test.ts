@@ -259,6 +259,8 @@ describe("reconcilePendingRefunds — discovery pass", () => {
       imported: 1,
       alreadyKnown: 2,
       unknownPayment: 0,
+      waiting: 0,
+      notHeld: 0,
       gatewayFailed: 0,
       noRefundRow: 0,
       stoppedShort: { bound: "pages", pagesHandled: 3 },
